@@ -57,7 +57,8 @@ erDiagram
 The three tables are **not linked by any key**. No column in one table points to
 a row in another. Today they relate **only spatially**: a pipe "belongs to" a road
 only because their geometries are near each other, and that is worked out with
-PostGIS functions at query time.
+PostGIS functions at query time. How to document spatial relationships is in
+[conventions.md § 4](conventions.md#4-spatial-relationships-are-not-foreign-keys).
 
 That is normal for raw imported GIS layers. Each department publishes its own
 layer, with its own IDs. Linking them, for example which pipes run under which

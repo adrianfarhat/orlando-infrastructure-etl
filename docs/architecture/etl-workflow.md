@@ -4,6 +4,8 @@ How the three Python loaders in `extractors/` copy City of Orlando GIS data into
 Neon. Drawn from the code as of 2026-11-17. Table layouts are in
 [data-contracts.md](data-contracts.md) and [database-schema.md](database-schema.md),
 and the overall picture is in [system-architecture.md](system-architecture.md).
+Diagram rules are in [conventions.md](conventions.md); the diagrams on this page
+are process diagrams, so the implementation-status legend does not apply.
 
 > **Every loader can overwrite real rows in Neon.** Running one in a way that
 > writes needs explicit user approval (CLAUDE.md, shared rule 2). Reading this

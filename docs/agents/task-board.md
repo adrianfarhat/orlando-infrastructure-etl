@@ -3,15 +3,16 @@
 The main Claude Code conversation keeps this board up to date. Every task needs
 an owner, scope, acceptance criteria, dependencies and verification results.
 
-**Statuses:** `Finding` (observed, not yet planned) · `Proposed` · `Approved` ·
-`In progress` · `In review` · `Done` (verified, with evidence recorded) · `Blocked`
+Live status for every task and decision is in [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private). This board holds scope, dependencies, acceptance criteria and verification evidence. It does not track status.
 
-Do not mark anything `Done` without recorded verification results.
+A Project card moves to Done only after its verification results are recorded
+here, under the task and in the [Evidence log](#evidence-log).
 
-Dashboard view (status counts, wave diagrams, blockers):
-[development-status.md](development-status.md). This board is the source of truth.
+Dependency and wave diagrams:
+[development-status.md](development-status.md). Documentation conventions:
+[conventions.md](../architecture/conventions.md).
 
-## Findings (from the 2026-11-16 repository inspection)
+## Findings (from the 2026-11-16 repository inspection and later reviews)
 
 These are open issues, **not completed work**.
 
@@ -31,7 +32,13 @@ These are open issues, **not completed work**.
 | F-12 | **The home page `/` is still the Next.js starter template.** The Explorer is only reachable at `/operations/map`. | `web/src/app/page.tsx` | frontend | No |
 | F-13 | **The project has no README.** `web/README.md` is the create-next-app default. | Repository root | technical-lead | No |
 | F-14 | **Data quality: the manhole and pipe extents are identical.** The bounding boxes match to every decimal place. This is plausible if the outermost manholes sit at pipe ends, but it has not been checked. | `ST_Extent` on both tables | data-gis | No |
-| F-15 | **There is no navigation index for the docs.** No diagrams of the system, ETL, schema or work status. **Done on 2026-11-17:** added `docs/architecture/system-architecture.md`, `etl-workflow.md`, `database-schema.md` and `docs/agents/development-status.md` (technical-lead, user-approved docs workspace). The Mermaid diagrams have not been checked for rendering. | `docs/` listing | technical-lead | No |
+| F-15 | **There is no navigation index for the docs.** No diagrams of the system, ETL, schema or work status. Added on 2026-11-17: `docs/architecture/system-architecture.md`, `etl-workflow.md`, `database-schema.md` and `docs/agents/development-status.md` (technical-lead, user-approved docs workspace). The Mermaid diagrams have not been checked for rendering. | `docs/` listing | technical-lead | No |
+| F-16 | **CLAUDE.md still names `task-board.md` as the status record.** Since T-89, live status is only in Project #1, so the instructions and the docs disagree. | `CLAUDE.md` line 9 (work-status link), "How work is coordinated" (lines 29–40), rule 8 (line 85). Found in the T-80 review, 2026-11-17. | main conversation (user approval) | Yes (CLAUDE.md change) |
+| F-17 | **T-82's legend check conflicts with `conventions.md`.** T-82's acceptance says "each diagram carries the legend"; `conventions.md` § 2 applies the legend to architecture diagrams only. A lint cannot tell diagram types apart without a diagram-type marker in each block. | T-82 acceptance; `docs/architecture/conventions.md` § 2. T-80 review, 2026-11-17. | technical-lead (conventions); main conversation (T-82) | No |
+| F-18 | **Wave inversion: T-85 (Wave 2) depends on T-59 (Wave 3).** | Project fields and "Depends on" of T-85 and T-59. T-80 review, 2026-11-17. | technical-lead / user | No |
+| F-19 | **Path conflict for the schema baseline.** T-86 targets `database/migrations/0001_baseline.sql` "(path per D-8)", while D-8's recommendation is `database/schema/road_segments.sql`. T-86 also overlaps T-53 (the `road_segments` DDL file). | T-86 acceptance; D-8 row; T-53 scope. `docs/doc-map.yml` assumes `database/migrations/**`. T-80 review, 2026-11-17. | user (D-8, T-53) | User decision |
+| F-20 | **The proposed ER diagram draws computed spatial links as plain ER relationships**, with no method or parameters, against `conventions.md` § 4. | `docs/architecture/database-schema.md` § 2 (target model), for example "nearest segment" and the road/pipe overlap links. T-80 review, 2026-11-17. | technical-lead | No |
+| F-21 | **Three tasks edit `CLAUDE.md` with incomplete ordering.** T-04, T-05 and T-84 all edit it; T-84 depends on T-05, but T-04 has no ordering against either. | Summary-table "Depends on" for T-04, T-05 and T-84. T-80 review, 2026-11-17. | technical-lead / user | No |
 
 ### Finding → task cross-reference
 
@@ -51,61 +58,80 @@ These are open issues, **not completed work**.
 | F-12 | → T-43 |
 | F-13 | Not yet planned |
 | F-14 | → T-52 |
-| F-15 | Done (docs workspace, 2026-11-17) |
+| F-15 | docs workspace added 2026-11-17 (see Evidence log) |
+| F-16 | → T-05, T-84 |
+| F-17 | → T-82 |
+| F-18 | Not yet planned (wave review) |
+| F-19 | → T-86, D-8, T-53 |
+| F-20 | → T-88 |
+| F-21 | Not yet planned (dependency review) |
 
 ## Tasks
 
 The technical-lead proposed this board on 2026-11-16 from the read-only team
 inspection (integration-qa checks plus backend, frontend and data-gis code
 reviews). It was saved with user approval. Every finding behind it comes from
-code reading unless it was run, and **none has been verified live**. All tasks
-were `Not started` when saved; since then T-50 is `In progress` and T-51 is `Done`. Approval to save
-the board does **not** approve any task's own approvals listed below.
+code reading unless it was run, and **none has been verified live**. Approval to
+save the board does **not** approve any task's own approvals listed below.
 
-Approved by user 2026-11-17: T-61 added as P0. Task status is moving to GitHub
-Project 1 (private draft items); the restructure of this board is pending.
+Approved by user 2026-11-17: T-61 added as P0. Since 2026-11-17 live status is
+kept in GitHub Project #1 (private draft items), and this board no longer records
+status (T-89).
 
 **Priorities:** P0 safety or rule violation · P1 correctness or reliability ·
 P2 quality · P3 later or optional.
 
 ### Summary
 
-| ID | Title | Pri | Owner | Depends on | Approval needed | Status |
-|---|---|---|---|---|---|---|
-| T-01 | Baseline verification (build, live API, browser) | P1 | integration-qa | none | User starts dev server if needed | Not started |
-| T-02 | Confirm whether F-01 and F-08 are stale | P3 | integration-qa | none | none | Not started |
-| T-03 | Find the source of the 1,103 lint warnings | P2 | integration-qa | none | none | Not started |
-| T-04 | Update CLAUDE.md (Node through fnm) and the lint config if needed | P3 | main conversation (user approval) | T-02, T-03 | Config / CLAUDE.md | Not started |
-| T-10 | Features route: layer and bbox validation hardening | P1 | backend | T-01 | none (brings code in line with the current contract) | Not started |
-| T-11 | `db.ts` hardening: lazy env check, pool error handler, timeouts | P1 | backend | T-01 | none | Not started |
-| T-12 | Safer server-side error logging in all three routes | P2 | backend | T-10 | none | Not started |
-| T-20 | `/features` contract v2 and contract nits | P1 | technical-lead | D-2, D-3 | **Contract change** | Not started |
-| T-21 | Backend: implement features contract v2 | P1 | backend | T-20, T-10, T-12 | Covered by T-20 | Not started |
-| T-22 | Frontend: handle the new 400 and truncation meaning | P1 | frontend | T-21, T-40 | none | Not started |
-| T-23 | Asset inspector UI | P2 | frontend | T-21, T-22, D-3 | User decision D-3 | Not started |
-| T-24 | `/stats` caching | P3 | backend | T-21 | none (check against the Next 16 docs) | Not started |
-| T-40 | Map resilience: layer failures, errors, reload guard, debounce | P1 | frontend | T-01 | none | Not started |
-| T-41 | Dashboard: truncation notice, accessible status, provenance label | P2 | frontend | T-01 | none | Not started |
-| T-42 | Map accessibility, dark mode and responsive fixes | P2 | frontend | T-40, T-41 | none | Not started |
-| T-43 | Metadata, home page and unused-asset clean-up | P3 | frontend | D-5 | User decision D-5 | Not started |
-| T-50 | `test_connection.py`: read-only session | **P0** | main conversation (user approval); data-gis proposes | D-1 | Code change to an unowned file | In progress |
-| T-51 | Wastewater loader: no writes or DDL by default | **P0** | main conversation (user approval); data-gis proposes | D-1 | Code change to an unowned file | Done |
-| T-52 | Read-only database audit | P1 | data-gis | none | Read-only DB session (confirm) | Not started |
-| T-53 | Commit the `road_segments` DDL as a reference file | P2 | main conversation (user approval) | T-52, D-8 | File add only, no DB change | Not started |
-| T-54 | Manholes source provenance check | P2 | data-gis, then technical-lead (docs) | D-6 | External read-only GET | Not started |
-| T-55 | Make the three loaders consistent | P2 | main conversation (user approval); data-gis proposes | T-51, T-52, T-61, D-4 | Code change; **no ETL run** | Not started |
-| T-56 | Schema migrations (`road_segments` key, `last_seen_at`, `diameter_raw`) | P3 | data-gis proposes; user applies | T-52, D-9 | **Migration** | Not started |
-| T-57 | Read-only database role for `web/` | P1 | data-gis proposes SQL; user applies; main conversation updates env | T-52 | **GRANT/CREATE ROLE + env change** | Not started |
-| T-58 | One place for `DATABASE_URL` | P3 | main conversation (user approval) | T-57, D-7 | Env change | Not started |
-| T-59 | Declare Python dependencies (`requirements.txt`) | P2 | main conversation (user approval); data-gis proposes | none | Dependency file | Not started |
-| T-60 | Design the `demo` schema and IoT tables (design doc only) | P3 | technical-lead | T-52 | **Architecture**; any build later is a migration | Not started |
-| T-61 | Streets and manholes loaders: dry run by default, writes only with `--write` | **P0** | main conversation (user approval); data-gis proposes | D-1 | Code change to unowned files | Not started |
-| T-70 | Automated test harness plan | P2 | integration-qa (plan); backend/frontend implement later | T-01, D-10 | Dependency, if a runner is added | Not started |
-| T-90 | Integration verification at the end of each wave | P0 | integration-qa | All tasks in the wave | none | Not started |
+| ID | Title | Pri | Owner | Depends on | Approval needed |
+|---|---|---|---|---|---|
+| T-01 | Baseline verification (build, live API, browser) | P1 | integration-qa | none | User starts dev server if needed |
+| T-02 | Confirm whether F-01 and F-08 are stale | P3 | integration-qa | none | none |
+| T-03 | Find the source of the 1,103 lint warnings | P2 | integration-qa | none | none |
+| T-04 | Update CLAUDE.md (Node through fnm) and the lint config if needed | P3 | main conversation (user approval) | T-02, T-03 | Config / CLAUDE.md |
+| T-05 | Adopt Git branch and pull-request workflow (CLAUDE.md) | P1 | main conversation (user approval) | Baseline PR (`chore/baseline-safety-and-docs`) merged into `main` | CLAUDE.md change (approved in principle 2026-11-17); commit, push, PR and merge each need separate approval |
+| T-10 | Features route: layer and bbox validation hardening | P1 | backend | T-01 | none (brings code in line with the current contract) |
+| T-11 | `db.ts` hardening: lazy env check, pool error handler, timeouts | P1 | backend | T-01 | none |
+| T-12 | Safer server-side error logging in all three routes | P2 | backend | T-10 | none |
+| T-20 | `/features` contract v2 and contract nits | P1 | technical-lead | D-2, D-3 | **Contract change** |
+| T-21 | Backend: implement features contract v2 | P1 | backend | T-20, T-10, T-12 | Covered by T-20 |
+| T-22 | Frontend: handle the new 400 and truncation meaning | P1 | frontend | T-21, T-40 | none |
+| T-23 | Asset inspector UI | P2 | frontend | T-21, T-22, D-3 | User decision D-3 |
+| T-24 | `/stats` caching | P3 | backend | T-21 | none (check against the Next 16 docs) |
+| T-40 | Map resilience: layer failures, errors, reload guard, debounce | P1 | frontend | T-01 | none |
+| T-41 | Dashboard: truncation notice, accessible status, provenance label | P2 | frontend | T-01 | none |
+| T-42 | Map accessibility, dark mode and responsive fixes | P2 | frontend | T-40, T-41 | none |
+| T-43 | Metadata, home page and unused-asset clean-up | P3 | frontend | D-5 | User decision D-5 |
+| T-50 | `test_connection.py`: read-only session | **P0** | main conversation (user approval); data-gis proposes | D-1 | Code change to an unowned file |
+| T-51 | Wastewater loader: no writes or DDL by default | **P0** | main conversation (user approval); data-gis proposes | D-1 | Code change to an unowned file |
+| T-52 | Read-only database audit | P1 | data-gis | none | Read-only DB session (confirm) |
+| T-53 | Commit the `road_segments` DDL as a reference file | P2 | main conversation (user approval) | T-52, D-8 | File add only, no DB change |
+| T-54 | Manholes source provenance check | P2 | data-gis, then technical-lead (docs) | D-6 | External read-only GET |
+| T-55 | Make the three loaders consistent | P2 | main conversation (user approval); data-gis proposes | T-51, T-52, T-61, D-4 | Code change; **no ETL run** |
+| T-56 | Schema migrations (`road_segments` key, `last_seen_at`, `diameter_raw`) | P3 | data-gis proposes; user applies | T-52, D-9 | **Migration** |
+| T-57 | Read-only database role for `web/` | P1 | data-gis proposes SQL; user applies; main conversation updates env | T-52 | **GRANT/CREATE ROLE + env change** |
+| T-58 | One place for `DATABASE_URL` | P3 | main conversation (user approval) | T-57, D-7 | Env change |
+| T-59 | Declare Python dependencies (`requirements.txt`) | P2 | main conversation (user approval); data-gis proposes | none | Dependency file |
+| T-60 | Design the `demo` schema and IoT tables (design doc only) | P3 | technical-lead | T-52 | **Architecture**; any build later is a migration |
+| T-61 | Streets and manholes loaders: dry run by default, writes only with `--write` | **P0** | main conversation (user approval); data-gis proposes | D-1 | Code change to unowned files |
+| T-70 | Automated test harness plan | P2 | integration-qa (plan); backend/frontend implement later | T-01, D-10 | Dependency, if a runner is added |
+| T-80 | Docs conventions and doc map | P1 | technical-lead | none | Docs only |
+| T-81 | Local docs check runner and link checker | P1 | main conversation (user approval) | T-80 | New `scripts/` files |
+| T-82 | Mermaid validator and diagram-conventions lint | P2 | main conversation (user approval) | T-80, T-81 | **Dependency** (pinned `mermaid`, `jsdom` in `tools/docs`) |
+| T-83 | Documentation impact tool | P1 | main conversation (user approval) | T-80 | New `scripts/` files |
+| T-84 | PR template and CLAUDE.md docs-sync rules | P1 | main conversation (user approval) | T-83, T-05 | **CLAUDE.md change** and a `.github/` PR template |
+| T-85 | CI docs workflow (non-required) | P2 | main conversation (user approval) | T-81, T-82, T-83, T-03, T-59 | `.github/workflows/` plus a push; not a required check |
+| T-86 | Schema baseline migration from Neon (read-only) | P2 | data-gis | T-52, D-8 | **Neon read-only access**, separately approved; no schema change |
+| T-87 | Schema doc generator and freshness checks | P2 | main conversation (user approval) | T-86, T-85 | **Dependency** (`pglast`) |
+| T-88 | Consolidate schema docs and spatial-relationships section | P2 | technical-lead | T-87 | Contract-doc change (meaning unchanged) |
+| T-89 | Remove live task status from Markdown | P1 | technical-lead | none | Docs only |
+| T-90 | Integration verification at the end of each wave | P0 | integration-qa | All tasks in the wave | none |
 
 ### Task details
 
-Every task is **Status:** Not started with **Verification results:** pending, unless the task says otherwise (T-50, T-51).
+Each task lists its scope, acceptance criteria and how it is verified. Recorded
+verification results appear under the task and in the [Evidence log](#evidence-log).
+A task with no recorded results has no verification evidence yet.
 
 #### T-01: Baseline verification
 - Scope: read-only checks: `npm run build`, dev server, curl of the 3 routes, browser check of `/operations/map`.
@@ -126,6 +152,23 @@ Every task is **Status:** Not started with **Verification results:** pending, un
 - Scope: `CLAUDE.md` (Commands note), `web/eslint.config.mjs`.
 - Acceptance: the Node note matches T-02; ignore entries added only for the paths T-03 names.
 - Verification: integration-qa re-runs lint.
+
+#### T-05: Adopt Git branch and pull-request workflow (CLAUDE.md)
+- Owner: main conversation (CLAUDE.md is unowned; user approval). Project fields: P1, Wave 0.
+- Depends on: baseline PR (`chore/baseline-safety-and-docs`) merged into `main`.
+- Approval needed: CLAUDE.md change (approved in principle 2026-11-17); commit, push, PR and merge each need separate approval.
+- Scope: `CLAUDE.md` (new "Git and pull-request workflow" section, updated "How work is coordinated", shared rules 2 and 10, the work-status link).
+- Acceptance:
+  - main is the stable branch; changes reach it only through a verified, user-approved PR.
+  - One short-lived branch per logical change, named `<type>/<task-id>-<slug>`; no branches for decisions, planning-only work or read-only verification.
+  - Decisions, planning and read-only verification tasks can reach Done without a PR once their acceptance criteria are met.
+  - Status rules: In Progress when implementation actually begins; Blocked only when a specific dependency, decision or approval stops progress; Done only after merge (or acceptance met, for no-PR tasks) and evidence recorded.
+  - The GitHub Project is authoritative for current status; Claude maintains statuses and evidence.
+  - Explicit user approval is required for commits, pushes, PR creation, merges, contract changes and database writes.
+  - Duplicate checks before creating branches, PRs or cards.
+- Verification: user reviews the CLAUDE.md diff; integration-qa confirms it is consistent with the agent definitions and the task board.
+- Follow-up: remind the user to enable branch protection on `main` after the baseline PR is merged.
+- Note: T-04 and T-84 also edit `CLAUDE.md`; never run them at the same time as T-05.
 
 #### T-10: Features route input validation
 - Scope: `web/src/app/api/infrastructure/features/route.ts`.
@@ -191,26 +234,28 @@ Every task is **Status:** Not started with **Verification results:** pending, un
 - Scope: `database/test_connection.py`.
 - Acceptance: `conn.read_only = True` is set before any query; `.env` is loaded from the project root; the URL is never printed.
 - Verification: code review and `py_compile` with no Neon access; one read-only Neon run only with user approval.
-- **Status: In progress.** The main conversation applied the change with user approval, including the optional `transaction_read_only` output line.
+- Change: the main conversation applied the change with user approval, including the optional `transaction_read_only` output line.
 - Verification results (integration-qa, 2026-11-16, no Neon access):
   - `read_only` is set before the first `execute`: PASS.
   - `.env` is loaded from the project root: PASS.
   - No credential printed: PASS.
   - `py_compile`: PASS.
   - Run with a dummy URL timed out and never reached Neon: PASS.
-  - **Remaining:** one live read-only run against Neon (expect "Read-only session: on"). Awaiting user approval.
+  - **Not yet verified:** one live read-only run against Neon (expect "Read-only session: on"). It needs user approval.
+- Merged to main via PR #1 (merge commit 5b6aa5e, 2026-11-17); code commit 714106b.
 
 #### T-51: Wastewater loader writes nothing by default (P0)
 - Scope: `extractors/load_orlando_wastewater.py`.
 - Acceptance: the default run, including `--full` without `--write`, opens no database connection and runs no DDL or upsert; writing needs an explicit `--write`; DDL handling follows D-4 once it is decided.
 - Verification: code review, `py_compile`, `--help`. **No Neon run.**
-- **Status: Done.** The main conversation applied the base `--write` diff with user approval. The log wording also changed from "loading N" to "selected N".
+- Change: the main conversation applied the base `--write` diff with user approval. The log wording also changed from "loading N" to "selected N".
 - Verification results (integration-qa, 2026-11-16):
   - `py_compile` and `--help`: PASS.
   - `--write` is the only path to `psycopg.connect` (line 195), the DDL and the upserts: PASS.
   - `--write` behaviour unchanged apart from the log wording: PASS.
   - Dry run, default and `--full`, with `psycopg.connect` blocked: PASS. It reported 23,464 IDs and made no connection. One public ArcGIS GET, approved by the user.
-  - D-4 DDL handling: not applicable while D-4 is pending. With `--write`, the `IF NOT EXISTS` DDL still runs; this moves to T-55.
+  - D-4 DDL handling: not applicable until D-4 is decided. With `--write`, the `IF NOT EXISTS` DDL still runs; this moves to T-55.
+- Merged to main via PR #1 (merge commit 5b6aa5e, 2026-11-17); code commit 3cb2440.
 - Note for T-52: the source reported 23,464 IDs, while `data-contracts.md` records 23,463 `utility_lines` rows. That suggests one new source record since the last load, and it has not been checked.
 
 #### T-52: Read-only database audit
@@ -280,41 +325,188 @@ Every task is **Status:** Not started with **Verification results:** pending, un
 - Acceptance: names the test runner, its dependencies and the first suite (T-10/T-21 contract tests, ETL dry runs).
 - Verification: user approves any dependencies.
 
+### Documentation synchronization (T-80 to T-89)
+
+Plan approved by the user 2026-11-17. Docs evolve on the feature branch and are
+published at merge ([conventions.md § 5](../architecture/conventions.md#5-branch-docs-workflow)).
+Acceptance criteria below are copied from the Project cards. Scope lines are
+taken from the files the criteria name.
+
+#### T-80: Docs conventions and doc map
+- Owner: technical-lead. Project fields: P1, Wave 1.
+- Depends on: none.
+- Approval needed: Docs only.
+- Scope: `docs/architecture/conventions.md`, `docs/doc-map.yml`, legend classes in the architecture diagrams.
+- Acceptance:
+  - `docs/architecture/conventions.md` defines the diagram status legend: `verified`, `unverified`, `planned`, `external`.
+  - It includes an authority map that names the source of truth for schema, ETL, API, status and evidence.
+  - It includes a short branch-docs workflow: sync on the branch, publish at merge.
+  - `docs/doc-map.yml` maps code paths to reviewed docs and generated docs.
+  - Every existing diagram is classified against the legend; doc changes are listed, not silently applied.
+  - The user reviews it.
+- Verification: Read-only review by integration-qa; user approval.
+
+#### T-81: Local docs check runner and link checker
+- Owner: main conversation. Project fields: P1, Wave 1.
+- Depends on: T-80.
+- Approval needed: New `scripts/` files (main conversation owns them, with user approval).
+- Scope: `scripts/check_docs.py` and its link checker.
+- Acceptance:
+  - `scripts/check_docs.py` runs all local docs checks with one command and exits non-zero on failure.
+  - The link checker finds broken relative links and anchors, and `#L` line ranges that are out of bounds.
+  - It uses the Python standard library only.
+  - It finds 0 problems on current `main`.
+  - A deliberately broken link in a temporary test is detected.
+- Verification: integration-qa runs it, plus a negative test.
+
+#### T-82: Mermaid validator and diagram-conventions lint
+- Owner: main conversation. Project fields: P2, Wave 2.
+- Depends on: T-80, T-81.
+- Approval needed: **Dependency**: pinned `mermaid` and `jsdom` in a `tools/docs` lock file, separate from `web/`.
+- Scope: `tools/docs/`; the call from `scripts/check_docs.py`.
+- Acceptance:
+  - `tools/docs/` validates every Mermaid block with pinned versions.
+  - It checks the conventions: every `planned` node is labelled "(planned)" and each diagram carries the legend.
+  - Lifecycle scripts are disabled on install.
+  - All current diagrams pass, and a negative control fails as expected.
+  - `check_docs.py` calls it.
+- Verification: integration-qa; negative control.
+
+#### T-83: Documentation impact tool
+- Owner: main conversation. Project fields: P1, Wave 1.
+- Depends on: T-80.
+- Approval needed: New `scripts/` files.
+- Scope: `scripts/docs_impact.py`, reading `docs/doc-map.yml`.
+- Acceptance:
+  - `scripts/docs_impact.py` reads `doc-map.yml`.
+  - `--planned <paths>` lists the docs expected to change for a task's scope.
+  - `--working-tree` and `<base>..HEAD` list changed code, the mapped docs, and whether each is updated, regenerated or untouched.
+  - `--summary` writes the PR "Documentation impact" section, including any status-label changes (planned, unverified or verified).
+  - It is tested against a sample diff.
+- Verification: integration-qa runs it on sample diffs.
+
+#### T-84: PR template and CLAUDE.md docs-sync rules
+- Owner: main conversation. Project fields: P1, Wave 1.
+- Depends on: T-83, T-05 (same file: CLAUDE.md, never edited concurrently).
+- Approval needed: **CLAUDE.md change** and a `.github/` PR template.
+- Scope: `.github/pull_request_template.md`, `CLAUDE.md`.
+- Acceptance:
+  - `.github/pull_request_template.md` has a "Documentation impact" section.
+  - CLAUDE.md requires running docs-impact at task start and after each logical change.
+  - CLAUDE.md requires updating mapped docs on the same branch, or giving a written reason.
+  - CLAUDE.md requires presenting the impact summary before any merge-approval request.
+  - CLAUDE.md states that status labels move to `verified` only with recorded evidence.
+  - No duplicate of T-05's Git rules.
+- Verification: User reviews the diff; integration-qa checks consistency with the agent definitions.
+
+#### T-85: CI docs workflow (non-required)
+- Owner: main conversation. Project fields: P2, Wave 2.
+- Depends on: T-81, T-82, T-83, T-03, T-59.
+- Approval needed: `.github/workflows/` plus a push to trigger it. **Not** added as a required check.
+- Scope: `.github/workflows/docs.yml`.
+- Acceptance:
+  - `docs.yml` runs on draft and ready PRs.
+  - It runs `doc-links`, `mermaid` and conventions, `docs-impact` (warning only), `python` (py_compile and `--help`, no network), and `web` (tsc and lint; build only after T-11).
+  - There are no secrets and no Neon access.
+  - It is green on `main`, and a deliberately broken branch shows red.
+  - Related: T-70 owns the test-runner choice (D-10).
+- Verification: integration-qa reviews the runs.
+
+#### T-86: Schema baseline migration from Neon (read-only)
+- Owner: data-gis. Project fields: P2, Wave 3.
+- Depends on: T-52, D-8 (decision pending).
+- Approval needed: **Neon read-only access**, separately approved. No schema change.
+- Scope: `database/migrations/0001_baseline.sql` (path per D-8); read-only introspection.
+- Acceptance:
+  - `database/migrations/0001_baseline.sql` (path per D-8) reproduces all 3 tables, their keys, GiST indexes and extensions.
+  - It is derived from read-only introspection and reviewed line by line against `data-contracts.md`.
+  - No invented foreign keys.
+  - It is never applied to Neon.
+  - **Overlaps T-53** (road_segments DDL file): recommend closing T-53 as superseded. That is the user's decision.
+- Verification: technical-lead and integration-qa review; applied only to a throwaway database in T-87.
+- Exception: the T-86 dependency text is copied word for word from its Project card and contains status wording ('decision pending'); it is kept until T-86 is reviewed. Live status is in Project #1.
+
+#### T-87: Schema doc generator and freshness checks
+- Owner: main conversation. Project fields: P2, Wave 3.
+- Depends on: T-86, T-85.
+- Approval needed: **Dependency**: `pglast`.
+- Scope: `scripts/gen_schema_docs.py`, `docs/architecture/generated/schema.md`, the CI jobs `schema-docs-fresh` and `migrations-apply`.
+- Acceptance:
+  - `scripts/gen_schema_docs.py` parses the migrations with `pglast`.
+  - It produces `docs/architecture/generated/schema.md`, marked GENERATED, with tables, columns, types, nullability, defaults, keys, indexes and a Mermaid ER diagram.
+  - Relationship lines come only from real foreign-key constraints.
+  - The output is reproducible.
+  - CI `schema-docs-fresh` fails when the output is stale.
+  - CI `migrations-apply` applies the migrations to a throwaway PostGIS container. Never to Neon.
+  - Related: T-56 future migrations use this folder.
+- Verification: integration-qa; a stale-output negative test.
+
+#### T-88: Consolidate schema docs and spatial-relationships section
+- Owner: technical-lead. Project fields: P2, Wave 3.
+- Depends on: T-87.
+- Approval needed: Contract-doc change (meaning unchanged).
+- Scope: `docs/architecture/data-contracts.md`, `docs/architecture/database-schema.md`.
+- Acceptance:
+  - The column-level facts in `data-contracts.md` and the current ER diagram in `database-schema.md` point to the generated schema instead of duplicating it.
+  - A new "Spatial relationships (not foreign keys)" section records method, parameters, status and storage.
+  - One place for each fact.
+- Verification: integration-qa runs an accuracy review against the code and the generated docs.
+
+#### T-89: Remove live task status from Markdown
+- Owner: technical-lead. Project fields: P1, Wave 1.
+- Depends on: none (Project workflows already corrected by the user).
+- Approval needed: Docs only.
+- Scope: `docs/agents/task-board.md`, `docs/agents/development-status.md`.
+- Acceptance:
+  - No status columns or status colours remain in `task-board.md` and `development-status.md`.
+  - Scope, acceptance, dependencies and evidence stay.
+  - The dependency and wave diagrams stay without status.
+  - Links to Project #1 views are added.
+  - GitHub Project #1 is the only live status.
+- Verification: integration-qa; Mermaid and links check.
+
 #### T-90: Integration verification per wave
 - Scope: read-only checks.
 - Acceptance: `tsc`, lint and build pass; the contract test matrix passes; the `/operations/map` regression passes; no credentials appear in any output; `development-status.md` matches the summary table.
-- Verification: results recorded before any task in the wave is marked `Done`.
+- Verification: results recorded before any card in the wave moves to Done in Project #1.
 
 ### Execution waves
 
 | Wave | Tasks |
 |---|---|
-| 0: Safety and baseline | T-50, then T-51, then T-61 (main conversation; T-61 edits the streets loader, then the manholes loader); T-01, T-02, T-03 (integration-qa) at the same time |
+| 0: Safety and baseline | T-50, then T-51, then T-61 (main conversation; T-61 edits the streets loader, then the manholes loader); T-05 (main conversation, `CLAUDE.md`); T-01, T-02, T-03 (integration-qa) at the same time |
 | 1: Fixes with no contract change | Backend T-10 then T-12, with T-11 alongside; frontend T-40, then T-41, then T-42; data-gis T-52; technical-lead T-20; then T-90 |
 | 2: Contract v2 | T-21, then T-22; T-53, T-54, T-57 (user applies); then T-90 |
 | 3: Features and hygiene | T-23, T-24, T-55, T-59, T-04, T-43, T-70; then T-90 |
 | 4: Approval or architecture work | T-56, T-58, T-60; then T-90 |
+| Documentation synchronization (uses the same Wave field, waves 1–3) | Wave 1: T-80 and T-89 (technical-lead), then T-81 and T-83 (main conversation), then T-84 (after T-05). Wave 2: T-82, then T-85. Wave 3: T-86 (data-gis), then T-87, then T-88 (technical-lead). Diagram: [development-status.md § 2](development-status.md#2-documentation-synchronization-t-80-to-t-89) |
 
 Never run two tasks at the same time on `InfrastructureMap.tsx`,
-`features/route.ts` or the same loader.
+`features/route.ts`, `CLAUDE.md` (T-04, T-05, T-84) or the same loader.
 
 ## Decisions
 
-Status of every decision: **PENDING — user will review individually.** The
-recommendations are the technical-lead's and are not decisions.
+The recommendations are the technical-lead's and are not decisions.
 
-| ID | Question | Options | Recommendation | Status |
-|---|---|---|---|---|
-| D-1 | Who edits the P0 files in `database/` and `extractors/` | (a) main conversation with user approval; (b) give data-gis edit rights (CLAUDE.md change) | (a) now; decide (b) later | PENDING — user will review individually |
-| D-2 | `/features` limits | Bbox cap: (a) maximum span in degrees (for example 0.25°), (b) minimum zoom sent by the client, (c) no cap, rely on `statement_timeout`. Order: `ORDER BY id`, yes or no. Stats miles: (a) the API rounds to 2 decimals, (b) the UI rounds | Cap (a); `ORDER BY id` yes; round in the UI (b) and fix the contract example | PENDING — user will review individually |
-| D-3 | Asset inspector data | (a) attributes in every `/features` feature; (b) `/features` returns only `id` and `source_objectid`, plus a new `/features/{layer}/{id}` for details. Also: which attributes to show for each layer | (b), which keeps map payloads small | PENDING — user will review individually |
-| D-4 | Loader policy | Null geometry: (a) skip and count, (b) write NULL, (c) fail the run. DDL: (a) never, (b) only behind `--init` | Skip and count; DDL behind `--init` | PENDING — user will review individually |
-| D-5 | What `/` shows | (a) redirect to `/operations/map`; (b) landing page with a link; (c) leave as is | (a) | PENDING — user will review individually |
-| D-6 | ArcGIS metadata GET (T-54) | (a) allow it; (b) the user fetches it | (a) public read-only GET, sends no credentials | PENDING — user will review individually |
-| D-7 | Where `DATABASE_URL` lives | (a) one shared file; (b) root `.env` holds the owner credential for ETL, `web/.env.local` holds the read-only role | (b), after T-57 | PENDING — user will review individually |
-| D-8 | Path of the DDL file | for example `database/schema/road_segments.sql` | That path | PENDING — user will review individually |
-| D-9 | Schema migrations (T-56) | (a) now, rehearsed on a Neon branch; (b) defer | (b); rehearse the `diameter_raw` change only if T-52 finds fractional values | PENDING — user will review individually |
-| D-10 | Test runner | (a) Vitest plus contract tests; (b) curl or Node script, no new dependencies | (b) now, (a) later | PENDING — user will review individually |
+Decision outcomes are recorded here when made; pending/decided state lives in Project #1.
+
+| ID | Question | Options | Recommendation |
+|---|---|---|---|
+| D-1 | Who edits the P0 files in `database/` and `extractors/` | (a) main conversation with user approval; (b) give data-gis edit rights (CLAUDE.md change) | (a) now; decide (b) later |
+| D-2 | `/features` limits | Bbox cap: (a) maximum span in degrees (for example 0.25°), (b) minimum zoom sent by the client, (c) no cap, rely on `statement_timeout`. Order: `ORDER BY id`, yes or no. Stats miles: (a) the API rounds to 2 decimals, (b) the UI rounds | Cap (a); `ORDER BY id` yes; round in the UI (b) and fix the contract example |
+| D-3 | Asset inspector data | (a) attributes in every `/features` feature; (b) `/features` returns only `id` and `source_objectid`, plus a new `/features/{layer}/{id}` for details. Also: which attributes to show for each layer | (b), which keeps map payloads small |
+| D-4 | Loader policy | Null geometry: (a) skip and count, (b) write NULL, (c) fail the run. DDL: (a) never, (b) only behind `--init` | Skip and count; DDL behind `--init` |
+| D-5 | What `/` shows | (a) redirect to `/operations/map`; (b) landing page with a link; (c) leave as is | (a) |
+| D-6 | ArcGIS metadata GET (T-54) | (a) allow it; (b) the user fetches it | (a) public read-only GET, sends no credentials |
+| D-7 | Where `DATABASE_URL` lives | (a) one shared file; (b) root `.env` holds the owner credential for ETL, `web/.env.local` holds the read-only role | (b), after T-57 |
+| D-8 | Path of the DDL file | for example `database/schema/road_segments.sql` | That path |
+| D-9 | Schema migrations (T-56) | (a) now, rehearsed on a Neon branch; (b) defer | (b); rehearse the `diameter_raw` change only if T-52 finds fractional values |
+| D-10 | Test runner | (a) Vitest plus contract tests; (b) curl or Node script, no new dependencies | (b) now, (a) later |
+
+### Decision outcomes
+
+None recorded yet. Add one dated line per decision when the user makes it:
+`D-x (YYYY-MM-DD): chosen option, by whom, any conditions.`
 
 ### Risks
 
@@ -327,7 +519,6 @@ recommendations are the technical-lead's and are not decisions.
 
 ```
 ### T-<number>: <title>
-- Status: Proposed
 - Owner: <agent>
 - Scope: <files/areas>
 - Depends on: <IDs or none>
@@ -338,9 +529,19 @@ recommendations are the technical-lead's and are not decisions.
 - Verification results: <command → result, by whom, date>
 ```
 
-## Completed
+## Evidence log
 
-- **T-51** Wastewater loader writes nothing by default. Done on 2026-11-16; the verification results are recorded under T-51 above.
+Dated and append-only: add new entries at the bottom and never edit old ones
+(add a correcting entry instead). Each entry records what was verified or merged,
+by whom and where the details are. This is evidence, not status; live status is
+in [Project #1](https://github.com/users/adrianfarhat/projects/1) (private).
+
+- **2026-11-16 · team inspection (no task).** integration-qa: `tsc --noEmit` passes; lint 0 errors / 1,103 warnings, cause unknown (`.next/**` is already ignored). T-01 and T-03 will re-run and record. (Moved from `development-status.md`.)
+- **2026-11-16 · T-50.** integration-qa code checks PASS with no Neon access; the live read-only run has not been done. Details under [T-50](#t-50-test_connectionpy-read-only-session-p0).
+- **2026-11-16 · T-51.** integration-qa verification: all checks PASS with no Neon access (one user-approved public ArcGIS GET). Details under [T-51](#t-51-wastewater-loader-writes-nothing-by-default-p0).
+- **2026-11-17 · PR #1.** Merged to main as merge commit 5b6aa5e, containing the T-50 code (commit 714106b) and the T-51 code (commit 3cb2440).
+- **2026-11-17 · F-15.** technical-lead added the docs workspace: `docs/architecture/system-architecture.md`, `etl-workflow.md`, `database-schema.md` and `docs/agents/development-status.md` (user-approved; merged with PR #1). The Mermaid diagrams have not been checked for rendering.
+- **2026-11-17 · Mermaid syntax.** All 21 Mermaid diagrams in docs/ passed `mermaid.parse()` (Mermaid 11.4.1, run by the main conversation in a temporary environment outside the repository; a negative control confirmed broken diagrams are rejected). This checks syntax only: visual rendering has not yet been reviewed.
 
 The work done before this board existed (the ETL loaders, the three API
 routes, and the map and dashboard) is described in `docs/architecture/` but has

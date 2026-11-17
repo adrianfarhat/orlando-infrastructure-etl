@@ -1,54 +1,31 @@
-# Development Status
+# Task Dependencies and Waves
 
-> Derived from [task-board.md](task-board.md) (source of truth). Updated in the
-> same edit as any status change. Last updated: 2026-11-17.
+> **Live status for every task and decision is in
+> [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private).** This page
+> shows only how tasks depend on each other and which wave they belong to. It does
+> not track status. (The filename is kept because other pages link to it.)
 
-This page is a dashboard view of the board. If it disagrees with the board, the
-board wins; fix this page. Acceptance criteria and full verification results live
-only on the board, and this page links to them.
+Scope, acceptance criteria and verification evidence live on the
+[task board](task-board.md). If this page disagrees with the board about a
+dependency or a wave, the board wins; fix this page.
 
-## 1. Status at a glance
+## 1. Tasks by wave
 
-| Status | Tasks | Count |
-|---|---|---|
-| Done | T-51 | 1 |
-| In progress | T-50 (waiting for user approval of one live read-only run) | 1 |
-| Not started, waiting on a pending decision | T-20, T-23, T-43, T-53, T-54, T-55, T-56, T-58, T-70 | 9 |
-| Not started, no decision needed | T-01, T-02, T-03, T-04, T-10, T-11, T-12, T-21, T-22, T-24, T-40, T-41, T-42, T-52, T-57, T-59, T-60, T-61 (D-1 pending; proceeds with per-change user approval, as T-50/T-51), T-90 | 19 |
-| Blocked | none | 0 |
-| **Total** | | **30** |
-
-"Waiting on a pending decision" is a view on this page, not a board status. On
-the board these tasks are `Not started` and depend on one of D-1 to D-10.
-
-### By owner
-
-| Owner | Done | In progress | Not started | Total |
-|---|---|---|---|---|
-| main conversation (user approval) | 1 (T-51) | 1 (T-50) | 6 (T-04, T-53, T-55, T-58, T-59, T-61) | 8 |
-| integration-qa | 0 | 0 | 5 (T-01, T-02, T-03, T-70, T-90) | 5 |
-| backend | 0 | 0 | 5 (T-10, T-11, T-12, T-21, T-24) | 5 |
-| frontend | 0 | 0 | 6 (T-22, T-23, T-40, T-41, T-42, T-43) | 6 |
-| data-gis | 0 | 0 | 4 (T-52, T-54, T-56, T-57) | 4 |
-| technical-lead | 0 | 0 | 2 (T-20, T-60) | 2 |
-
-T-54 is shared: data-gis does the check, then technical-lead updates the docs.
-T-56 and T-57 are proposed by data-gis and applied by the user. Each is counted
-once, under its first owner.
-
-## 2. Tasks by wave
-
-Colour key: **green** Done · **blue** In progress · **grey** Not started ·
-**amber** Not started and waiting on a decision · **red hexagon** pending decision
-· dotted box: a task from an earlier wave. Arrows point from a prerequisite to the
-task that needs it. Every wave ends with the T-90 verification gate.
+Key: **rectangle** = a task in this wave · **dotted rectangle** = a prerequisite
+from another wave or from outside the board, such as PR #1 (a dependency, not a
+status) · **hexagon** = a decision
+(D-x) · solid arrow = task dependency · dotted arrow = depends on a decision.
+Arrows point from a prerequisite to the task that needs it. Every wave ends with
+the T-90 verification gate. Colours and styles here never show status.
 
 ### Wave 0: safety and baseline
 
 ```mermaid
 flowchart LR
   D1{{"D-1"}}
+  PR1["PR #1 baseline<br/>(chore/baseline-safety-and-docs)"]
   subgraph W0["Wave 0"]
+    T05["T-05 git/PR workflow<br/>in CLAUDE.md"]
     T50["T-50 test_connection<br/>read-only session"]
     T51["T-51 wastewater<br/>dry-run default"]
     T61["T-61 streets + manholes<br/>dry-run default"]
@@ -62,20 +39,16 @@ flowchart LR
   D1 -.-> T61
   T50 -->|"then"| T51
   T51 -->|"then"| T61
+  PR1 --> T05
   W0 --> G0
 
-  classDef done fill:#bbf7d0,stroke:#15803d,color:#14532d
-  classDef progress fill:#bfdbfe,stroke:#1d4ed8,color:#1e3a8a
-  classDef todo fill:#e5e7eb,stroke:#6b7280,color:#111827
-  classDef decision fill:#fecaca,stroke:#b91c1c,color:#7f1d1d
-  class T51 done
-  class T50 progress
-  class T01,T02,T03,T61,G0 todo
+  classDef decision fill:#ffffff,stroke:#374151,color:#111827
+  classDef otherwave stroke-dasharray:4 3
   class D1 decision
+  class PR1 otherwave
 ```
 
-T-50 and T-51 were applied by the main conversation with user approval, while D-1
-is still formally pending.
+T-50, T-51 and T-61 go ahead with per-change user approval under D-1 option (a).
 
 ### Wave 1: fixes with no contract change
 
@@ -106,14 +79,10 @@ flowchart LR
   D3 -.-> T20
   W1 --> G1
 
-  classDef todo fill:#e5e7eb,stroke:#6b7280,color:#111827
-  classDef waiting fill:#fde68a,stroke:#b45309,color:#78350f
-  classDef decision fill:#fecaca,stroke:#b91c1c,color:#7f1d1d
-  classDef prior fill:#ffffff,stroke:#9ca3af,stroke-dasharray:4 3,color:#374151
-  class T10,T11,T12,T40,T41,T42,T52,G1 todo
-  class T20 waiting
+  classDef decision fill:#ffffff,stroke:#374151,color:#111827
+  classDef otherwave stroke-dasharray:4 3
   class D2,D3 decision
-  class T01p prior
+  class T01p otherwave
 ```
 
 ### Wave 2: contract v2
@@ -146,14 +115,10 @@ flowchart LR
   T52p --> T57
   W2 --> G2
 
-  classDef todo fill:#e5e7eb,stroke:#6b7280,color:#111827
-  classDef waiting fill:#fde68a,stroke:#b45309,color:#78350f
-  classDef decision fill:#fecaca,stroke:#b91c1c,color:#7f1d1d
-  classDef prior fill:#ffffff,stroke:#9ca3af,stroke-dasharray:4 3,color:#374151
-  class T21,T22,T57,G2 todo
-  class T53,T54 waiting
+  classDef decision fill:#ffffff,stroke:#374151,color:#111827
+  classDef otherwave stroke-dasharray:4 3
   class D6,D8 decision
-  class T20p,T10p,T12p,T40p,T52p prior
+  class T20p,T10p,T12p,T40p,T52p otherwave
 ```
 
 ### Wave 3: features and hygiene
@@ -197,14 +162,10 @@ flowchart LR
   D10 -.-> T70
   W3 --> G3
 
-  classDef todo fill:#e5e7eb,stroke:#6b7280,color:#111827
-  classDef waiting fill:#fde68a,stroke:#b45309,color:#78350f
-  classDef decision fill:#fecaca,stroke:#b91c1c,color:#7f1d1d
-  classDef prior fill:#ffffff,stroke:#9ca3af,stroke-dasharray:4 3,color:#374151
-  class T24,T59,T04,G3 todo
-  class T23,T55,T43,T70 waiting
+  classDef decision fill:#ffffff,stroke:#374151,color:#111827
+  classDef otherwave stroke-dasharray:4 3
   class D3,D4,D5,D10 decision
-  class T01p,T02p,T03p,T21p,T22p,T51p,T52p,T61p prior
+  class T01p,T02p,T03p,T21p,T22p,T51p,T52p,T61p otherwave
 ```
 
 ### Wave 4: needs approval or architecture work
@@ -228,24 +189,77 @@ flowchart LR
   T52p --> T60
   W4 --> G4
 
-  classDef todo fill:#e5e7eb,stroke:#6b7280,color:#111827
-  classDef waiting fill:#fde68a,stroke:#b45309,color:#78350f
-  classDef decision fill:#fecaca,stroke:#b91c1c,color:#7f1d1d
-  classDef prior fill:#ffffff,stroke:#9ca3af,stroke-dasharray:4 3,color:#374151
-  class T60,G4 todo
-  class T56,T58 waiting
+  classDef decision fill:#ffffff,stroke:#374151,color:#111827
+  classDef otherwave stroke-dasharray:4 3
   class D7,D9 decision
-  class T52p,T57p prior
+  class T52p,T57p otherwave
 ```
 
-## 3. Blockers and pending decisions
+## 2. Documentation synchronization (T-80 to T-89)
 
-All ten decisions are **PENDING**. Options and recommendations are on the
-[task board](task-board.md#decisions).
+Plan approved by the user 2026-11-17. These tasks use the same Wave field as the
+rest of the board (waves 1–3); each subgraph below is one wave. Dotted
+rectangles are prerequisites from the main waves above. Task details:
+[task board](task-board.md#documentation-synchronization-t-80-to-t-89).
 
-| Item | What it is | What it blocks |
+```mermaid
+flowchart LR
+  T05p["T-05"]
+  T03p["T-03"]
+  T52p["T-52"]
+  T59p["T-59"]
+  D8{{"D-8"}}
+  subgraph DS1["Wave 1"]
+    T80["T-80 conventions +<br/>doc map"]
+    T89["T-89 status out<br/>of Markdown"]
+    T81["T-81 docs check +<br/>link checker"]
+    T83["T-83 docs impact<br/>tool"]
+    T84["T-84 PR template +<br/>CLAUDE.md docs rules"]
+  end
+  subgraph DS2["Wave 2"]
+    T82["T-82 Mermaid +<br/>conventions lint"]
+    T85["T-85 CI docs<br/>workflow"]
+  end
+  subgraph DS3["Wave 3"]
+    T86["T-86 schema baseline<br/>migration"]
+    T87["T-87 schema doc<br/>generator"]
+    T88["T-88 consolidate<br/>schema docs"]
+  end
+  T80 --> T81
+  T80 --> T83
+  T80 --> T82
+  T81 --> T82
+  T83 --> T84
+  T05p -->|"same file: CLAUDE.md"| T84
+  T81 --> T85
+  T82 --> T85
+  T83 --> T85
+  T03p --> T85
+  T59p --> T85
+  T52p --> T86
+  D8 -.-> T86
+  T86 --> T87
+  T85 --> T87
+  T87 --> T88
+
+  classDef decision fill:#ffffff,stroke:#374151,color:#111827
+  classDef otherwave stroke-dasharray:4 3
+  class D8 decision
+  class T05p,T03p,T52p,T59p otherwave
+```
+
+T-86 overlaps T-53 (the `road_segments` DDL file); whether T-53 is closed as
+superseded is the user's decision.
+
+## 3. Decisions and what they block
+
+Options and recommendations are on the [task board](task-board.md#decisions).
+Whether a decision is made is shown in
+[Project #1](https://github.com/users/adrianfarhat/projects/1) (private).
+
+| Item | What it is | What depends on it |
 |---|---|---|
-| D-1 | Who edits `database/` and `extractors/` | Formally T-50 and T-51, which went ahead with per-change user approval. T-61 also depends on D-1. Becomes critical for the product vision, where most new work is SQL and data. |
+| D-1 | Who edits `database/` and `extractors/` | T-50, T-51 and T-61, which go ahead with per-change user approval under option (a). Becomes critical for the product vision, where most new work is SQL and data. |
 | D-2 | `/features` limits (bbox cap, order, rounding) | T-20 → T-21 → T-22, T-23 |
 | D-3 | Asset inspector data shape | T-20, T-23 |
 | D-4 | Loader policy (null geometry, DDL) | T-55, and the DDL item deferred from T-51 |
@@ -255,18 +269,18 @@ All ten decisions are **PENDING**. Options and recommendations are on the
 | D-8 | Path of the DDL file | T-53 |
 | D-9 | Whether to do schema migrations | T-56 |
 | D-10 | Test runner | T-70 |
-| User approval | One live read-only Neon run of `database/test_connection.py` | Closing T-50 |
-| Environment | T-01 needs a running dev server (the user may need to start it) | T-01, and through it T-10, T-11, T-40, T-41, T-70 |
 
-## 4. Latest verification results
+Other prerequisites that are not decisions:
 
-| Date | Task | Result | Details |
-|---|---|---|---|
-| 2026-11-16 | T-51 | **Done.** All checks pass with no Neon access. | [Task board → T-51](task-board.md#t-51-wastewater-loader-writes-nothing-by-default-p0) |
-| 2026-11-16 | T-50 | Code checks pass; the live read-only run is pending approval | [Task board → T-50](task-board.md#t-50-test_connectionpy-read-only-session-p0) |
-| 2026-11-16 | none (team inspection) | Run by integration-qa during the inspection, not yet recorded against a task: `tsc --noEmit` passes; lint 0 errors / 1,103 warnings, cause unknown (`.next/**` is already ignored). T-01 and T-03 will re-run and record. | [Task board findings](task-board.md#findings-from-the-2026-11-16-repository-inspection) |
+| Prerequisite | What depends on it |
+|---|---|
+| User approval for one live read-only Neon run of `database/test_connection.py` | The last T-50 acceptance check |
+| A running dev server for T-01 (the user may need to start it) | T-01, and through it T-10, T-11, T-40, T-41, T-70 |
 
-## 5. How work flows through the team
+Verification results are in the task board's
+[Evidence log](task-board.md#evidence-log).
+
+## 4. How work flows through the team
 
 ```mermaid
 flowchart TD
@@ -278,12 +292,15 @@ flowchart TD
   OW --> G2{{"Gate: user approval needed?<br/>DB write, migration, ETL run,<br/>dependency, config, env, push"}}
   G2 -->|"approved or not needed"| QA["integration-qa verifies<br/>(read-only checks)"]
   QA -->|"results"| MC
-  MC -->|"records results"| BOARD[("task-board.md<br/>+ this page")]
+  MC -->|"1. records evidence"| BOARD[("task-board.md<br/>scope + Evidence log")]
+  MC -->|"2. then sets status"| PROJ[("GitHub Project #1<br/>live status")]
+  U -.->|"may move cards<br/>(authoritative)"| PROJ
   BOARD -->|"review"| TL
   QA -->|"fails"| OW
 ```
 
 - Only the owner of a file edits it, and only one task edits a file at a time
   (CLAUDE.md, *Agents and file ownership*).
-- A task is `Done` only when its verification results are recorded on the board
-  (CLAUDE.md, rule 10).
+- A card moves to Done in Project #1 only after its verification results are
+  recorded on the task board (CLAUDE.md, rule 10). Only the main conversation
+  changes the Project; the user may also move cards directly.
