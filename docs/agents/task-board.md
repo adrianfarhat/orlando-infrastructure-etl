@@ -59,7 +59,7 @@ The technical-lead proposed this board on 2026-11-16 from the read-only team
 inspection (integration-qa checks plus backend, frontend and data-gis code
 reviews). It was saved with user approval. Every finding behind it comes from
 code reading unless it was run, and **none has been verified live**. All tasks
-are `Not started` (saved to the board but not yet dispatched). Approval to save
+were `Not started` when saved; since then T-50 is `In progress` and T-51 is `Done`. Approval to save
 the board does **not** approve any task's own approvals listed below.
 
 Approved by user 2026-11-17: T-61 added as P0. Task status is moving to GitHub
@@ -76,7 +76,7 @@ P2 quality · P3 later or optional.
 | T-02 | Confirm whether F-01 and F-08 are stale | P3 | integration-qa | none | none | Not started |
 | T-03 | Find the source of the 1,103 lint warnings | P2 | integration-qa | none | none | Not started |
 | T-04 | Update CLAUDE.md (Node through fnm) and the lint config if needed | P3 | main conversation (user approval) | T-02, T-03 | Config / CLAUDE.md | Not started |
-| T-10 | Features route: own-key layer allowlist, strict bbox parsing | P1 | backend | T-01 | none (brings code in line with the current contract) | Not started |
+| T-10 | Features route: layer and bbox validation hardening | P1 | backend | T-01 | none (brings code in line with the current contract) | Not started |
 | T-11 | `db.ts` hardening: lazy env check, pool error handler, timeouts | P1 | backend | T-01 | none | Not started |
 | T-12 | Safer server-side error logging in all three routes | P2 | backend | T-10 | none | Not started |
 | T-20 | `/features` contract v2 and contract nits | P1 | technical-lead | D-2, D-3 | **Contract change** | Not started |
@@ -105,7 +105,7 @@ P2 quality · P3 later or optional.
 
 ### Task details
 
-Every task: **Status:** Not started · **Verification results:** pending.
+Every task is **Status:** Not started with **Verification results:** pending, unless the task says otherwise (T-50, T-51).
 
 #### T-01: Baseline verification
 - Scope: read-only checks: `npm run build`, dev server, curl of the 3 routes, browser check of `/operations/map`.
@@ -128,7 +128,7 @@ Every task: **Status:** Not started · **Verification results:** pending.
 - Verification: integration-qa re-runs lint.
 
 #### T-10: Features route input validation
-- Scope: `web/src/app/api/infrastructure/features/route.ts` (lines 20 and 34).
+- Scope: `web/src/app/api/infrastructure/features/route.ts`.
 - Acceptance: only the documented layer names are accepted, and any malformed `layer` or `bbox` value returns a 400 JSON error; valid calls behave as in T-01.
 - Verification: curl test matrix, `tsc`, lint.
 

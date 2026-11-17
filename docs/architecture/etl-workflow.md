@@ -14,7 +14,7 @@ and the overall picture is in [system-architecture.md](system-architecture.md).
 | Loader | Source layer | Target table | Default behaviour | Writes when | Loads `.env` from |
 |---|---|---|---|---|---|
 | [load_orlando_streets.py](../../extractors/load_orlando_streets.py) | `services5.arcgis.com/.../Street_Centerline/FeatureServer/0`, requested as GeoJSON | `road_segments` | **Writes all records.** No flags and no dry run. Does not create the table. | Every run | `load_dotenv()` with no path ([:10](../../extractors/load_orlando_streets.py#L10)). Run as a script, it searches upward from the script's own folder and finds the root `.env`. It does not depend on the current directory (see F-10). |
-| [load_orlando_wastewater.py](../../extractors/load_orlando_wastewater.py) | `gis.orlando.gov/.../PRR/Wastewater_Reclaim_Utilities/MapServer/12`, requested as Esri JSON | `utility_lines` | **Dry run** (T-51): fetches the ID list and prints counts. Makes no database connection. 5 records by default, or all with `--full`. | Only with `--write` | Project root, explicitly ([:160-162](../../extractors/load_orlando_wastewater.py#L160-L162)) |
+| [load_orlando_wastewater.py](../../extractors/load_orlando_wastewater.py) | `gis.orlando.gov/.../PRR/Wastewater_Reclaim_Utilities/MapServer/12`, requested as Esri JSON | `utility_lines` | **Dry run** (T-51): fetches the ID list and prints counts. Makes no database connection. 5 records by default, or all with `--full`. `DATABASE_URL` must still be set (see T-55 follow-up). | Only with `--write` | Project root, explicitly ([:160-162](../../extractors/load_orlando_wastewater.py#L160-L162)) |
 | [load_orlando_manholes.py](../../extractors/load_orlando_manholes.py) | `gis.orlando.gov/.../Test/Wastewater_Reclaim_Utilities__Labels__Max_Scale_1_1_000_/MapServer/1`, requested as GeoJSON | `manholes` | **Writes**, importing the local file `data/raw/orlando_manholes.geojson`. `--download` refreshes that file first. | Every run | Project root, explicitly ([:113](../../extractors/load_orlando_manholes.py#L113)) |
 
 All three use upsert (`INSERT … ON CONFLICT … DO UPDATE`), so re-running a loader
@@ -22,12 +22,11 @@ updates rows instead of duplicating them. None of them ever deletes a row.
 
 ## The common pattern
 
-Every loader follows the same idea. It differs only in details, shown in the next
-section.
+Every loader follows the same idea, but the order differs: streets and wastewater download batch by batch while connected, and only manholes downloads everything first. Streets has no DDL, safety gate or count check.
 
 ```mermaid
 flowchart LR
-  A["1. Ask ArcGIS for<br/>all OBJECTIDs"] --> B["2. Download features<br/>in batches"]
+  A["1. Ask ArcGIS for<br/>all OBJECTIDs"] --> B["2. Download features<br/>(manholes: all first;<br/>streets, wastewater: per batch)"]
   B --> C["3. Validate:<br/>IDs match, geometry OK"]
   C --> D{"4. Safety gate:<br/>allowed to write?"}
   D -->|"no"| E["Dry run:<br/>print counts, stop"]

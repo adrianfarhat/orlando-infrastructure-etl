@@ -72,7 +72,7 @@ flowchart LR
     E1[".env (repo root)"]
     E2["web/.env.local"]
   end
-  ROLE{{"Role: neondb_owner<br/>can SELECT, INSERT, UPDATE, DROP"}}
+  ROLE{{"Role: neondb_owner (owner role, baseline)"}}
   E1 -->|"DATABASE_URL"| ETL["Python loaders + database/test_connection.py"]
   E2 -->|"DATABASE_URL"| APP["Next.js server (db.ts)"]
   ETL --> ROLE
@@ -186,15 +186,15 @@ Where each step lives in the code:
 | 3. Build the bbox | [:76-83](../../web/src/components/InfrastructureMap.tsx#L76-L83) |
 | 4–6. Three parallel fetches (`Promise.all`) | [:87-93](../../web/src/components/InfrastructureMap.tsx#L87-L93) |
 | 7. Validate input | [features/route.ts:17-57](../../web/src/app/api/infrastructure/features/route.ts#L17-L57) |
-| 8–9. SQL with bound parameters `$1..$4` | [route.ts:59-72](../../web/src/app/api/infrastructure/features/route.ts#L59-L72) |
-| 11. Response, `truncated` | [route.ts:74-86](../../web/src/app/api/infrastructure/features/route.ts#L74-L86) |
-| 12. Stale-response check, `setData` | [InfrastructureMap.tsx:103-114](../../web/src/components/InfrastructureMap.tsx#L103-L114) |
-| 13. Report counts only if all layers loaded | [:131-137](../../web/src/components/InfrastructureMap.tsx#L131-L137) |
-| 14. Dashboard shows counts, `+` when truncated | [InfrastructureDashboard.tsx:182-196](../../web/src/components/InfrastructureDashboard.tsx#L182-L196) |
+| 8–11. SQL with bound parameters `$1..$4` | [route.ts:59-72](../../web/src/app/api/infrastructure/features/route.ts#L59-L72) |
+| 12. Response, `truncated` | [route.ts:74-86](../../web/src/app/api/infrastructure/features/route.ts#L74-L86) |
+| 13. Stale-response check, `setData` | [InfrastructureMap.tsx:103-114](../../web/src/components/InfrastructureMap.tsx#L103-L114) |
+| 14. Report counts only if all layers loaded | [:131-137](../../web/src/components/InfrastructureMap.tsx#L131-L137) |
+| 15. Dashboard shows counts, `+` when truncated | [InfrastructureDashboard.tsx:182-196](../../web/src/components/InfrastructureDashboard.tsx#L182-L196) |
 
 **Why it's built this way, and where it's weak**
 
-- **Only the visible area is loaded (bbox).** The three tables hold about 62,000
+- **Only the visible area is loaded (bbox).** The three tables hold about 62,500
   features *(baseline)*. Sending them all on every pan would be slow. The GiST
   index on `geom` lets PostGIS find the features in a rectangle without scanning
   the whole table.
@@ -209,7 +209,7 @@ Where each step lives in the code:
   the SQL string directly. The allowlist is what makes that safe. The validation
   has a known gap that is being fixed under T-10.
 - **Known gaps:**
-  - If any one layer fails, step 13 never runs and the dashboard keeps showing
+  - If any one layer fails, step 14 never runs and the dashboard keeps showing
     "Loading map…" (T-40).
   - `moveend` is not debounced (T-40).
 
@@ -311,7 +311,7 @@ These are open, so the diagram stays a direction, not a plan.
 | 3 | [extractors/load_orlando_wastewater.py](../../extractors/load_orlando_wastewater.py) | The same pattern plus the dry-run safety gate ([:188-193](../../extractors/load_orlando_wastewater.py#L188-L193)) and table DDL. Compare it with the streets loader. |
 | 4 | [database/test_connection.py](../../database/test_connection.py) | The smallest example of a read-only database session (`conn.read_only = True`, [:13](../../database/test_connection.py#L13)) |
 | 5 | [database-schema.md](database-schema.md) and [data-contracts.md](data-contracts.md) | What the tables look like and what the API promises |
-| 6 | [web/src/lib/db.ts](../../web/src/lib/db.ts) | 25 lines: how the server connects once and shares it |
+| 6 | [web/src/lib/db.ts](../../web/src/lib/db.ts) | 24 lines: how the server connects once and shares it |
 | 7 | [web/src/app/api/infrastructure/summary/route.ts](../../web/src/app/api/infrastructure/summary/route.ts) | The simplest route: one query, JSON out, `try/catch` returning a 500 with no details |
 | 8 | [.../features/route.ts](../../web/src/app/api/infrastructure/features/route.ts) | Input validation, the allowlist, a spatial query with bound parameters |
 | 9 | [.../stats/route.ts](../../web/src/app/api/infrastructure/stats/route.ts) | Six queries in parallel (`Promise.all`), `GROUP BY`, code → label mapping |

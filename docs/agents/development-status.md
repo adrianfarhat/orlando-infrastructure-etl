@@ -14,7 +14,7 @@ only on the board, and this page links to them.
 | Done | T-51 | 1 |
 | In progress | T-50 (waiting for user approval of one live read-only run) | 1 |
 | Not started, waiting on a pending decision | T-20, T-23, T-43, T-53, T-54, T-55, T-56, T-58, T-70 | 9 |
-| Not started, no decision needed | T-01, T-02, T-03, T-04, T-10, T-11, T-12, T-21, T-22, T-24, T-40, T-41, T-42, T-52, T-57, T-59, T-60, T-61, T-90 | 19 |
+| Not started, no decision needed | T-01, T-02, T-03, T-04, T-10, T-11, T-12, T-21, T-22, T-24, T-40, T-41, T-42, T-52, T-57, T-59, T-60, T-61 (D-1 pending; proceeds with per-change user approval, as T-50/T-51), T-90 | 19 |
 | Blocked | none | 0 |
 | **Total** | | **30** |
 
@@ -167,6 +167,7 @@ flowchart LR
   T22p["T-22"]
   T51p["T-51"]
   T52p["T-52"]
+  T61p["T-61"]
   D3{{"D-3"}}
   D4{{"D-4"}}
   D5{{"D-5"}}
@@ -187,6 +188,7 @@ flowchart LR
   T21p --> T24
   T51p --> T55
   T52p --> T55
+  T61p --> T55
   D4 -.-> T55
   T02p --> T04
   T03p --> T04
@@ -202,7 +204,7 @@ flowchart LR
   class T24,T59,T04,G3 todo
   class T23,T55,T43,T70 waiting
   class D3,D4,D5,D10 decision
-  class T01p,T02p,T03p,T21p,T22p,T51p,T52p prior
+  class T01p,T02p,T03p,T21p,T22p,T51p,T52p,T61p prior
 ```
 
 ### Wave 4: needs approval or architecture work
@@ -276,8 +278,8 @@ flowchart TD
   OW --> G2{{"Gate: user approval needed?<br/>DB write, migration, ETL run,<br/>dependency, config, env, push"}}
   G2 -->|"approved or not needed"| QA["integration-qa verifies<br/>(read-only checks)"]
   QA -->|"results"| MC
-  MC -->|"records results"| TB[("task-board.md<br/>+ this page")]
-  TB -->|"review"| TL
+  MC -->|"records results"| BOARD[("task-board.md<br/>+ this page")]
+  BOARD -->|"review"| TL
   QA -->|"fails"| OW
 ```
 
