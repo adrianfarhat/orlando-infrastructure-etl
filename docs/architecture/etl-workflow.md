@@ -24,14 +24,14 @@ updates rows instead of duplicating them. None of them ever deletes a row.
 
 ## The common pattern
 
-Every loader follows the same idea, but the order differs: streets and wastewater download batch by batch while connected, and only manholes downloads everything first. Streets has no DDL, safety gate or count check.
+Streets and wastewater follow this pattern. The manholes loader differs: it imports a saved GeoJSON file, which it refreshes only with `--download` by paging through ArcGIS by offset, and it validates every feature before connecting. Only the wastewater loader has the safety gate today (T-61 plans it for the other two). Streets also creates no table (step 6) and has no database count check (step 8). The per-loader diagrams below show each one exactly.
 
 ```mermaid
 flowchart LR
   %% diagram-type: process
-  A["1. Ask ArcGIS for<br/>all OBJECTIDs"] --> B["2. Download features<br/>(manholes: all first;<br/>streets, wastewater: per batch)"]
-  B --> C["3. Validate:<br/>IDs match, geometry OK"]
-  C --> D{"4. Safety gate:<br/>allowed to write?"}
+  A["1. Ask ArcGIS for<br/>all OBJECTIDs<br/>(manholes: pages by offset instead)"] --> B["2. Download features<br/>(manholes: all first;<br/>streets, wastewater: per batch)"]
+  B --> C["3. Validate IDs and geometry<br/>(manholes: IDs present and unique,<br/>plus strict Point and coordinate checks;<br/>no comparison with ArcGIS)"]
+  C --> D{"4. Safety gate:<br/>allowed to write?<br/>(wastewater only today; T-61)"}
   D -->|"no"| E["Dry run:<br/>print counts, stop"]
   D -->|"yes, user approved"| F["5. Connect to Neon"]
   F --> G["6. DDL<br/>CREATE ... IF NOT EXISTS"]
@@ -44,6 +44,8 @@ returns. Asking for the full ID list first, then requesting exact ID batches,
 means the loader can prove it got every record: the set of IDs returned must
 equal the set asked for. That is safer than paging with offsets, where a record
 inserted mid-download can shift pages.
+
+What each loader actually checks: streets compares every batch with the IDs it asked for and, at the end, confirms it retrieved the whole ID list from ArcGIS. Wastewater compares every batch with the IDs it asked for. After a write run it also counts the rows stored for its source system; with `--full` it prints a warning, without stopping, if that count differs from the number of ArcGIS IDs. The manholes loader pages with offsets instead: at download time it checks only that every downloaded feature has an OBJECTID and that none repeats (before importing, it also rejects any feature that is not a valid Point with in-range coordinates). It does not compare against an ID list or a total count from ArcGIS, so it cannot prove the download is complete. Its later count check compares the database with the saved file, not with ArcGIS.
 
 ## Each loader in detail
 

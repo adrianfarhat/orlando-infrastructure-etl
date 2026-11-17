@@ -16,7 +16,7 @@ from another wave or from outside the board, such as PR #1 (a dependency, not a
 status) · **hexagon** = a decision
 (D-x) · solid arrow = task dependency · dotted arrow = depends on a decision.
 Arrows point from a prerequisite to the task that needs it. Every wave ends with
-the T-90 verification gate. Colours and styles here never show status.
+the T-90 verification gate. Each wave's T-90 gate also covers the documentation-synchronization tasks in that wave, which are shown in their own diagram below. Colours and styles here never show status.
 
 ### Wave 0: safety and baseline
 
@@ -50,6 +50,7 @@ flowchart LR
 ```
 
 T-50, T-51 and T-61 go ahead with per-change user approval under D-1 option (a).
+The 'then' arrows (T-50 → T-51 → T-61) show the order the tasks are edited in, taken from the execution waves. They are not dependencies on the Project cards.
 
 ### Wave 1: fixes with no contract change
 
