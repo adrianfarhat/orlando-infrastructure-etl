@@ -2,10 +2,11 @@
 """Load Orlando wastewater gravity lines into Neon/PostGIS.
 
 Test:
-    python extractors/load_orlando_wastewater.py
+    python extractors/load_orlando_wastewater.py            (dry run, no database access)
+    python extractors/load_orlando_wastewater.py --write    (writes 5 records)
 
 Full extraction (after verifying data-use permission):
-    python extractors/load_orlando_wastewater.py --full
+    python extractors/load_orlando_wastewater.py --full --write
 
 Requires:
     pip install requests "psycopg[binary]" python-dotenv
@@ -148,6 +149,12 @@ def main():
         help="Load all records (verify permitted use first)",
     )
 
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help="Write to the database (default: dry run, no database connection)",
+    )
+
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parent.parent
@@ -175,8 +182,15 @@ def main():
 
         print(
             f"API reports {len(ids)} IDs; "
-            f"loading {len(selected)} ({mode} mode)"
+            f"selected {len(selected)} ({mode} mode)"
         )
+
+        if not args.write:
+            print(
+                "Dry run: no database connection made. "
+                "Re-run with --write to load these records."
+            )
+            return
 
         with psycopg.connect(database_url) as conn:
 

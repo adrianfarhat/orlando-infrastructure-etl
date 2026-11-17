@@ -6,39 +6,30 @@ unverified, it says so.
 
 ## Components
 
-```
-City of Orlando ArcGIS REST services
-        │  (HTTP, public)
-        ▼
-Python ETL loaders (extractors/)  ── upsert ──►  Neon PostgreSQL 18.7 + PostGIS 3.6.4
-                                                   public.road_segments
-                                                   public.utility_lines
-                                                   public.manholes
-                                                          │  (pg pool, DATABASE_URL)
-                                                          ▼
-                                     Next.js 16.4.6 API routes (web/src/app/api/infrastructure)
-                                       GET /summary   GET /features   GET /stats
-                                                          │  (JSON / GeoJSON)
-                                                          ▼
-                                     React client components (web/src/components)
-                                       InfrastructureMap (MapLibre 6.17)
-                                       InfrastructureDashboard
-                                       OperationsView → /operations/map
-```
+Diagrams of the components, the read and write paths, the credential boundary,
+one map pan step by step, and the target product vision are in
+[system-architecture.md](system-architecture.md).
+
+Versions at the 2026-11-16 baseline: Neon PostgreSQL 18.7 + PostGIS 3.6.4,
+Next.js 16.4.6, MapLibre 6.17.
 
 ## 1. ETL (`extractors/`)
 
 Python 3 with `requests`, `psycopg` 3 and `python-dotenv`, installed in `.venv`.
 There is no `requirements.txt`.
 
-| Loader | Source layer | Target table | Behaviour |
-|---|---|---|---|
-| `load_orlando_streets.py` | `services5.arcgis.com/.../Street_Centerline/FeatureServer/0` (GeoJSON) | `road_segments` | Gets all object IDs, then downloads and upserts in batches of 200 on `source_objectid`. Checks that each batch returns exactly the IDs requested. **Does not create the table.** Loads `.env` from the current directory. |
-| `load_orlando_wastewater.py` | `gis.orlando.gov/.../PRR/Wastewater_Reclaim_Utilities/MapServer/12` | `utility_lines` | **Test mode by default: loads 5 records.** `--full` loads all records; the code comments say to check data-use permission first. Creates the table and spatial index if missing. Upserts on `(source_system, source_objectid)`. |
-| `load_orlando_manholes.py` | `gis.orlando.gov/.../Test/Wastewater_Reclaim_Utilities__Labels__Max_Scale_1_1_000_/MapServer/1` | `manholes` | By default imports `data/raw/orlando_manholes.geojson`. `--download` refreshes that file first. Validates IDs and coordinates, upserts, and checks the stored count. Note that the source sits in a `Test` service folder. |
+The loader table (sources, targets, default behaviour, `.env` loading), the
+per-loader flowcharts, the safety gates and the known inconsistencies are in
+[etl-workflow.md](etl-workflow.md). In short:
 
-Every loader **writes to Neon and overwrites existing rows** with source data
-(`ON CONFLICT … DO UPDATE`). Running any of them needs user approval; see `CLAUDE.md`.
+- The wastewater loader is now a **dry run by default**: no database connection
+  unless `--write` is given (T-51).
+- The streets loader's `load_dotenv()` finds the root `.env` by searching upward
+  from the script's own folder. It is **not** dependent on the current directory
+  (corrected F-10).
+- The streets and manholes loaders still **write on every run** (fix planned: T-61). Every write run
+  overwrites existing rows with source data (`ON CONFLICT … DO UPDATE`) and needs
+  user approval; see `CLAUDE.md`.
 
 ## 2. Database (Neon)
 

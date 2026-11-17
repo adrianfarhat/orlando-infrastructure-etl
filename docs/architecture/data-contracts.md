@@ -5,6 +5,8 @@ Change a contract here first, in its own task, before changing any code (see
 `CLAUDE.md`). Baseline verified on 2026-11-16 against the live Neon database
 (read-only) and the current source.
 
+Entity diagrams and a SQL learning guide are in [database-schema.md](database-schema.md).
+
 ## Database tables (`public` schema, real municipal data)
 
 All geometry is EPSG:4326, 2D. Each `geom` column has a GiST index. The baseline
