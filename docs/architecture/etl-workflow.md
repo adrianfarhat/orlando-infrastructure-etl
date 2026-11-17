@@ -28,6 +28,7 @@ Every loader follows the same idea, but the order differs: streets and wastewate
 
 ```mermaid
 flowchart LR
+  %% diagram-type: process
   A["1. Ask ArcGIS for<br/>all OBJECTIDs"] --> B["2. Download features<br/>(manholes: all first;<br/>streets, wastewater: per batch)"]
   B --> C["3. Validate:<br/>IDs match, geometry OK"]
   C --> D{"4. Safety gate:<br/>allowed to write?"}
@@ -50,6 +51,7 @@ inserted mid-download can shift pages.
 
 ```mermaid
 flowchart TD
+  %% diagram-type: process
   S0(["python extractors/load_orlando_streets.py<br/>WRITES: needs approval"]) --> S1["load_dotenv() at import"]
   S1 --> S2["get_all_ids(): POST returnIdsOnly"]
   S2 --> S3["Connect to Neon immediately"]
@@ -74,6 +76,7 @@ per-batch commit [:163](../../extractors/load_orlando_streets.py#L163).
 
 ```mermaid
 flowchart TD
+  %% diagram-type: process
   W0(["python extractors/load_orlando_wastewater.py<br/>[--full] [--write]"]) --> W1["Load root .env,<br/>require DATABASE_URL"]
   W1 --> W2["get_ids(): GET returnIdsOnly<br/>User-Agent set, 4 attempts"]
   W2 --> W3["Select 5 IDs, or all with --full"]
@@ -104,6 +107,7 @@ count and warning [:306-326](../../extractors/load_orlando_wastewater.py#L306-L3
 
 ```mermaid
 flowchart TD
+  %% diagram-type: process
   M0(["python extractors/load_orlando_manholes.py<br/>[--download]  WRITES: needs approval"]) --> M1{"--download?"}
   M1 -->|"yes"| M2["Page through ArcGIS<br/>resultOffset, 1000 per page, no retries"]
   M2 --> M3["Check no missing or<br/>duplicate OBJECTIDs"]
@@ -138,6 +142,7 @@ purpose.
 
 ```mermaid
 flowchart TD
+  %% diagram-type: process
   Q(["Someone wants to run a script"]) --> K{"Which script?"}
   K -->|"database/test_connection.py"| RO["Read-only session:<br/>conn.read_only = True (T-50).<br/>Live run still awaits user approval."]
   K -->|"wastewater, no --write"| DRY["Dry run: no DB connection.<br/>One public ArcGIS GET."]

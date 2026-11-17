@@ -17,6 +17,7 @@ to writing SQL against it safely.
 
 ```mermaid
 erDiagram
+  %% diagram-type: er
   road_segments {
     bigint id PK "serial"
     integer source_objectid UK "unique ON ITS OWN"
@@ -95,50 +96,58 @@ Mermaid entity names can't contain dots, so `demo_potholes` means table
 `potholes` in schema `demo`, and `analysis_road_pipe_overlap` means table
 `road_pipe_overlap` in schema `analysis`.
 
+In the diagram below, a **solid line** is an ordinary reference whose value is
+assigned directly. A **dashed line** is a reference whose value is **computed from
+geometry** (see the table after the diagram), or a link that is only conceptual.
+Columns that point into `public` are marked "ref public.…": whether they become
+enforced foreign keys or logical links is undecided (T-60, first question below).
+Only references inside the proposed schemas keep `FK`.
+
 ```mermaid
 erDiagram
-  road_segments ||--o{ analysis_road_pipe_overlap : "road side"
-  utility_lines ||--o{ analysis_road_pipe_overlap : "pipe side"
-  road_segments ||--o{ analysis_manhole_road : "nearest road"
-  manholes ||--o| analysis_manhole_road : "is linked"
-  road_segments ||--o{ demo_potholes : "nearest segment"
-  road_segments ||--o{ demo_road_condition : "scored"
+  %% diagram-type: er
+  road_segments ||..o{ analysis_road_pipe_overlap : "computed: buffer overlap (road side)"
+  utility_lines ||..o{ analysis_road_pipe_overlap : "computed: buffer overlap (pipe side)"
+  road_segments ||..o{ analysis_manhole_road : "computed: nearest road (KNN)"
+  manholes ||..o| analysis_manhole_road : "computed: nearest road (KNN)"
+  road_segments ||..o{ demo_potholes : "computed or assigned: method undecided"
+  road_segments ||--o{ demo_road_condition : "scored per segment"
   road_segments ||--o{ demo_maintenance_jobs : "job on"
   demo_maintenance_jobs ||--o{ demo_coordination_opportunities : "road job"
-  utility_lines ||--o{ demo_coordination_opportunities : "pipe underneath"
+  utility_lines ||..o{ demo_coordination_opportunities : "computed: pipe within road buffer"
   demo_sensors ||--o{ demo_sensor_readings : "records"
-  utility_lines |o--o{ demo_sensors : "mounted on (optional)"
-  manholes |o--o{ demo_sensors : "mounted in (optional)"
+  utility_lines |o..o{ demo_sensors : "conceptual, not implemented: no column or assignment method defined"
+  manholes |o..o{ demo_sensors : "conceptual, not implemented: no column or assignment method defined"
 
   analysis_road_pipe_overlap {
-    bigint road_segment_id FK
-    bigint utility_line_id FK
+    bigint road_segment_id "ref public.road_segments"
+    bigint utility_line_id "ref public.utility_lines"
     numeric overlap_m "pipe length inside road buffer"
-    numeric buffer_m "e.g. 10"
+    numeric buffer_m "parameter used; value undecided (10 is an example)"
     text run_id
   }
   analysis_manhole_road {
-    bigint manhole_id FK
-    bigint road_segment_id FK
+    bigint manhole_id "ref public.manholes"
+    bigint road_segment_id "ref public.road_segments"
     numeric distance_m
     text run_id
   }
   demo_potholes {
     bigint id PK
     text source_system "synthetic_potholes"
-    bigint road_segment_id FK
+    bigint road_segment_id "ref public.road_segments"
     smallint severity
     geometry geom "Point"
   }
   demo_road_condition {
-    bigint road_segment_id FK
+    bigint road_segment_id "ref public.road_segments"
     smallint score "0-100, PCI-like"
     date as_of
     text source_system "synthetic_..."
   }
   demo_maintenance_jobs {
     bigint id PK
-    bigint road_segment_id FK
+    bigint road_segment_id "ref public.road_segments"
     text job_type
     numeric priority
     text rule_version
@@ -147,7 +156,7 @@ erDiagram
   demo_coordination_opportunities {
     bigint id PK
     bigint job_id FK
-    bigint utility_line_id FK
+    bigint utility_line_id "ref public.utility_lines"
     numeric overlap_m
     text reason "why it was flagged"
   }
@@ -163,6 +172,24 @@ erDiagram
     numeric value
   }
 ```
+
+### Spatial relationships (proposed, computed)
+
+None of these exist. Parameters marked *undecided* need a decision in T-60 or the
+analysis work. Numbers elsewhere on this page (10 m in the diagram and Q6, 15 m in
+Q5, 5 m and 15 m in the Q6 exercise) are **examples for learning, not decisions**.
+
+| Relationship | Operation | Inputs | Parameters | Stored as | Implementation |
+|---|---|---|---|---|---|
+| Road–pipe overlap | Length of pipe within a buffer around each road segment (index prefilter, then exact overlap) | `road_segments.geom`, `utility_lines.geom` | Buffer distance: undecided. Metres via `::geography` or a projected SRID: undecided. Minimum overlap to keep a row: undecided | `analysis.road_pipe_overlap` (both refs, `overlap_m`, `buffer_m`, `run_id`) | Proposed (T-60) |
+| Manhole → nearest road | Nearest neighbour (KNN `<->`), then exact distance | `manholes.geom`, `road_segments.geom` | Maximum distance: undecided. Tie-break: undecided | `analysis.manhole_road` (both refs, `distance_m`, `run_id`) | Proposed (T-60) |
+| Pothole → road segment | Nearest segment, or placed on a chosen segment by the generator: undecided | synthetic pothole `geom`, `road_segments.geom` | Maximum distance, tie-break: undecided | `demo.potholes.road_segment_id` | Proposed; result is synthetic |
+| Job → pipes underneath | Reuse road–pipe overlap for the job's segment | `demo.maintenance_jobs`, `analysis.road_pipe_overlap` | Overlap threshold: undecided | `demo.coordination_opportunities` (`job_id`, `utility_line_id`, `overlap_m`) | Proposed; synthetic (job input) |
+| Sensor → pipe or manhole | Undecided | synthetic sensor `geom`, `utility_lines` / `manholes` | Undecided | No column defined | Conceptual; not implemented; assignment method undecided |
+
+This section covers only the proposed target model, following
+[conventions.md § 4](conventions.md#4-spatial-relationships-are-not-foreign-keys).
+The section for the built schema is T-88's.
 
 Questions the T-60 design has to answer:
 
@@ -185,6 +212,7 @@ professional team would. **Read the whole section before running anything.**
 
 ```mermaid
 flowchart LR
+  %% diagram-type: process
   A["1. Explore<br/>read-only session"] --> B["2. Write the query<br/>small area, LIMIT"]
   B --> C["3. EXPLAIN<br/>(then EXPLAIN ANALYZE<br/>for SELECTs only)"]
   C --> D["4. Peer review<br/>(technical-lead / data-gis)"]

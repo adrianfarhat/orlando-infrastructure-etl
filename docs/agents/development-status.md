@@ -22,6 +22,7 @@ the T-90 verification gate. Colours and styles here never show status.
 
 ```mermaid
 flowchart LR
+  %% diagram-type: dependency
   D1{{"D-1"}}
   PR1["PR #1 baseline<br/>(chore/baseline-safety-and-docs)"]
   subgraph W0["Wave 0"]
@@ -54,6 +55,7 @@ T-50, T-51 and T-61 go ahead with per-change user approval under D-1 option (a).
 
 ```mermaid
 flowchart LR
+  %% diagram-type: dependency
   T01p["T-01"]
   D2{{"D-2"}}
   D3{{"D-3"}}
@@ -89,6 +91,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
+  %% diagram-type: dependency
   T20p["T-20"]
   T10p["T-10"]
   T12p["T-12"]
@@ -102,6 +105,7 @@ flowchart LR
     T53["T-53 road_segments<br/>DDL file"]
     T54["T-54 manholes<br/>provenance"]
     T57["T-57 read-only<br/>DB role"]
+    T59["T-59 requirements.txt"]
   end
   G2["T-90 gate"]
   T20p --> T21
@@ -125,6 +129,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
+  %% diagram-type: dependency
   T01p["T-01"]
   T02p["T-02"]
   T03p["T-03"]
@@ -133,6 +138,7 @@ flowchart LR
   T51p["T-51"]
   T52p["T-52"]
   T61p["T-61"]
+  T84p["T-84"]
   D3{{"D-3"}}
   D4{{"D-4"}}
   D5{{"D-5"}}
@@ -141,7 +147,6 @@ flowchart LR
     T23["T-23 asset<br/>inspector"]
     T24["T-24 stats<br/>caching"]
     T55["T-55 loader<br/>consistency"]
-    T59["T-59 requirements.txt"]
     T04["T-04 CLAUDE.md +<br/>lint config"]
     T43["T-43 metadata,<br/>home page"]
     T70["T-70 test<br/>harness plan"]
@@ -157,6 +162,7 @@ flowchart LR
   D4 -.-> T55
   T02p --> T04
   T03p --> T04
+  T84p -->|"same file: CLAUDE.md"| T04
   D5 -.-> T43
   T01p --> T70
   D10 -.-> T70
@@ -165,13 +171,14 @@ flowchart LR
   classDef decision fill:#ffffff,stroke:#374151,color:#111827
   classDef otherwave stroke-dasharray:4 3
   class D3,D4,D5,D10 decision
-  class T01p,T02p,T03p,T21p,T22p,T51p,T52p,T61p otherwave
+  class T01p,T02p,T03p,T21p,T22p,T51p,T52p,T61p,T84p otherwave
 ```
 
 ### Wave 4: needs approval or architecture work
 
 ```mermaid
 flowchart LR
+  %% diagram-type: dependency
   T52p["T-52"]
   T57p["T-57"]
   D7{{"D-7"}}
@@ -204,6 +211,7 @@ rectangles are prerequisites from the main waves above. Task details:
 
 ```mermaid
 flowchart LR
+  %% diagram-type: dependency
   T05p["T-05"]
   T03p["T-03"]
   T52p["T-52"]
@@ -284,6 +292,7 @@ Verification results are in the task board's
 
 ```mermaid
 flowchart TD
+  %% diagram-type: process
   U(["User"]) -->|"request"| MC["Main conversation<br/>(coordinator)"]
   MC -->|"asks for a plan"| TL["technical-lead<br/>writes tasks: owner, scope,<br/>acceptance, dependencies"]
   TL -->|"proposed tasks"| G1{{"Gate: user approves<br/>the plan / board"}}

@@ -49,6 +49,7 @@ Example:
 
 ```mermaid
 flowchart LR
+  %% diagram-type: example
   subgraph EXT["External services"]
     X["ArcGIS REST"]
   end
@@ -77,7 +78,7 @@ Rules:
 - Verification is about the component as drawn. If a node bundles several things
   and only part is verified (for example one loader's dry-run gate), the node stays
   `unverified`.
-- Every architecture diagram carries the legend line.
+- Only architecture diagrams (`%% diagram-type: architecture`) carry the legend line and the four standard classDefs. Process, sequence, dependency and ER diagrams do not need them (section 2).
 - **Colour must never encode task status.** No green "done", amber "waiting" and so
   on, in any diagram. Status belongs only in Project #1.
 - People and the browser (actors) are not components and take no class. Open
@@ -87,13 +88,31 @@ Rules:
 
 ## 2. Diagram types
 
-| Type | Examples | Legend applies? | Rule |
-|---|---|---|---|
-| Architecture / component | System big picture, credential boundary, inside the web app, target state | **Yes** | Every component node gets a class and, if not `verified` or `external`, a suffix |
-| Process / flow | Loader flowcharts, safety gates, SQL workflow, team workflow | No | Must not show a planned step as if it were built: mark it "(planned)" in the label |
-| Sequence | One map pan | No | Shows built behaviour only; planned behaviour goes in prose or a separate diagram |
-| Dependency / wave | Task waves, docs-sync initiative | No | Shows dependencies only. No status colours. Decisions are hexagons (a type, not a status) |
-| Data model (ER) | Current and target schema | No | The section heading says built or proposed; spatial relationships follow section 4 |
+| Type | Marker | Examples | Legend required? | Rule |
+|---|---|---|---|---|
+| Architecture / component | `architecture` | System big picture, credential boundary, inside the web app, target state | **Yes**: legend line above the block and the four standard classDefs | Every component node gets a class and, if not `verified` or `external`, a suffix |
+| Process / flow | `process` | Loader flowcharts, safety gates, SQL workflow, team workflow | No | Must not show a planned step as if it were built: mark it "(planned)" in the label |
+| Sequence | `sequence` | One map pan | No | Shows built behaviour only; planned behaviour goes in prose or a separate diagram |
+| Dependency / wave | `dependency` | Task waves, docs-sync initiative | No | Shows dependencies only. No status colours. Decisions are hexagons (a type, not a status) |
+| Data model (ER) | `er` | Current and target schema | No | The section heading says built or proposed; spatial relationships follow section 4 |
+| Example | `example` | The legend example in section 1 | No legend line; the classDefs are checked | Illustrates a convention; not a real diagram |
+
+### Diagram-type marker
+
+Every Mermaid block declares its type on the line directly after the diagram
+declaration:
+
+```text
+flowchart LR
+  %% diagram-type: architecture
+```
+
+- Allowed values: `architecture`, `process`, `sequence`, `dependency`, `er`, `example`.
+- Exactly one marker per block. A missing, unknown or repeated marker is an error.
+- The docs lint (T-82) uses the marker to decide which checks apply:
+  - `architecture`: the legend line directly above the block, the four standard
+    classDefs, and label suffixes that match the classes;
+  - all types: any node in the `planned` class is labelled "(planned)".
 
 ## 3. Authority map
 
@@ -150,30 +169,33 @@ only through geometry, computed at query time.
 
 Every Mermaid block in `docs/` as of 2026-11-17 (T-80). Line numbers are
 approximate.
+Each block's `%% diagram-type:` marker follows its Type column: Architecture →
+`architecture`, Process → `process`, Sequence → `sequence`, Dependency →
+`dependency`, Data model → `er`, Example → `example`.
 
 | File | Line | Diagram | Type | Legend? | Decision |
 |---|---|---|---|---|---|
 | architecture/system-architecture.md | ~27 | §1 Current state: big picture | Architecture | **Y** | Applied. ETL, RAW, 3 tables, pool, API, UI → `unverified`; ArcGIS, OpenFreeMap → `external` (already in the "External services" subgraph); browser = actor, no class |
-| architecture/system-architecture.md | ~83 | Credential boundary | Architecture | **Y** | Applied. Env files, role, loaders + test_connection, Next.js server → `unverified`; Neon database → `external` (single node, no subgraph added) |
-| architecture/system-architecture.md | ~128 | §2 Inside the web app | Architecture | **Y** | Applied. All 9 app/data nodes → `unverified`; OpenFreeMap → `external` |
-| architecture/system-architecture.md | ~178 | §3 One map pan | Sequence | N | Exempt. Shows built behaviour only; no change |
-| architecture/system-architecture.md | ~256 | §4 Target state | Architecture | **Y** | Applied. 3 real tables → `unverified`; all planned nodes → `planned`, with "(planned)" added to the 7 labels that lacked it (A1, A2, S1–S5); the old one-off `planned` classDef replaced by the standard lines; OPEN hexagon = question, no class |
+| architecture/system-architecture.md | ~84 | Credential boundary | Architecture | **Y** | Applied. Env files, role, loaders + test_connection, Next.js server → `unverified`; Neon database → `external` (single node, no subgraph added) |
+| architecture/system-architecture.md | ~130 | §2 Inside the web app | Architecture | **Y** | Applied. All 9 app/data nodes → `unverified`; OpenFreeMap → `external` |
+| architecture/system-architecture.md | ~181 | §3 One map pan | Sequence | N | Exempt. Shows built behaviour only; no change |
+| architecture/system-architecture.md | ~260 | §4 Target state | Architecture | **Y** | Applied. 3 real tables → `unverified`; all planned nodes → `planned`, with "(planned)" added to the 7 labels that lacked it (A1, A2, S1–S5); the old one-off `planned` classDef replaced by the standard lines; OPEN hexagon = question, no class |
 | architecture/etl-workflow.md | ~29 | Common pattern | Process | N | Exempt. Generic; the caption says which steps a loader lacks; no change |
-| architecture/etl-workflow.md | ~51 | Streets loader | Process | N | Exempt; no change |
-| architecture/etl-workflow.md | ~75 | Wastewater loader | Process | N | Exempt; no change |
-| architecture/etl-workflow.md | ~105 | Manholes loader | Process | N | Exempt; no change |
-| architecture/etl-workflow.md | ~139 | Safety gates | Process | N | Exempt: it shows decisions and paths, not components. No change. See open question on the T-51 dry-run path |
+| architecture/etl-workflow.md | ~52 | Streets loader | Process | N | Exempt; no change |
+| architecture/etl-workflow.md | ~77 | Wastewater loader | Process | N | Exempt; no change |
+| architecture/etl-workflow.md | ~108 | Manholes loader | Process | N | Exempt; no change |
+| architecture/etl-workflow.md | ~143 | Safety gates | Process | N | Exempt: it shows decisions and paths, not components. No change. See open question on the T-51 dry-run path |
 | architecture/database-schema.md | ~18 | Current model (ER) | Data model | N | Exempt; heading says built. No relationships drawn; no change |
-| architecture/database-schema.md | ~98 | Target model (ER) | Data model | N | Exempt; heading says proposed. **Needs review against section 4**: computed links are drawn as plain ER relationships (listed for a later task, not changed here) |
-| architecture/database-schema.md | ~186 | SQL team workflow | Process | N | Exempt; no change |
-| architecture/conventions.md | ~48 | Legend example | Example | **Y** | New, demonstrates the four classes |
-| agents/development-status.md | ~22 | Wave 0 | Dependency | N | Status classes (done/progress/todo) removed; decisions kept as neutral hexagons; T-05 added, with PR #1 as a dotted prerequisite |
-| agents/development-status.md | ~55 | Wave 1 | Dependency | N | Status classes (todo/waiting) removed; prior-wave nodes kept dotted as `otherwave` |
-| agents/development-status.md | ~90 | Wave 2 | Dependency | N | As Wave 1 |
-| agents/development-status.md | ~126 | Wave 3 | Dependency | N | As Wave 1 |
-| agents/development-status.md | ~173 | Wave 4 | Dependency | N | As Wave 1 |
-| agents/development-status.md | ~205 | Documentation synchronization (T-80 to T-89) | Dependency | N | New: T-80 to T-89 with prerequisites T-05, T-03, T-52, T-59 and D-8 |
-| agents/development-status.md | ~285 | Team workflow | Process | N | Updated: Project #1 sets status, task-board.md records evidence; `TB` node already renamed `BOARD` |
+| architecture/database-schema.md | ~106 | Target model (ER) | Data model | N | Exempt; heading says proposed. Corrected for section 4 in PR #2 (F-20): computed links drawn dashed and labelled with their method; table of proposed spatial relationships added |
+| architecture/database-schema.md | ~213 | SQL team workflow | Process | N | Exempt; no change |
+| architecture/conventions.md | ~50 | Legend example | Example | **Y** | New, demonstrates the four classes |
+| agents/development-status.md | ~23 | Wave 0 | Dependency | N | Status classes (done/progress/todo) removed; decisions kept as neutral hexagons; T-05 added, with PR #1 as a dotted prerequisite |
+| agents/development-status.md | ~56 | Wave 1 | Dependency | N | Status classes (todo/waiting) removed; prior-wave nodes kept dotted as `otherwave` |
+| agents/development-status.md | ~92 | Wave 2 | Dependency | N | As Wave 1; T-59 moved to Wave 2 (F-18) |
+| agents/development-status.md | ~130 | Wave 3 | Dependency | N | As Wave 1; T-59 removed (F-18); T-84 → T-04 edge added (F-21) |
+| agents/development-status.md | ~179 | Wave 4 | Dependency | N | As Wave 1 |
+| agents/development-status.md | ~212 | Documentation synchronization (T-80 to T-89) | Dependency | N | New: T-80 to T-89 with prerequisites T-05, T-03, T-52, T-59 and D-8 |
+| agents/development-status.md | ~293 | Team workflow | Process | N | Updated: Project #1 sets status, task-board.md records evidence; `TB` node already renamed `BOARD` |
 
 Nothing was reclassified as `verified`. Candidates are listed as questions in the
 T-80 review, not applied.

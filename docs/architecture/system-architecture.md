@@ -26,6 +26,7 @@ Legend ([conventions.md](conventions.md#1-implementation-status-legend)): thick 
 
 ```mermaid
 flowchart LR
+  %% diagram-type: architecture
   subgraph EXT["External services (public internet)"]
     ARC["City of Orlando ArcGIS REST<br/>streets, wastewater lines, manholes"]
     OFM["OpenFreeMap<br/>basemap style and tiles"]
@@ -82,6 +83,7 @@ Legend: as in section 1 ([conventions.md](conventions.md#1-implementation-status
 
 ```mermaid
 flowchart LR
+  %% diagram-type: architecture
   subgraph SECRETS["Git-ignored env files: never print or commit"]
     E1[".env (repo root)<br/>(unverified)"]
     E2["web/.env.local<br/>(unverified)"]
@@ -127,6 +129,7 @@ Legend: as in section 1 ([conventions.md](conventions.md#1-implementation-status
 
 ```mermaid
 flowchart TB
+  %% diagram-type: architecture
   PAGE["app/operations/map/page.tsx<br/>server component: page shell<br/>(unverified)"]
   OV["components/OperationsView.tsx<br/>client: holds viewport counts state<br/>(unverified)"]
   MAP["components/InfrastructureMap.tsx<br/>client: MapLibre map + layer toggles<br/>(unverified)"]
@@ -177,6 +180,7 @@ What happens when you drag the map and let go.
 
 ```mermaid
 sequenceDiagram
+  %% diagram-type: sequence
   autonumber
   actor U as You
   participant M as InfrastructureMap (browser)
@@ -255,6 +259,7 @@ Legend: as in section 1 ([conventions.md](conventions.md#1-implementation-status
 
 ```mermaid
 flowchart TB
+  %% diagram-type: architecture
   subgraph REAL["REAL: schema public (built)"]
     R1[("road_segments<br/>(unverified)")]
     R2[("utility_lines<br/>(unverified)")]
