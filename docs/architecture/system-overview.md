@@ -9,6 +9,7 @@ unverified, it says so.
 Diagrams of the components, the read and write paths, the credential boundary,
 one map pan step by step, and the target product vision are in
 [system-architecture.md](system-architecture.md).
+Diagram legend, authority map and documentation rules: [conventions.md](conventions.md).
 
 Versions at the 2026-11-16 baseline: Neon PostgreSQL 18.7 + PostGIS 3.6.4,
 Next.js 16.4.6, MapLibre 6.17.

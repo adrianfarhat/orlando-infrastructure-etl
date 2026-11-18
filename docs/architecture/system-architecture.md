@@ -10,37 +10,43 @@ the code at specific lines so you can follow along.
   [system-overview.md](system-overview.md) and [data-contracts.md](data-contracts.md).
 - Related pages: [etl-workflow.md](etl-workflow.md) (loaders),
   [database-schema.md](database-schema.md) (tables and SQL guide),
-  [../agents/development-status.md](../agents/development-status.md) (work status).
+  [../agents/development-status.md](../agents/development-status.md) (task
+  dependencies and waves; live task status is in
+  [Project #1](https://github.com/users/adrianfarhat/projects/1) (private)).
 - Diagrams use Mermaid. They render on GitHub and in VS Code with the
   "Markdown Preview Mermaid Support" extension.
+- Diagram legend, authority map and documentation rules: [conventions.md](conventions.md).
 
 ## 1. Current state: the big picture
 
 Read it left to right. **Thick arrows are writes** and need user approval
 (CLAUDE.md, shared rule 2). Thin arrows are reads.
 
+Legend ([conventions.md](conventions.md#1-implementation-status-legend)): thick solid border = verified · thin solid border + "(unverified)" = built, no recorded verification · dashed border + "(planned)" = not built · grey, in an "External" group = not ours.
+
 ```mermaid
 flowchart LR
+  %% diagram-type: architecture
   subgraph EXT["External services (public internet)"]
     ARC["City of Orlando ArcGIS REST<br/>streets, wastewater lines, manholes"]
     OFM["OpenFreeMap<br/>basemap style and tiles"]
   end
 
   subgraph WRITE["WRITE PATH: run by hand, approval required"]
-    ETL["Python loaders<br/>extractors/*.py"]
-    RAW[("data/raw/<br/>orlando_manholes.geojson")]
+    ETL["Python loaders<br/>extractors/*.py<br/>(unverified)"]
+    RAW[("data/raw/<br/>orlando_manholes.geojson<br/>(unverified)")]
   end
 
   subgraph DB["Neon PostgreSQL + PostGIS, schema public (real data)"]
-    T1[("road_segments")]
-    T2[("utility_lines")]
-    T3[("manholes")]
+    T1[("road_segments<br/>(unverified)")]
+    T2[("utility_lines<br/>(unverified)")]
+    T3[("manholes<br/>(unverified)")]
   end
 
   subgraph READ["READ PATH: Next.js app (web/), SELECT only"]
-    POOL["pg Pool<br/>web/src/lib/db.ts"]
-    API["API routes<br/>/summary /features /stats"]
-    UI["React components<br/>/operations/map"]
+    POOL["pg Pool<br/>web/src/lib/db.ts<br/>(unverified)"]
+    API["API routes<br/>/summary /features /stats<br/>(unverified)"]
+    UI["React components<br/>/operations/map<br/>(unverified)"]
   end
 
   BROWSER(["Your browser"])
@@ -57,6 +63,13 @@ flowchart LR
   API -->|"JSON / GeoJSON"| UI
   UI --> BROWSER
   OFM -->|"style + vector tiles"| BROWSER
+
+  classDef verified stroke:#111827,stroke-width:3px
+  classDef unverified stroke:#6b7280,stroke-width:1px
+  classDef planned stroke:#6b7280,stroke-width:1px,stroke-dasharray:6 4
+  classDef external fill:#f3f4f6,stroke:#9ca3af,color:#374151
+  class ETL,RAW,T1,T2,T3,POOL,API,UI unverified
+  class ARC,OFM external
 ```
 
 ### Credential boundary
@@ -66,18 +79,28 @@ The database itself would let the web app change or drop tables. Only the code
 stops that, which is why T-57 proposes a read-only role
 ([task board](../agents/task-board.md)).
 
+Legend: as in section 1 ([conventions.md](conventions.md#1-implementation-status-legend)).
+
 ```mermaid
 flowchart LR
+  %% diagram-type: architecture
   subgraph SECRETS["Git-ignored env files: never print or commit"]
-    E1[".env (repo root)"]
-    E2["web/.env.local"]
+    E1[".env (repo root)<br/>(unverified)"]
+    E2["web/.env.local<br/>(unverified)"]
   end
-  ROLE{{"Role: neondb_owner (owner role, baseline)"}}
-  E1 -->|"DATABASE_URL"| ETL["Python loaders + database/test_connection.py"]
-  E2 -->|"DATABASE_URL"| APP["Next.js server (db.ts)"]
+  ROLE{{"Role: neondb_owner (owner role, baseline)<br/>(unverified)"}}
+  E1 -->|"DATABASE_URL"| ETL["Python loaders + database/test_connection.py<br/>(unverified)"]
+  E2 -->|"DATABASE_URL"| APP["Next.js server (db.ts)<br/>(unverified)"]
   ETL --> ROLE
   APP --> ROLE
   ROLE --> NEON[("Neon database")]
+
+  classDef verified stroke:#111827,stroke-width:3px
+  classDef unverified stroke:#6b7280,stroke-width:1px
+  classDef planned stroke:#6b7280,stroke-width:1px,stroke-dasharray:6 4
+  classDef external fill:#f3f4f6,stroke:#9ca3af,color:#374151
+  class E1,E2,ROLE,ETL,APP unverified
+  class NEON external
 ```
 
 **Why the design looks like this**
@@ -102,17 +125,20 @@ flowchart LR
 
 ## 2. Current state: inside the web app
 
+Legend: as in section 1 ([conventions.md](conventions.md#1-implementation-status-legend)).
+
 ```mermaid
 flowchart TB
-  PAGE["app/operations/map/page.tsx<br/>server component: page shell"]
-  OV["components/OperationsView.tsx<br/>client: holds viewport counts state"]
-  MAP["components/InfrastructureMap.tsx<br/>client: MapLibre map + layer toggles"]
-  DASH["components/InfrastructureDashboard.tsx<br/>client: tiles + bar charts"]
-  R1["api/infrastructure/summary/route.ts<br/>not called by the UI today"]
-  R2["api/infrastructure/features/route.ts"]
-  R3["api/infrastructure/stats/route.ts"]
-  POOL["lib/db.ts (pg Pool)"]
-  DB[("Neon: 3 public tables")]
+  %% diagram-type: architecture
+  PAGE["app/operations/map/page.tsx<br/>server component: page shell<br/>(unverified)"]
+  OV["components/OperationsView.tsx<br/>client: holds viewport counts state<br/>(unverified)"]
+  MAP["components/InfrastructureMap.tsx<br/>client: MapLibre map + layer toggles<br/>(unverified)"]
+  DASH["components/InfrastructureDashboard.tsx<br/>client: tiles + bar charts<br/>(unverified)"]
+  R1["api/infrastructure/summary/route.ts<br/>not called by the UI today<br/>(unverified)"]
+  R2["api/infrastructure/features/route.ts<br/>(unverified)"]
+  R3["api/infrastructure/stats/route.ts<br/>(unverified)"]
+  POOL["lib/db.ts (pg Pool)<br/>(unverified)"]
+  DB[("Neon: 3 public tables<br/>(unverified)")]
   OFM["OpenFreeMap style"]
 
   PAGE --> OV
@@ -127,6 +153,13 @@ flowchart TB
   R2 --> POOL
   R3 --> POOL
   POOL --> DB
+
+  classDef verified stroke:#111827,stroke-width:3px
+  classDef unverified stroke:#6b7280,stroke-width:1px
+  classDef planned stroke:#6b7280,stroke-width:1px,stroke-dasharray:6 4
+  classDef external fill:#f3f4f6,stroke:#9ca3af,color:#374151
+  class PAGE,OV,MAP,DASH,R1,R2,R3,POOL,DB unverified
+  class OFM external
 ```
 
 - `/summary` exists and works, but no component calls it. `grep` for
@@ -147,6 +180,7 @@ What happens when you drag the map and let go.
 
 ```mermaid
 sequenceDiagram
+  %% diagram-type: sequence
   autonumber
   actor U as You
   participant M as InfrastructureMap (browser)
@@ -221,29 +255,32 @@ already dug up ("dig once"). **Dashed boxes are planned and not built.** Solid
 boxes exist today. Every planned part depends on decisions that are still open
 (see the [vision review notes](#what-the-target-state-depends-on)).
 
+Legend: as in section 1 ([conventions.md](conventions.md#1-implementation-status-legend)). The hexagon is an open question, not a component.
+
 ```mermaid
 flowchart TB
+  %% diagram-type: architecture
   subgraph REAL["REAL: schema public (built)"]
-    R1[("road_segments")]
-    R2[("utility_lines")]
-    R3[("manholes")]
+    R1[("road_segments<br/>(unverified)")]
+    R2[("utility_lines<br/>(unverified)")]
+    R3[("manholes<br/>(unverified)")]
   end
 
   subgraph DERIVED["DERIVED from real data only: schema analysis (planned)"]
-    A1[("road_pipe_overlap<br/>pipe length within a buffer of each road")]
-    A2[("manhole_road<br/>nearest road segment")]
+    A1[("road_pipe_overlap<br/>pipe length within a buffer of each road<br/>(planned)")]
+    A2[("manhole_road<br/>nearest road segment<br/>(planned)")]
   end
 
   subgraph SYN["SYNTHETIC: schema demo (planned), source_system synthetic_*"]
-    S1[("potholes")]
-    S2[("road_condition scores")]
-    S3[("sensors + sensor_readings")]
-    S4[("maintenance_jobs")]
-    S5[("coordination_opportunities")]
+    S1[("potholes<br/>(planned)")]
+    S2[("road_condition scores<br/>(planned)")]
+    S3[("sensors + sensor_readings<br/>(planned)")]
+    S4[("maintenance_jobs<br/>(planned)")]
+    S5[("coordination_opportunities<br/>(planned)")]
   end
 
-  GEN["Step 2/6: seeded synthetic generator<br/>(planned, offline)"]
-  ANA["Step 3: spatial analysis batch<br/>buffer overlap + KNN proximity, not exact intersects<br/>(planned, offline)"]
+  GEN["Step 2/6: seeded synthetic generator, offline<br/>(planned)"]
+  ANA["Step 3: spatial analysis batch<br/>buffer overlap + KNN proximity, not exact intersects, offline<br/>(planned)"]
   RULES["Steps 4/5: job + dig-once rules<br/>versioned, explainable (planned)"]
   API["API: features with IDs, jobs, coordination,<br/>segment detail (planned)"]
   UI["Step 7: decision-support map + dashboard<br/>synthetic clearly labelled (planned)"]
@@ -269,7 +306,11 @@ flowchart TB
   API --> UI
   OPEN -.- API
 
-  classDef planned stroke-dasharray: 6 4
+  classDef verified stroke:#111827,stroke-width:3px
+  classDef unverified stroke:#6b7280,stroke-width:1px
+  classDef planned stroke:#6b7280,stroke-width:1px,stroke-dasharray:6 4
+  classDef external fill:#f3f4f6,stroke:#9ca3af,color:#374151
+  class R1,R2,R3 unverified
   class A1,A2,S1,S2,S3,S4,S5,GEN,ANA,RULES,API,UI planned
 ```
 

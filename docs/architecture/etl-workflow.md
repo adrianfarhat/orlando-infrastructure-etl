@@ -4,6 +4,8 @@ How the three Python loaders in `extractors/` copy City of Orlando GIS data into
 Neon. Drawn from the code as of 2026-11-17. Table layouts are in
 [data-contracts.md](data-contracts.md) and [database-schema.md](database-schema.md),
 and the overall picture is in [system-architecture.md](system-architecture.md).
+Diagram rules are in [conventions.md](conventions.md); the diagrams on this page
+are process diagrams, so the implementation-status legend does not apply.
 
 > **Every loader can overwrite real rows in Neon.** Running one in a way that
 > writes needs explicit user approval (CLAUDE.md, shared rule 2). Reading this
@@ -22,13 +24,14 @@ updates rows instead of duplicating them. None of them ever deletes a row.
 
 ## The common pattern
 
-Every loader follows the same idea, but the order differs: streets and wastewater download batch by batch while connected, and only manholes downloads everything first. Streets has no DDL, safety gate or count check.
+Streets and wastewater follow this pattern. The manholes loader differs: it imports a saved GeoJSON file, which it refreshes only with `--download` by paging through ArcGIS by offset, and it validates every feature before connecting. Only the wastewater loader has the safety gate today (T-61 plans it for the other two). Streets also creates no table (step 6) and has no database count check (step 8). The per-loader diagrams below show each one exactly.
 
 ```mermaid
 flowchart LR
-  A["1. Ask ArcGIS for<br/>all OBJECTIDs"] --> B["2. Download features<br/>(manholes: all first;<br/>streets, wastewater: per batch)"]
-  B --> C["3. Validate:<br/>IDs match, geometry OK"]
-  C --> D{"4. Safety gate:<br/>allowed to write?"}
+  %% diagram-type: process
+  A["1. Ask ArcGIS for<br/>all OBJECTIDs<br/>(manholes: pages by offset instead)"] --> B["2. Download features<br/>(manholes: all first;<br/>streets, wastewater: per batch)"]
+  B --> C["3. Validate IDs and geometry<br/>(manholes: IDs present and unique,<br/>plus strict Point and coordinate checks;<br/>no comparison with ArcGIS)"]
+  C --> D{"4. Safety gate:<br/>allowed to write?<br/>(wastewater only today; T-61)"}
   D -->|"no"| E["Dry run:<br/>print counts, stop"]
   D -->|"yes, user approved"| F["5. Connect to Neon"]
   F --> G["6. DDL<br/>CREATE ... IF NOT EXISTS"]
@@ -42,12 +45,15 @@ means the loader can prove it got every record: the set of IDs returned must
 equal the set asked for. That is safer than paging with offsets, where a record
 inserted mid-download can shift pages.
 
+What each loader actually checks: streets compares every batch with the IDs it asked for and, at the end, confirms it retrieved the whole ID list from ArcGIS. Wastewater compares every batch with the IDs it asked for. After a write run it also counts the rows stored for its source system; with `--full` it prints a warning, without stopping, if that count differs from the number of ArcGIS IDs. The manholes loader pages with offsets instead: at download time it checks only that every downloaded feature has an OBJECTID and that none repeats (before importing, it also rejects any feature that is not a valid Point with in-range coordinates). It does not compare against an ID list or a total count from ArcGIS, so it cannot prove the download is complete. Its later count check compares the database with the saved file, not with ArcGIS.
+
 ## Each loader in detail
 
 ### Streets → `road_segments`
 
 ```mermaid
 flowchart TD
+  %% diagram-type: process
   S0(["python extractors/load_orlando_streets.py<br/>WRITES: needs approval"]) --> S1["load_dotenv() at import"]
   S1 --> S2["get_all_ids(): POST returnIdsOnly"]
   S2 --> S3["Connect to Neon immediately"]
@@ -72,6 +78,7 @@ per-batch commit [:163](../../extractors/load_orlando_streets.py#L163).
 
 ```mermaid
 flowchart TD
+  %% diagram-type: process
   W0(["python extractors/load_orlando_wastewater.py<br/>[--full] [--write]"]) --> W1["Load root .env,<br/>require DATABASE_URL"]
   W1 --> W2["get_ids(): GET returnIdsOnly<br/>User-Agent set, 4 attempts"]
   W2 --> W3["Select 5 IDs, or all with --full"]
@@ -102,6 +109,7 @@ count and warning [:306-326](../../extractors/load_orlando_wastewater.py#L306-L3
 
 ```mermaid
 flowchart TD
+  %% diagram-type: process
   M0(["python extractors/load_orlando_manholes.py<br/>[--download]  WRITES: needs approval"]) --> M1{"--download?"}
   M1 -->|"yes"| M2["Page through ArcGIS<br/>resultOffset, 1000 per page, no retries"]
   M2 --> M3["Check no missing or<br/>duplicate OBJECTIDs"]
@@ -136,6 +144,7 @@ purpose.
 
 ```mermaid
 flowchart TD
+  %% diagram-type: process
   Q(["Someone wants to run a script"]) --> K{"Which script?"}
   K -->|"database/test_connection.py"| RO["Read-only session:<br/>conn.read_only = True (T-50).<br/>Live run still awaits user approval."]
   K -->|"wastewater, no --write"| DRY["Dry run: no DB connection.<br/>One public ArcGIS GET."]
