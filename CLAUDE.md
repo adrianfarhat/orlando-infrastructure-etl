@@ -6,7 +6,8 @@ API routes and shows it on a MapLibre map with an operations dashboard.
 
 - Architecture: [docs/architecture/system-overview.md](docs/architecture/system-overview.md)
 - Data and API contracts: [docs/architecture/data-contracts.md](docs/architecture/data-contracts.md)
-- Work status: [docs/agents/task-board.md](docs/agents/task-board.md)
+- Tasks (status, scope, priority, dependencies, acceptance criteria): [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private)
+- Findings, decision outcomes and verification evidence: [docs/agents/task-board.md](docs/agents/task-board.md)
 - Next.js version notes: [web/AGENTS.md](web/AGENTS.md). This Next.js version differs
   from older releases; read `web/node_modules/next/dist/docs/` before writing Next.js code.
 
@@ -26,18 +27,20 @@ API routes and shows it on a MapLibre map with an operations dashboard.
 
 ## How work is coordinated
 
-The **main Claude Code conversation is the coordinator.** It reads the task board,
-assigns each task to one agent, passes outputs between agents and updates the
-task board. Subagents do not delegate to each other.
+The **main Claude Code conversation is the coordinator.** It reads task status,
+scope and dependencies from GitHub Project #1, assigns each task to one agent,
+passes outputs between agents and updates the task's Project card. Subagents do
+not delegate to each other.
 
 1. **technical-lead** writes the plan: tasks with owner, scope, acceptance
    criteria and dependencies. It also reviews integration once work is done.
-2. The main conversation records the tasks in `docs/agents/task-board.md` and
-   dispatches each one to its owner.
+2. The main conversation records the tasks as cards in GitHub Project #1 (with
+   user approval) and dispatches each one to its owner.
 3. The owner does the work within its file ownership and reports what changed
    and how it was verified.
 4. **integration-qa** verifies the result. The main conversation records the
-   verification results on the task board.
+   verification evidence in the Evidence log of `docs/agents/task-board.md` and
+   updates the card's status.
 
 ## Agents and file ownership
 
@@ -82,7 +85,10 @@ with the user's approval: `CLAUDE.md`, `.claude/**`, `.gitignore`,
 6. **Avoid unnecessary refactoring.** Change only what the task needs.
 7. **One editor per file at a time.** No concurrent edits to the same file.
 8. **Every task has** an owner, scope, acceptance criteria, dependencies and
-   verification results. Record these in `docs/agents/task-board.md`.
+   verification results. Keep the task fields (status, scope, priority,
+   dependencies, acceptance criteria) on the task's card in GitHub Project #1
+   and do not copy them into Markdown. Record architectural findings, decision
+   outcomes and verification evidence in `docs/agents/task-board.md`.
 9. **Preserve the working application.** The operations map page
    (`/operations/map`) and the three API routes must keep working after every task.
 10. **Do not claim work is complete because code exists.** Something is done only

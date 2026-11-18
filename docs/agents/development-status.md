@@ -1,13 +1,13 @@
 # Task Dependencies and Waves
 
-> **Live status for every task and decision is in
-> [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private).** This page
-> shows only how tasks depend on each other and which wave they belong to. It does
-> not track status. (The filename is kept because other pages link to it.)
+> **Dependencies and waves come from the task cards in
+> [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private),
+> which are authoritative.** These diagrams are a navigation view derived from the
+> cards. They do not track status. If a diagram disagrees with a card, the card
+> wins; fix this page. (The filename is kept because other pages link to it.)
 
-Scope, acceptance criteria and verification evidence live on the
-[task board](task-board.md). If this page disagrees with the board about a
-dependency or a wave, the board wins; fix this page.
+Links to every card are in the [Task index](task-board.md#task-index).
+Verification evidence is in the task board's [Evidence log](task-board.md#evidence-log).
 
 ## 1. Tasks by wave
 
@@ -50,7 +50,7 @@ flowchart LR
 ```
 
 T-50, T-51 and T-61 go ahead with per-change user approval under D-1 option (a).
-The 'then' arrows (T-50 → T-51 → T-61) show the order the tasks are edited in, taken from the execution waves. They are not dependencies on the Project cards.
+The 'then' arrows (T-50 → T-51 → T-61) show the order the tasks are edited in. They are not dependencies on the Project cards.
 
 ### Wave 1: fixes with no contract change
 
@@ -69,6 +69,7 @@ flowchart LR
     T42["T-42 a11y, dark mode,<br/>responsive"]
     T52["T-52 read-only<br/>DB audit"]
     T20["T-20 features<br/>contract v2"]
+    T59["T-59 requirements.txt"]
   end
   G1["T-90 gate"]
   T01p --> T10
@@ -106,7 +107,6 @@ flowchart LR
     T53["T-53 road_segments<br/>DDL file"]
     T54["T-54 manholes<br/>provenance"]
     T57["T-57 read-only<br/>DB role"]
-    T59["T-59 requirements.txt"]
   end
   G2["T-90 gate"]
   T20p --> T21
@@ -203,81 +203,81 @@ flowchart LR
   class T52p,T57p otherwave
 ```
 
-## 2. Documentation synchronization (T-80 to T-89)
+Never run two tasks at the same time on `web/src/components/InfrastructureMap.tsx`, `web/src/app/api/infrastructure/features/route.ts`, `CLAUDE.md` (in order: T-05, T-84, T-04) or the same loader.
 
-Plan approved by the user 2026-11-17. These tasks use the same Wave field as the
-rest of the board (waves 1–3); each subgraph below is one wave. Dotted
-rectangles are prerequisites from the main waves above. Task details:
-[task board](task-board.md#documentation-synchronization-t-80-to-t-89).
+## 2. Documentation and change-impact framework (T-80 to T-93)
+
+Plan approved by the user 2026-11-17; T-91 to T-93 added 2026-11-18. These tasks
+use the same Wave field as the rest of the board (waves 1–4); each subgraph below
+is one wave. Dotted rectangles are prerequisites from the wave diagrams above.
+T-59 appears in the Wave 1 diagram above and is a prerequisite of T-83 and T-85
+here. Card links: [Task index](task-board.md#task-index).
 
 ```mermaid
 flowchart LR
   %% diagram-type: dependency
   T05p["T-05"]
-  T03p["T-03"]
   T52p["T-52"]
   T59p["T-59"]
   D8{{"D-8"}}
   subgraph DS1["Wave 1"]
     T80["T-80 conventions +<br/>doc map"]
     T89["T-89 status out<br/>of Markdown"]
-    T81["T-81 docs check +<br/>link checker"]
-    T83["T-83 docs impact<br/>tool"]
+    T83["T-83 change-impact<br/>engine (MVP core)"]
+    T81["T-81 links + deleted-path<br/>validator"]
     T84["T-84 PR template +<br/>CLAUDE.md docs rules"]
   end
   subgraph DS2["Wave 2"]
     T82["T-82 Mermaid +<br/>conventions lint"]
-    T85["T-85 CI docs<br/>workflow"]
+    T85["T-85 CI impact + docs<br/>workflow (advisory)"]
+    T91["T-91 dataset registry<br/>and provenance"]
   end
   subgraph DS3["Wave 3"]
     T86["T-86 schema baseline<br/>migration"]
     T87["T-87 schema doc<br/>generator"]
     T88["T-88 consolidate<br/>schema docs"]
+    T92["T-92 dataset<br/>validity"]
   end
-  T80 --> T81
+  subgraph DS4["Wave 4"]
+    T93["T-93 framework<br/>reuse"]
+  end
   T80 --> T83
-  T80 --> T82
+  T59p --> T83
+  T83 --> T81
   T81 --> T82
   T83 --> T84
   T05p -->|"same file: CLAUDE.md"| T84
+  T83 --> T85
   T81 --> T85
   T82 --> T85
-  T83 --> T85
-  T03p --> T85
   T59p --> T85
   T52p --> T86
   D8 -.-> T86
   T86 --> T87
   T85 --> T87
   T87 --> T88
+  T83 --> T91
+  T91 --> T92
+  T83 --> T93
+  T85 --> T93
 
   classDef decision fill:#ffffff,stroke:#374151,color:#111827
   classDef otherwave stroke-dasharray:4 3
   class D8 decision
-  class T05p,T03p,T52p,T59p otherwave
+  class T05p,T52p,T59p otherwave
 ```
+
+T-93 also requires the MVP (T-83) to be demonstrated through several real feature PRs before it starts; that condition is on the T-93 card and cannot be drawn as a dependency arrow.
 
 T-86 overlaps T-53 (the `road_segments` DDL file); whether T-53 is closed as
 superseded is the user's decision.
 
 ## 3. Decisions and what they block
 
-Options and recommendations are on the [task board](task-board.md#decisions).
-Whether a decision is made is shown in
-[Project #1](https://github.com/users/adrianfarhat/projects/1) (private).
-
-| Item | What it is | What depends on it |
-|---|---|---|
-| D-1 | Who edits `database/` and `extractors/` | T-50, T-51 and T-61, which go ahead with per-change user approval under option (a). Becomes critical for the product vision, where most new work is SQL and data. |
-| D-2 | `/features` limits (bbox cap, order, rounding) | T-20 → T-21 → T-22, T-23 |
-| D-3 | Asset inspector data shape | T-20, T-23 |
-| D-4 | Loader policy (null geometry, DDL) | T-55, and the DDL item deferred from T-51 |
-| D-5 | What `/` shows | T-43 |
-| D-6 | ArcGIS metadata GET | T-54 |
-| D-7 | Where `DATABASE_URL` lives | T-58 |
-| D-8 | Path of the DDL file | T-53 |
-| D-9 | Whether to do schema migrations | T-56 |
-| D-10 | Test runner | T-70 |
+The diagrams above show which tasks each decision blocks (dotted arrows from a
+hexagon). Each decision's question, options, recommendation and live state are on
+its D-xx card; see the [Task index](task-board.md#task-index). Outcomes, once made,
+are recorded under [Decisions](task-board.md#decisions) on the task board.
 
 Other prerequisites that are not decisions:
 
@@ -302,7 +302,7 @@ flowchart TD
   OW --> G2{{"Gate: user approval needed?<br/>DB write, migration, ETL run,<br/>dependency, config, env, push"}}
   G2 -->|"approved or not needed"| QA["integration-qa verifies<br/>(read-only checks)"]
   QA -->|"results"| MC
-  MC -->|"1. records evidence"| BOARD[("task-board.md<br/>scope + Evidence log")]
+  MC -->|"1. records evidence"| BOARD[("task-board.md<br/>findings + Evidence log")]
   MC -->|"2. then sets status"| PROJ[("GitHub Project #1<br/>live status")]
   U -.->|"may move cards<br/>(authoritative)"| PROJ
   BOARD -->|"review"| TL

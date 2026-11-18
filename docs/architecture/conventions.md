@@ -3,9 +3,10 @@
 Rules for how this project's docs show the system, which source is authoritative
 for what, and how docs change alongside code. Introduced by T-80 (2026-11-17).
 
-- Live **task** status is in [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private),
-  never in Markdown. Scope, acceptance criteria and evidence are on the
-  [task board](../agents/task-board.md).
+- Task status, scope, priority, dependencies and acceptance criteria are on the
+  cards in [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private), never copied into Markdown. Findings, decision outcomes and
+  verification evidence are on the [task board](../agents/task-board.md). See
+  [Where task information lives](#where-task-information-lives).
 - The code-path → doc mapping used to find docs affected by a change is in
   [doc-map.yml](../doc-map.yml).
 - Related pages: [system-architecture.md](system-architecture.md),
@@ -73,7 +74,7 @@ flowchart LR
 Rules:
 
 - **A component becomes `verified` only when its evidence is recorded** on the task
-  board (under the task and in the Evidence log). Code existing, a passing type
+  board (in the Evidence log). Code existing, a passing type
   check or a documented baseline query is not enough on its own.
 - Verification is about the component as drawn. If a node bundles several things
   and only part is verified (for example one loader's dry-run gate), the node stays
@@ -126,9 +127,22 @@ Which source wins when two disagree.
 | API implementation | `web/src/app/api/**` | Must match the contract; a mismatch is a bug in one of them |
 | Coded-value labels | `web/src/app/api/infrastructure/stats/route.ts` | Docs copy the labels from there (data-contracts.md differs today; T-20 fixes it) |
 | UI behaviour | `web/src/components/**` | |
-| Task status | [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private) | Never in Markdown |
-| Verification evidence | Task board [Evidence log](../agents/task-board.md#evidence-log) and each task's results | Required before a card moves to Done |
+| Task status, scope, priority, dependencies, acceptance criteria | [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private) | Never copied into Markdown; link to the card |
+| Findings, decision outcomes, verification evidence | [docs/agents/task-board.md](../agents/task-board.md) ([Evidence log](../agents/task-board.md#evidence-log)) | Versioned in git; evidence is required before a card moves to Done |
 | Generated docs | Their generator | Never hand-edited. None exist yet (planned: `docs/architecture/generated/`) |
+
+### Where task information lives
+
+| Where | What it holds |
+|---|---|
+| [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private) | Task fields: status, scope, priority, wave, dependencies, approvals and acceptance criteria; for decisions, the question, options and recommendation |
+| [docs/agents/task-board.md](../agents/task-board.md) | Task index (links only), findings, decision outcomes, risks and the Evidence log |
+| [docs/agents/development-status.md](../agents/development-status.md) | Dependency and wave diagrams derived from the Project (a navigation view) |
+| `docs/architecture/*.md` | The system: architecture, data contracts, ETL, schema and these conventions |
+
+Do not copy live task fields (status, scope, priority, wave, dependencies, acceptance criteria) into Markdown, except the derived dependency and wave diagrams in development-status.md, which follow the cards. Link to the Project card instead. Evidence and architectural findings stay in Markdown because they must be versioned in git.
+
+Priority scale (Project field): P0 safety or rule violation · P1 correctness or reliability · P2 quality · P3 later or optional.
 
 ## 4. Spatial relationships are not foreign keys
 
@@ -188,14 +202,14 @@ Each block's `%% diagram-type:` marker follows its Type column: Architecture →
 | architecture/database-schema.md | ~18 | Current model (ER) | Data model | N | Exempt; heading says built. No relationships drawn; no change |
 | architecture/database-schema.md | ~106 | Target model (ER) | Data model | N | Exempt; heading says proposed. Corrected for section 4 in PR #2 (F-20): computed links drawn dashed and labelled with their method; table of proposed spatial relationships added |
 | architecture/database-schema.md | ~213 | SQL team workflow | Process | N | Exempt; no change |
-| architecture/conventions.md | ~50 | Legend example | Example | **Y** | New, demonstrates the four classes |
+| architecture/conventions.md | ~51 | Legend example | Example | **Y** | New, demonstrates the four classes |
 | agents/development-status.md | ~23 | Wave 0 | Dependency | N | Status classes (done/progress/todo) removed; decisions kept as neutral hexagons; T-05 added, with PR #1 as a dotted prerequisite |
-| agents/development-status.md | ~56 | Wave 1 | Dependency | N | Status classes (todo/waiting) removed; prior-wave nodes kept dotted as `otherwave` |
-| agents/development-status.md | ~92 | Wave 2 | Dependency | N | As Wave 1; T-59 moved to Wave 2 (F-18) |
-| agents/development-status.md | ~130 | Wave 3 | Dependency | N | As Wave 1; T-59 removed (F-18); T-84 → T-04 edge added (F-21) |
-| agents/development-status.md | ~179 | Wave 4 | Dependency | N | As Wave 1 |
-| agents/development-status.md | ~212 | Documentation synchronization (T-80 to T-89) | Dependency | N | New: T-80 to T-89 with prerequisites T-05, T-03, T-52, T-59 and D-8 |
-| agents/development-status.md | ~293 | Team workflow | Process | N | Updated: Project #1 sets status, task-board.md records evidence; `TB` node already renamed `BOARD` |
+| agents/development-status.md | ~57 | Wave 1 | Dependency | N | Status classes (todo/waiting) removed; prior-wave nodes kept dotted as `otherwave`; T-59 added (moved to Wave 1, 2026-11-18) |
+| agents/development-status.md | ~94 | Wave 2 | Dependency | N | As Wave 1; T-59 moved in (F-18, 2026-11-17), then out to Wave 1 (2026-11-18) |
+| agents/development-status.md | ~131 | Wave 3 | Dependency | N | As Wave 1; T-59 removed (F-18); T-84 → T-04 edge added (F-21) |
+| agents/development-status.md | ~180 | Wave 4 | Dependency | N | As Wave 1 |
+| agents/development-status.md | ~216 | Documentation and change-impact framework (T-80 to T-93) | Dependency | N | Redrawn from the Project cards on 2026-11-18: T-80 and T-59 → T-83 → T-81 → T-82; T-85 after T-83, T-81, T-82 and T-59 (T-03 removed); T-91 to T-93 added in Waves 2–4; prerequisites T-05, T-52, T-59 and D-8 |
+| agents/development-status.md | ~294 | Team workflow | Process | N | Updated: Project #1 sets status, task-board.md records evidence; `TB` node already renamed `BOARD`; its label reads "findings + Evidence log" since 2026-11-18 |
 
 Nothing was reclassified as `verified`. Candidates are listed as questions in the
 T-80 review, not applied.
