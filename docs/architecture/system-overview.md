@@ -16,8 +16,8 @@ Next.js 16.4.6, MapLibre 6.17.
 
 ## 1. ETL (`extractors/`)
 
-Python 3 with `requests`, `psycopg` 3 and `python-dotenv`, installed in `.venv`.
-There is no `requirements.txt`.
+Python 3 with `requests`, `psycopg` 3, `python-dotenv` and `ruamel.yaml` (for the change-impact tool, T-83), installed in `.venv`.
+Python dependencies are pinned in `requirements.txt` at the repository root (direct dependencies only; install with `pip install -r requirements.txt`).
 
 The loader table (sources, targets, default behaviour, `.env` loading), the
 per-loader flowcharts, the safety gates and the known inconsistencies are in
