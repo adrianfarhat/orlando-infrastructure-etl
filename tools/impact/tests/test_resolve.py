@@ -35,7 +35,7 @@ REGISTRY = {
         {"id": "tests", "paths": ["tests/**"], "docs": ["docs/app.md"]},
     ],
     "content_triggers": [
-        {"id": "secret", "paths": ["**/*.py"], "exclude": ["tests/**"], "match": "SECRET_[A-Z]+",
+        {"id": "secret", "paths": ["**/*.py"], "exclude": ["tests/**"], "match": "SECRET_[A-Z]{1,20}",
          "docs": ["docs/security.md"]},
     ],
 }
@@ -136,6 +136,32 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual((out[0].rule, out[0].severity), ("registry-incomplete", "WARNING"))
         self.assertIn("tie-a, tie-b", out[0].message)
 
+    def test_git_paths_keep_literal_backslashes(self):
+        name = "app\\weird name.py"                          # a real Linux file name
+        git_res = resolve(name, self.config, self.registry, from_git=True)
+        self.assertEqual(git_res.path, name)                 # not rewritten to app/weird name.py
+        self.assertIsNone(git_res.component)                 # "app\..." is not inside app/
+        typed = resolve(name, self.config, self.registry)    # a typed value: '\' is a separator
+        self.assertEqual((typed.path, typed.component), ("app/weird name.py", "app"))
+        inside = resolve("app/back\\slash.py", self.config, self.registry, "SECRET_KEY", from_git=True)
+        self.assertEqual((inside.path, inside.component, inside.triggers),
+                         ("app/back\\slash.py", "app", ("secret",)))
+
+    def test_git_paths_with_control_characters_are_rejected(self):
+        from tools.impact.paths import PathError
+        with self.assertRaises(PathError):
+            resolve("app/tab\there.py", self.config, self.registry, from_git=True)
+
+    def test_unscanned_triggers_are_reported_not_treated_as_no_match(self):
+        from tools.impact import regexsafe
+        big = ("x" * 999 + "\n") * (regexsafe.MAX_SCAN_CHARS // 1000 + 10) + "SECRET_KEY\n"
+        res = self.r("app/x.py", big)
+        self.assertEqual(res.triggers, ())
+        self.assertEqual(res.unscanned_triggers, ("secret",))
+        self.assertEqual(self.r("app/x.py", "SECRET_KEY\n" + big).triggers, ("secret",))
+        small = self.r("app/x.py", "no secrets here\n")
+        self.assertEqual((small.triggers, small.unscanned_triggers), ((), ()))
+
     def test_path_normalized(self):
         self.assertEqual(self.r(".\\app\\x.py").path, "app/x.py")
         self.assertEqual(self.r("./app/x.py").component, "app")
@@ -180,8 +206,24 @@ class PurityAndDeterminismTests(unittest.TestCase):
     BANNED_ATTRS = {"system", "popen", "startfile", "execv", "spawnv", "write_text", "write_bytes",
                     "unlink", "rmdir", "mkdir", "touch", "chmod"}
 
+    # Per-module exceptions. Every module in the package must be listed, so a new module
+    # cannot escape the check. Only gitfiles.py may start a process (git); only cli.py may
+    # write files (the two report files); nothing may use the network or a database.
+    POLICY = {
+        "__init__.py": {}, "__main__.py": {}, "paths.py": {}, "config.py": {}, "resolve.py": {},
+        "regexsafe.py": {}, "findings.py": {},
+        "gitfiles.py": {"imports": {"subprocess", "os"}},
+        "cli.py": {"imports": {"os", "tempfile"}, "attrs": {"mkdir", "unlink"}},
+    }
+
+    def test_every_module_has_a_policy(self):
+        modules = sorted(p.name for p in PACKAGE.glob("*.py"))
+        self.assertEqual(modules, sorted(self.POLICY))
+
     def test_modules_do_not_run_processes_network_or_databases(self):
-        for name in ("__init__.py", "paths.py", "config.py", "resolve.py"):
+        for name, allowed in self.POLICY.items():
+            banned_imports = self.BANNED - allowed.get("imports", set())
+            banned_attrs = self.BANNED_ATTRS - allowed.get("attrs", set())
             tree = ast.parse((PACKAGE / name).read_text("utf-8"))
             for node in ast.walk(tree):
                 mods = []
@@ -191,13 +233,16 @@ class PurityAndDeterminismTests(unittest.TestCase):
                     mods = [node.module or ""]
                 for m in mods:
                     with self.subTest(module=name, imports=m):
-                        self.assertNotIn(m.split(".")[0], self.BANNED)
+                        self.assertNotIn(m.split(".")[0], banned_imports)
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                     with self.subTest(module=name, call=node.func.id):
                         self.assertNotIn(node.func.id, self.BANNED_NAMES)
                 if isinstance(node, ast.Attribute):
                     with self.subTest(module=name, attr=node.attr):
-                        self.assertNotIn(node.attr, self.BANNED_ATTRS)
+                        self.assertNotIn(node.attr, banned_attrs)
+                if isinstance(node, ast.keyword) and node.arg == "shell":
+                    with self.subTest(module=name, keyword="shell"):
+                        self.fail("subprocess shell=... is never allowed")
 
     def test_resolution_does_not_depend_on_registry_order(self):
         # QA: comparing dicts ignores insertion order, so shuffle what could matter:

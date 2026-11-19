@@ -228,7 +228,7 @@ class RegistrySchemaTests(unittest.TestCase):
             interfaces=[{"path": "a/route.ts"}])), "missing required key 'contract'")
 
     def test_trigger_rules(self):
-        self.assert_registry_error(reg(lambda d: d["content_triggers"][0].update(match="(")), "invalid regular")
+        self.assert_registry_error(reg(lambda d: d["content_triggers"][0].update(match="(")), "unsafe or invalid content-trigger pattern: unbalanced")
         self.assert_registry_error(reg(lambda d: d["content_triggers"][0].update(docs=[])), "must not be empty")
         self.assert_registry_error(reg(lambda d: d["content_triggers"][0].update(severity="ERROR")),
                                    "unknown key 'severity'")

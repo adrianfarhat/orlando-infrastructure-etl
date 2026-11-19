@@ -14,6 +14,7 @@ or executes repository code; file lists are passed in by the caller.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,7 +23,8 @@ from typing import Any, Iterable
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from .paths import PathError, matches, normalize, normalize_pattern
+from . import regexsafe
+from .paths import PathError, bounded_repr, matches, normalize, normalize_pattern, repo_path
 
 CONFIG_FILE = "impact.yml"
 
@@ -40,6 +42,7 @@ RULE_VALUES = ("WARNING", "off")
 
 DEPENDENCY_BASES = ("code", "inferred")
 ID_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+MAX_ID_LENGTH = 100
 
 DEFAULT_MIN_REASON_LENGTH = 15
 DEFAULT_PLACEHOLDERS = ("n/a", "na", "none", "ok", "tbd", "todo", "-", "fine", "no change", "not needed")
@@ -52,13 +55,25 @@ TRIGGER_KEYS = ("id", "paths", "exclude", "match", "docs", "note")
 
 
 class LoadError(Exception):
-    """A configuration file could not be read or parsed (exit code 2)."""
+    """A configuration file could not be loaded.
+
+    operational=False: the file is missing or its content cannot be parsed (not
+    UTF-8, not valid YAML, nested too deeply). That is a configuration problem,
+    reportable as a registry-invalid ERROR finding (exit code 1).
+    operational=True: the file exists but could not be read (permissions, I/O),
+    which prevents reliable validation (exit code 2).
+    """
+
+    def __init__(self, message: str, operational: bool = False):
+        super().__init__(message)
+        self.operational = operational
 
 
 @dataclass(frozen=True, order=True)
 class Problem:
     source: str      # file the problem is in, e.g. "impact.yml"
     location: str    # e.g. "components[3].docs[1]"
+    subject: str     # what the problem is about (path, pattern, key); part of the finding ID
     rule: str        # e.g. "registry-invalid"
     severity: str    # "ERROR" or "WARNING"
     message: str
@@ -114,6 +129,7 @@ class Trigger:
     exclude: tuple[str, ...]
     match: str
     regex: re.Pattern
+    profile: regexsafe.RegexProfile   # proven within the safe subset
     docs: tuple[str, ...]
     note: str | None
 
@@ -145,7 +161,7 @@ def read_yaml(path: Path) -> Any:
     except FileNotFoundError:
         raise LoadError(f"{path.name}: file not found") from None
     except OSError as exc:
-        raise LoadError(f"{path.name}: cannot read ({exc.strerror})") from None
+        raise LoadError(f"{path.name}: cannot read ({exc.strerror})", operational=True) from None
     except UnicodeDecodeError:
         raise LoadError(f"{path.name}: not valid UTF-8") from None
     try:
@@ -155,6 +171,8 @@ def read_yaml(path: Path) -> Any:
         raise LoadError(f"{path.name}: not valid YAML ({first})") from None
     except RecursionError:
         raise LoadError(f"{path.name}: nested too deeply to load") from None
+    except (ValueError, KeyError, TypeError, OverflowError) as exc:
+        raise LoadError(f"{path.name}: not valid YAML ({type(exc).__name__}: {_r(str(exc), 120)})") from None
 
 
 # --------------------------------------------------------------------------- checker
@@ -166,8 +184,11 @@ class _Checker:
         self.source = source
         self.problems: list[Problem] = []
 
-    def error(self, loc: str, msg: str, rule: str = "registry-invalid") -> None:
-        self.problems.append(Problem(self.source, loc or "(top level)", rule, "ERROR", msg))
+    def error(self, loc: str, msg: str, rule: str = "registry-invalid", subject: str | None = None) -> None:
+        loc = loc or "(top level)"
+        # The location identifies the problem in almost every case; checks that can
+        # report several problems at one location pass a distinguishing subject.
+        self.problems.append(Problem(self.source, loc, subject or loc, rule, "ERROR", msg))
 
     def mapping(self, value: Any, loc: str, allowed: Iterable[str], required: Iterable[str] = ()) -> dict | None:
         if not isinstance(value, dict):
@@ -176,10 +197,11 @@ class _Checker:
         allowed = tuple(allowed)
         for key in value:
             if not isinstance(key, str) or key not in allowed:
-                self.error(_join(loc, key), f"unknown key {key!r}")
+                self.error(_join(loc, key), f"unknown key {_r(key)}",
+                           subject=f"{_join(loc, key)} {_identity(key)}")
         for key in required:
             if key not in value:
-                self.error(loc, f"missing required key {key!r}")
+                self.error(loc, f"missing required key {_r(key)}", subject=f"{loc or '(top level)'} missing {key}")
         return value
 
     def string(self, value: Any, loc: str) -> str | None:
@@ -225,10 +247,10 @@ class _Checker:
             self.error(loc, str(exc))
             return None
         if "*" in p or "?" in p:
-            self.error(loc, f"must be a file path, not a pattern: {value!r}")
+            self.error(loc, f"must be a file path, not a pattern: {_r(value)}")
             return None
         if "#" in p:
-            self.error(loc, f"anchors are not accepted here (anchor checks belong to T-81): {value!r}")
+            self.error(loc, f"anchors are not accepted here (anchor checks belong to T-81): {_r(value)}")
             return None
         return p
 
@@ -246,16 +268,35 @@ class _Checker:
 
     def identifier(self, value: Any, loc: str) -> str | None:
         s = self.string(value, loc)
+        if s is not None and len(s) > MAX_ID_LENGTH:
+            self.error(loc, f"longer than {MAX_ID_LENGTH} characters: {_r(s)}")
+            return None
         if s is not None and not ID_RE.match(s):
-            self.error(loc, f"must use lowercase letters, digits and single hyphens: {s!r}")
+            self.error(loc, f"must use lowercase letters, digits and single hyphens: {_r(s)}")
             return None
         return s
 
     def version(self, data: dict, loc: str = "version") -> int:
         v = data.get("version")
         if "version" in data and (isinstance(v, bool) or not isinstance(v, int) or v != 1):
-            self.error(loc, f"unsupported version {v!r} (expected 1)")
+            self.error(loc, f"unsupported version {_r(v)} (expected 1)")
         return 1
+
+
+def _r(value: Any, limit: int = 80) -> str:
+    """A bounded description of a value for messages; never repr() of a whole container
+    (see paths.bounded_repr: YAML alias fan-out)."""
+    return bounded_repr(value, limit)
+
+
+def _identity(value: Any) -> str:
+    """A short, collision-resistant identity for a scalar config value, used in finding
+    subjects: type plus the value, or plus a hash when the value is long."""
+    text = bounded_repr(value, 100)
+    if isinstance(value, (str, int)) and text.endswith(")"):        # the value was cut
+        digest = hashlib.sha256(f"{type(value).__name__}:{value}".encode("utf-8", "surrogatepass")).hexdigest()
+        text = f"{text[:60]}#{digest[:16]}"
+    return f"{type(value).__name__} {text}"
 
 
 def _kind(value: Any) -> str:
@@ -286,7 +327,7 @@ def parse_config(data: Any, source: str = CONFIG_FILE) -> tuple[Config, list[Pro
             continue
         name = e["purpose"]
         if name not in PURPOSES:
-            ck.error(f"{loc}.purpose", f"unknown purpose {name!r} (allowed: {', '.join(PURPOSES)})")
+            ck.error(f"{loc}.purpose", f"unknown purpose {_r(name)} (allowed: {', '.join(PURPOSES)})")
             continue
         pats = ck.patterns(e["paths"], f"{loc}.paths", allow_empty=False)
         if pats:
@@ -297,9 +338,10 @@ def parse_config(data: Any, source: str = CONFIG_FILE) -> tuple[Config, list[Pro
         ob = ck.mapping(d["doc_obligation"], "doc_obligation", ("exempt_purposes",)) or {}
         if "exempt_purposes" in ob:
             vals = ck.items(ob["exempt_purposes"], "doc_obligation.exempt_purposes") or []
-            bad = [v for v in vals if v not in PURPOSES]
-            for v in bad:
-                ck.error("doc_obligation.exempt_purposes", f"unknown purpose {v!r}")
+            for i, v in enumerate(vals):
+                if v not in PURPOSES:
+                    # The index keeps findings distinct even for equal-looking or container values.
+                    ck.error(f"doc_obligation.exempt_purposes[{i}]", f"unknown purpose {_r(v)}")
             exempt = tuple(v for v in vals if v in PURPOSES)
 
     interfaces: list[tuple[str, tuple[str, ...]]] = []
@@ -331,7 +373,7 @@ def parse_config(data: Any, source: str = CONFIG_FILE) -> tuple[Config, list[Pro
         if "min_reason_length" in ac:
             v = ac["min_reason_length"]
             if isinstance(v, bool) or not isinstance(v, int) or v < 1:
-                ck.error("acks.min_reason_length", f"must be a whole number of at least 1, not {v!r}")
+                ck.error("acks.min_reason_length", f"must be a whole number of at least 1, not {_r(v)}")
             else:
                 min_len = v
         if "placeholders" in ac:
@@ -360,13 +402,13 @@ def _rule_section(ck: _Checker, value: Any, loc: str, allowed: tuple[str, ...]) 
     for name, val in section.items():
         key = _join(loc, name)
         if name in FIXED_RULES:
-            ck.error(key, f"{name!r} is a fixed rule and cannot be configured")
+            ck.error(key, f"{_r(name)} is a fixed rule and cannot be configured")
         elif name not in allowed:
             if name in CHECK_RULES + VALIDATE_RULES:
-                ck.error(key, f"{name!r} belongs under '{'validate' if name in VALIDATE_RULES else 'rules'}:'")
+                ck.error(key, f"{_r(name)} belongs under '{'validate' if name in VALIDATE_RULES else 'rules'}:'")
             # unknown names were already reported by mapping()
         elif val not in RULE_VALUES:
-            ck.error(key, f"must be one of {', '.join(RULE_VALUES)} (ERROR is not allowed), not {val!r}")
+            ck.error(key, f"must be one of {', '.join(RULE_VALUES)} (ERROR is not allowed), not {_r(val)}")
         else:
             result[name] = val
     return result
@@ -392,7 +434,7 @@ def parse_registry(data: Any, source: str) -> tuple[Registry, list[Problem]]:
         if cid is None:
             continue
         if cid in seen:
-            ck.error(f"{loc}.id", f"duplicate component id {cid!r}")
+            ck.error(f"{loc}.id", f"duplicate component id {_r(cid)}")
             continue
         n_before = len(ck.problems)
         paths = ck.patterns(e["paths"], f"{loc}.paths", allow_empty=False)
@@ -413,7 +455,8 @@ def parse_registry(data: Any, source: str) -> tuple[Registry, list[Problem]]:
     for c_index, comp in enumerate(components):
         for dep in comp.depends_on:
             if dep.id not in known:
-                ck.error(f"component {comp.id}.depends_on", f"unknown component {dep.id!r}")
+                ck.error(f"component {comp.id}.depends_on", f"unknown component {_r(dep.id)}",
+                         subject=f"depends_on {dep.id}")
 
     triggers: list[Trigger] = []
     tseen: set[str] = set()
@@ -426,7 +469,7 @@ def parse_registry(data: Any, source: str) -> tuple[Registry, list[Problem]]:
         if tid is None:
             continue
         if tid in tseen:
-            ck.error(f"{loc}.id", f"duplicate content trigger id {tid!r}")
+            ck.error(f"{loc}.id", f"duplicate content trigger id {_r(tid)}")
             continue
         tseen.add(tid)
         n_before = len(ck.problems)
@@ -435,15 +478,16 @@ def parse_registry(data: Any, source: str) -> tuple[Registry, list[Problem]]:
         docs = ck.file_paths(e["docs"], f"{loc}.docs", allow_empty=False)
         note = ck.string(e["note"], f"{loc}.note") if "note" in e else None
         match = ck.string(e["match"], f"{loc}.match")
-        regex = None
+        regex = profile = None
         if match is not None:
             try:
+                profile = regexsafe.check(match)
                 regex = re.compile(match)
-            except re.error as exc:
-                ck.error(f"{loc}.match", f"invalid regular expression: {exc}")
+            except regexsafe.UnsafeRegex as exc:
+                ck.error(f"{loc}.match", f"unsafe or invalid content-trigger pattern: {exc}")
         if len(ck.problems) != n_before or regex is None or not paths or not docs:
             continue
-        triggers.append(Trigger(tid, paths, exclude, match, regex, docs, note))
+        triggers.append(Trigger(tid, paths, exclude, match, regex, profile, docs, note))
 
     return Registry(version, tuple(components), tuple(triggers)), ck.problems
 
@@ -462,7 +506,7 @@ def _interfaces(ck: _Checker, value: Any, loc: str, paths: tuple[str, ...],
             continue
         inside = any(matches(path, p) for p in paths) and not any(matches(path, x) for x in exclude)
         if not inside:
-            ck.error(f"{iloc}.path", f"{path} is not covered by component {cid!r}'s own paths")
+            ck.error(f"{iloc}.path", f"{path} is not covered by component {_r(cid)}'s own paths")
             continue
         out.append(Interface(path, contract))
     return tuple(out)
@@ -478,7 +522,7 @@ def _dependencies(ck: _Checker, value: Any, loc: str, cid: str) -> tuple[Depende
         did = ck.identifier(e["id"], f"{dloc}.id")
         basis = e["basis"]
         if basis not in DEPENDENCY_BASES:
-            ck.error(f"{dloc}.basis", f"must be one of {', '.join(DEPENDENCY_BASES)}, not {basis!r}")
+            ck.error(f"{dloc}.basis", f"must be one of {', '.join(DEPENDENCY_BASES)}, not {_r(basis)}")
             continue
         evidence = ck.string(e["evidence"], f"{dloc}.evidence") if "evidence" in e else None
         note = ck.string(e["note"], f"{dloc}.note") if "note" in e else None
@@ -494,7 +538,7 @@ def _dependencies(ck: _Checker, value: Any, loc: str, cid: str) -> tuple[Depende
             ck.error(f"{dloc}.id", "a component cannot depend on itself")
             continue
         if any(d.id == did for d in out):
-            ck.error(f"{dloc}.id", f"dependency on {did!r} listed twice")
+            ck.error(f"{dloc}.id", f"dependency on {_r(did)} listed twice")
             continue
         out.append(Dependency(did, basis, evidence, note))
     return tuple(out)
@@ -516,6 +560,37 @@ def load(root: Path) -> Loaded:
     return Loaded(config, registry, tuple(sorted(problems)))
 
 
+def load_for_report(root: Path) -> tuple[Config | None, Registry | None, list[Problem], list[str]]:
+    """Like `load`, but a configuration file that is missing or cannot be parsed
+    becomes a registry-invalid ERROR problem instead of an exception, so that
+    `impact validate` can report it (exit code 1). Operational read failures still
+    raise LoadError(operational=True) (exit code 2).
+
+    Returns (config or None, registry or None, problems, configuration files read).
+    """
+    def as_problem(source: str, exc: LoadError) -> Problem:
+        return Problem(source, "(file)", source, "registry-invalid", "ERROR", str(exc))
+
+    try:
+        data = read_yaml(root / CONFIG_FILE)
+    except LoadError as exc:
+        if exc.operational:
+            raise
+        return None, None, [as_problem(CONFIG_FILE, exc)], []
+    config, problems = parse_config(data, CONFIG_FILE)
+    sources = [CONFIG_FILE]
+    if config.registry is None:
+        return config, None, problems, sources
+    try:
+        reg_data = read_yaml(root / config.registry)
+    except LoadError as exc:
+        if exc.operational:
+            raise
+        return config, None, problems + [as_problem(config.registry, exc)], sources
+    registry, reg_problems = parse_registry(reg_data, config.registry)
+    return config, registry, problems + reg_problems, sources + [config.registry]
+
+
 # --------------------------------------------------------------------------- file checks
 
 def check_files(config: Config, registry: Registry, source: str, files: Iterable[str]) -> list[Problem]:
@@ -527,16 +602,20 @@ def check_files(config: Config, registry: Registry, source: str, files: Iterable
     WARNING (registry-incomplete): a pattern of a non-planned component, or of a
     content trigger, matches no file.
     """
-    fileset = {normalize(f) for f in files}
+    # Files come from Git (or tests) already in repository form; repo_path validates
+    # them without rewriting backslashes.
+    fileset = {repo_path(f) for f in files}
     out: list[Problem] = []
     incomplete = config.validate_rules.get("registry-incomplete", "WARNING")
 
     def missing(loc: str, path: str, what: str) -> None:
-        out.append(Problem(source, loc, "registry-missing-path", "ERROR", f"{what} does not exist: {path}"))
+        out.append(Problem(source, loc, f"{what}: {path}", "registry-missing-path", "ERROR",
+                           f"{what} does not exist: {path}"))
 
     def unmatched(loc: str, pattern: str) -> None:
         if incomplete != "off":
-            out.append(Problem(source, loc, "registry-incomplete", "WARNING", f"pattern matches no file: {pattern}"))
+            out.append(Problem(source, loc, pattern, "registry-incomplete", "WARNING",
+                               f"pattern matches no file: {pattern}"))
 
     for comp in registry.components:
         loc = f"component {comp.id}"

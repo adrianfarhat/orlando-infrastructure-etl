@@ -9,8 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
+from . import regexsafe
 from .config import Component, Config, Problem, Registry, Trigger
-from .paths import matches, normalize, specificity
+from .paths import matches, normalize, repo_path, specificity
 
 REVIEWED, GENERATED, TRIGGER = "reviewed", "generated", "trigger"
 
@@ -32,6 +33,9 @@ class Resolution:
     triggers: tuple[str, ...]         # content triggers that fired (empty if no text given)
     relationships: frozenset[Relationship]
     doc_obligation: bool              # mapped docs exist and the purpose is not exempt
+    # Triggers whose paths match but whose text could not be fully scanned and did not
+    # match in the scanned part: "not scanned", never "no match".
+    unscanned_triggers: tuple[str, ...] = ()
 
     @property
     def registered(self) -> bool:
@@ -70,23 +74,38 @@ def best_components(path: str, registry: Registry) -> tuple[Component, ...]:
     return tuple(sorted((c for s, c in scored if s == top), key=lambda c: c.id))
 
 
-def triggers_for(path: str, text: str | None, registry: Registry) -> tuple[Trigger, ...]:
-    """Content triggers whose paths match and whose regex is found in the text.
+def scan_triggers(path: str, text: str | None, registry: Registry) -> tuple[tuple[Trigger, ...], tuple[Trigger, ...]]:
+    """(fired, unscanned) content triggers for a path and its text.
 
-    With text=None (content unknown) no trigger fires.
+    Each pattern was proven safe at load time and is evaluated with regexsafe.scan.
+    A trigger whose text could not be fully scanned and did not match in the
+    scanned part is returned as unscanned, never as "no match".
+    With text=None (content unknown) nothing is evaluated.
     """
     if text is None:
-        return ()
-    out = []
+        return (), ()
+    fired, unscanned = [], []
     for t in registry.triggers:
         if any(matches(path, p) for p in t.paths) and not any(matches(path, x) for x in t.exclude):
-            if t.regex.search(text):
-                out.append(t)
-    return tuple(sorted(out, key=lambda t: t.id))
+            result = regexsafe.scan(t.regex, t.profile, text)
+            if result.matched:
+                fired.append(t)
+            elif not result.complete:
+                unscanned.append(t)
+    by_id = lambda t: t.id  # noqa: E731
+    return tuple(sorted(fired, key=by_id)), tuple(sorted(unscanned, key=by_id))
 
 
-def resolve(path: str, config: Config, registry: Registry, text: str | None = None) -> Resolution:
-    p = normalize(path)
+def triggers_for(path: str, text: str | None, registry: Registry) -> tuple[Trigger, ...]:
+    """Content triggers that fired (see scan_triggers for the unscanned ones)."""
+    return scan_triggers(path, text, registry)[0]
+
+
+def resolve(path: str, config: Config, registry: Registry, text: str | None = None,
+            from_git: bool = False) -> Resolution:
+    """Resolve a path. Values typed by people use the default (backslashes become
+    '/'); paths reported by Git use from_git=True (backslashes are literal)."""
+    p = repo_path(path) if from_git else normalize(path)
     if is_ignored(p, config):
         return Resolution(p, True, None, None, (), (), frozenset(), False)
     purpose = purpose_of(p, config)
@@ -97,7 +116,7 @@ def resolve(path: str, config: Config, registry: Registry, text: str | None = No
     for comp in best:
         rels.update(Relationship(d, REVIEWED, comp.id) for d in comp.docs)
         rels.update(Relationship(d, GENERATED, comp.id) for d in comp.generated)
-    fired = triggers_for(p, text, registry)
+    fired, unscanned = scan_triggers(p, text, registry)
     for t in fired:
         rels.update(Relationship(d, TRIGGER, t.id) for d in t.docs)
     obligation = any(comp.docs for comp in best) and purpose not in config.exempt_purposes
@@ -110,6 +129,7 @@ def resolve(path: str, config: Config, registry: Registry, text: str | None = No
         triggers=tuple(t.id for t in fired),
         relationships=frozenset(rels),
         doc_obligation=obligation,
+        unscanned_triggers=tuple(t.id for t in unscanned),
     )
 
 
@@ -118,12 +138,12 @@ def ambiguities(config: Config, registry: Registry, source: str, files: Iterable
     if config.validate_rules.get("registry-incomplete", "WARNING") == "off":
         return []
     out = []
-    for f in sorted({normalize(x) for x in files}):
+    for f in sorted({repo_path(x) for x in files}):
         if is_ignored(f, config):
             continue
         best = best_components(f, registry)
         if len(best) > 1:
             ids = ", ".join(c.id for c in best)
-            out.append(Problem(source, f"path {f}", "registry-incomplete", "WARNING",
+            out.append(Problem(source, f"path {f}", f, "registry-incomplete", "WARNING",
                                f"ambiguous: equally specific match in components {ids}"))
     return out
