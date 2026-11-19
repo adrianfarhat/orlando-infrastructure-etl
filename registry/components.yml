@@ -1,5 +1,5 @@
 # registry/components.yml: what each part of the repository is and which docs describe it (T-83).
-# Replaces docs/doc-map.yml. Checked by tools/impact against a built-in schema.
+# Replaces the retired doc map (frozen copy: tools/impact/tests/fixtures/docmap_565706f.yml). Checked by tools/impact against a built-in schema.
 #
 # Required per component: id, paths, docs (an explicit [] means "no doc obligation").
 # Optional: exclude, generated, interfaces, depends_on, planned, note.
@@ -14,7 +14,7 @@ version: 1
 
 components:
 
-  # --- migrated from docs/doc-map.yml ---
+  # --- migrated from the retired doc map (entry numbers refer to the frozen copy) ---
 
   - id: etl-loaders                                   # doc-map entry 1
     paths: ["extractors/**"]
@@ -89,7 +89,7 @@ components:
     docs: []
     note: Agent and task docs; no code mapping.
 
-  # --- added: paths docs/doc-map.yml never covered ---
+  # --- added: paths the retired doc map never covered ---
 
   - id: python-deps
     paths: ["requirements.txt"]

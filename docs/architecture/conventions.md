@@ -7,8 +7,9 @@ for what, and how docs change alongside code. Introduced by T-80 (2026-11-17).
   cards in [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private), never copied into Markdown. Findings, decision outcomes and
   verification evidence are on the [task board](../agents/task-board.md). See
   [Where task information lives](#where-task-information-lives).
-- The code-path → doc mapping used to find docs affected by a change is in
-  [doc-map.yml](../doc-map.yml).
+- The code-path → doc mapping used to find docs affected by a change is the
+  component registry, [registry/components.yml](../../registry/components.yml),
+  configured by [impact.yml](../../impact.yml). See [section 5](#5-branch-docs-workflow).
 - Related pages: [system-architecture.md](system-architecture.md),
   [system-overview.md](system-overview.md), [etl-workflow.md](etl-workflow.md),
   [database-schema.md](database-schema.md), [data-contracts.md](data-contracts.md).
@@ -163,7 +164,19 @@ only through geometry, computed at query time.
 ## 5. Branch docs workflow
 
 1. Docs change **on the feature branch, in the same branch as the code** they
-   describe. Use [doc-map.yml](../doc-map.yml) to find the affected docs.
+   describe. To find the affected docs, look up each changed file in
+   [registry/components.yml](../../registry/components.yml):
+   - The file belongs to the one component whose `paths` (minus `exclude`) match it
+     most specifically. A narrower component replaces a broader one; the two lists of
+     docs are not combined.
+   - Review that component's `docs` in the same branch. `docs: []` means the file
+     has no documentation obligation. Regenerate any `generated` docs; never edit
+     them by hand. A component marked `planned: true` covers paths that do not exist yet.
+   - Also check `content_triggers`. If a changed file matches a trigger's `paths` and
+     its content matches the trigger's `match`, review that trigger's `docs` as well.
+   - `python -m tools.impact validate` checks the registry and
+     [impact.yml](../../impact.yml) against the working tree. It does not analyse a
+     branch's changes.
 2. Preview locally (VS Code Markdown preview with Mermaid support) or in a draft PR.
 3. Docs reach `main` **only at merge**, after user approval. Nothing is published
    separately.
