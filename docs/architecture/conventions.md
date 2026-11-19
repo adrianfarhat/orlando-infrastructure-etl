@@ -166,14 +166,30 @@ only through geometry, computed at query time.
 1. Docs change **on the feature branch, in the same branch as the code** they
    describe. To find the affected docs, look up each changed file in
    [registry/components.yml](../../registry/components.yml):
-   - The file belongs to the one component whose `paths` (minus `exclude`) match it
-     most specifically. A narrower component replaces a broader one; the two lists of
-     docs are not combined.
-   - Review that component's `docs` in the same branch. `docs: []` means the file
-     has no documentation obligation. Regenerate any `generated` docs; never edit
-     them by hand. A component marked `planned: true` covers paths that do not exist yet.
+   - A component matches a file when one of its `paths` matches and none of its
+     `exclude` patterns does. The file belongs to the most specific matching component.
+     A pattern's specificity is the number of leading path segments with no wildcard
+     (`*`, `?` or `[`), then whether the whole pattern is wildcard-free; a component
+     scores its best matching pattern. So `web/src/app/api/**` (4 literal segments)
+     beats `web/src/app/**` (3), and an exact file path beats any glob that matches the
+     same file. The broader component's docs are then not added.
+   - If several components tie for the highest score, the file belongs to all of them:
+     their `docs` and `generated` lists are combined, and
+     `python -m tools.impact validate` reports the file as a `registry-incomplete`
+     WARNING ("ambiguous: equally specific match ...") so the registry can be fixed.
+   - Review the matched component's `docs` in the same branch. There is no
+     documentation obligation when the component has `docs: []`, or when the file's
+     purpose is `test`, `generated` or `experimental`. A file's purpose is the first
+     matching entry in the `purposes` list of [impact.yml](../../impact.yml) (default
+     `code`); see that file for the current patterns (for example
+     `tools/impact/tests/**` and `**/*.test.ts` are `test`;
+     `database/test_connection.py` is `code`). Regenerate any `generated` docs; never
+     edit them by hand. A component marked `planned: true` covers paths that do not
+     exist yet.
    - Also check `content_triggers`. If a changed file matches a trigger's `paths` and
      its content matches the trigger's `match`, review that trigger's `docs` as well.
+     A trigger adds docs to review; it does not by itself create a documentation
+     obligation.
    - `python -m tools.impact validate` checks the registry and
      [impact.yml](../../impact.yml) against the working tree. It does not analyse a
      branch's changes.

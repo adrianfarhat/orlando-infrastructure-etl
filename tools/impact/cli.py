@@ -165,6 +165,14 @@ def write_reports(root: Path, out: str, contents: dict[str, str]) -> None:
     placed: list[str] = []
     keep: set[str] = set()          # backups that could not be restored are never deleted
     created: list[str] = []         # every backup file created, moved into or not
+    # Folders this run creates (deepest first): removed again if the write fails, so a
+    # failed --out leaves no empty folder behind. Only folders that did not exist are listed.
+    new_folders: list[Path] = []
+    probe = folder
+    while not probe.exists() and probe != root_resolved:
+        new_folders.append(probe)
+        probe = probe.parent
+    succeeded = False
     try:
         folder.mkdir(parents=True, exist_ok=True)
         for name, text in contents.items():
@@ -182,6 +190,7 @@ def write_reports(root: Path, out: str, contents: dict[str, str]) -> None:
         for name, tmp in temps.items():
             os.replace(tmp, folder / name)
             placed.append(name)
+        succeeded = True
     except OSError as exc:
         restore_failed = []
         for name in placed:
@@ -209,3 +218,11 @@ def write_reports(root: Path, out: str, contents: dict[str, str]) -> None:
                     os.unlink(leftover)
                 except OSError:
                     pass
+        if not succeeded:
+            # Remove the folders this run created, deepest first. os.rmdir only removes an
+            # empty folder, so anything left inside (e.g. a kept backup) is never deleted.
+            for new in new_folders:
+                try:
+                    os.rmdir(new)
+                except OSError:
+                    break

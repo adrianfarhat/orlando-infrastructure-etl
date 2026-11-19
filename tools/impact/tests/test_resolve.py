@@ -213,7 +213,7 @@ class PurityAndDeterminismTests(unittest.TestCase):
         "__init__.py": {}, "__main__.py": {}, "paths.py": {}, "config.py": {}, "resolve.py": {},
         "regexsafe.py": {}, "findings.py": {},
         "gitfiles.py": {"imports": {"subprocess", "os"}},
-        "cli.py": {"imports": {"os", "tempfile"}, "attrs": {"mkdir", "unlink"}},
+        "cli.py": {"imports": {"os", "tempfile"}, "attrs": {"mkdir", "unlink", "rmdir"}},  # rmdir: remove only folders a failed --out created
     }
 
     def test_every_module_has_a_policy(self):

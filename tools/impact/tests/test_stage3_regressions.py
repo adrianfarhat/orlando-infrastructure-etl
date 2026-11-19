@@ -228,7 +228,7 @@ class LowerFindingRegressions(unittest.TestCase):
                 code, out, err = run("validate", "--root", str(repo.root), "--out")
             self.assertEqual((code, out), (2, ""))
             self.assertIn("could not write the reports", err)
-            self.assertEqual([p.name for p in (repo.root / ".local" / "impact").iterdir()], [])  # temps removed
+            self.assertFalse((repo.root / ".local").exists())  # temps removed, and the folders this run created (post-83a cleanup)
 
     def test_L3_brackets_in_out_are_literal(self):
         with valid_repo() as repo:

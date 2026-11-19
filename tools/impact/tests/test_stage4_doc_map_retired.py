@@ -55,7 +55,11 @@ class DocMapRetiredTests(unittest.TestCase):
         self.assertIn("(../../registry/components.yml)", text)
         self.assertIn("(../../impact.yml)", text)
         self.assertIn("## 5. Branch docs workflow", text)            # target of #5-branch-docs-workflow
-        self.assertIn("most specifically", text)                      # the matching rule is documented
+        self.assertIn("most specific matching component", text)       # the matching rule is documented
+        self.assertIn("leading path segments with no wildcard", text)   # how specificity is measured
+        self.assertIn("tie for the highest score", text)               # ties combine docs...
+        self.assertIn("registry-incomplete", text)                      # ...and validate warns
+        self.assertIn("`test`, `generated` or `experimental`", text)    # obligation exemptions
         self.assertNotIn("doc-map.yml", text)
 
 

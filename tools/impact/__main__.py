@@ -21,6 +21,16 @@ def _safe(text: str, limit: int = 2000) -> str:
     return shown if len(shown) <= limit else f"{shown[:limit]}... ({len(shown)} characters)"
 
 
+def _message(exc: BaseException) -> str:
+    """An exception's message, escaped and bounded. Never raises: str() of an exception
+    runs arbitrary code and can itself fail."""
+    try:
+        text = str(exc)
+    except BaseException:
+        return "<the error message could not be produced>"
+    return _safe(text) if isinstance(text, str) else "<the error message could not be produced>"
+
+
 if sys.version_info < (3, 13):
     print("impact: error: Python 3.13 or later is required (found "
           f"{sys.version_info.major}.{sys.version_info.minor})", file=sys.stderr)
@@ -29,11 +39,16 @@ if sys.version_info < (3, 13):
 try:
     from .cli import main
 except ImportError as exc:
-    print(f"impact: error: cannot start: {_safe(str(exc))}. Install the pinned dependencies: "
+    print(f"impact: error: cannot start: {_message(exc)}. Install the pinned dependencies: "
           "pip install -r requirements.txt", file=sys.stderr)
     sys.exit(2)
-except Exception as exc:                      # any other start-up failure is internal: never 1
-    print(f"impact: internal error while starting: {type(exc).__name__}: {_safe(str(exc))}", file=sys.stderr)
+except KeyboardInterrupt:                     # the user pressed Ctrl+C: not a tool result
+    raise
+except BaseException as exc:
+    # Any other start-up failure is internal, including SystemExit raised while the CLI
+    # is being imported (which would otherwise exit 0, or 1 with a raw message).
+    print(f"impact: internal error while starting: {_safe(type(exc).__name__)}: {_message(exc)}",
+          file=sys.stderr)
     sys.exit(2)
 
 sys.exit(main())
