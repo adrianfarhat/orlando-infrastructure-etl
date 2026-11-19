@@ -1,0 +1,208 @@
+{
+  "commit": "565706f36af58a0759b692a8777e6bdd3310c9ee",
+  "description": "Files tracked at commit 565706f (git ls-tree -r) and whether each contains the text DATABASE_URL (git grep -l -F). Frozen fixture for the doc-map to registry migration proof (T-83). Do not edit.",
+  "docmap_fixture": "tools/impact/tests/fixtures/docmap_565706f.yml",
+  "docmap_blob": "c3efbce907cf0710f5eca518c72b02ef3354d900",
+  "files": [
+    {
+      "path": ".claude/agents/backend.md",
+      "contains_database_url": true
+    },
+    {
+      "path": ".claude/agents/data-gis.md",
+      "contains_database_url": true
+    },
+    {
+      "path": ".claude/agents/frontend.md",
+      "contains_database_url": false
+    },
+    {
+      "path": ".claude/agents/integration-qa.md",
+      "contains_database_url": true
+    },
+    {
+      "path": ".claude/agents/technical-lead.md",
+      "contains_database_url": true
+    },
+    {
+      "path": ".claude/settings.json",
+      "contains_database_url": false
+    },
+    {
+      "path": ".gitignore",
+      "contains_database_url": false
+    },
+    {
+      "path": "CLAUDE.md",
+      "contains_database_url": true
+    },
+    {
+      "path": "database/test_connection.py",
+      "contains_database_url": true
+    },
+    {
+      "path": "docs/agents/development-status.md",
+      "contains_database_url": true
+    },
+    {
+      "path": "docs/agents/task-board.md",
+      "contains_database_url": true
+    },
+    {
+      "path": "docs/architecture/conventions.md",
+      "contains_database_url": false
+    },
+    {
+      "path": "docs/architecture/data-contracts.md",
+      "contains_database_url": false
+    },
+    {
+      "path": "docs/architecture/database-schema.md",
+      "contains_database_url": true
+    },
+    {
+      "path": "docs/architecture/etl-workflow.md",
+      "contains_database_url": true
+    },
+    {
+      "path": "docs/architecture/system-architecture.md",
+      "contains_database_url": true
+    },
+    {
+      "path": "docs/architecture/system-overview.md",
+      "contains_database_url": true
+    },
+    {
+      "path": "docs/doc-map.yml",
+      "contains_database_url": true
+    },
+    {
+      "path": "extractors/load_orlando_manholes.py",
+      "contains_database_url": true
+    },
+    {
+      "path": "extractors/load_orlando_streets.py",
+      "contains_database_url": true
+    },
+    {
+      "path": "extractors/load_orlando_wastewater.py",
+      "contains_database_url": true
+    },
+    {
+      "path": "requirements.txt",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/.gitignore",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/AGENTS.md",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/README.md",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/eslint.config.mjs",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/next.config.ts",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/package-lock.json",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/package.json",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/public/file.svg",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/public/globe.svg",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/public/maplibre-gl-worker.mjs",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/public/next.svg",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/public/vercel.svg",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/public/window.svg",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/app/api/infrastructure/features/route.ts",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/app/api/infrastructure/stats/route.ts",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/app/api/infrastructure/summary/route.ts",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/app/favicon.ico",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/app/globals.css",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/app/layout.tsx",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/app/operations/map/operations.module.css",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/app/operations/map/page.tsx",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/app/page.module.css",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/app/page.tsx",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/components/InfrastructureDashboard.tsx",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/components/InfrastructureMap.tsx",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/components/OperationsView.tsx",
+      "contains_database_url": false
+    },
+    {
+      "path": "web/src/lib/db.ts",
+      "contains_database_url": true
+    },
+    {
+      "path": "web/tsconfig.json",
+      "contains_database_url": false
+    }
+  ]
+}

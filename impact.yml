@@ -1,0 +1,62 @@
+# impact.yml: project configuration for the change-impact tool in tools/impact/ (T-83).
+# The engine is generic; everything specific to this repository lives here and in the registry.
+version: 1
+registry: registry/components.yml
+
+# Never analysed (in addition to .gitignore).
+ignore:
+  - ".local/**"
+  - "data/raw/**"
+
+# What kind of file a path is. First match wins; anything else is "code".
+# Order matters: data-contracts.md is a "contract" before it is a "doc", and
+# database/test_connection.py is a script ("code"), so no test_*.py pattern is used.
+purposes:
+  - {purpose: test,         paths: ["tools/impact/tests/**", "**/*.test.ts", "**/*.test.tsx"]}
+  - {purpose: generated,    paths: ["docs/architecture/generated/**"]}
+  - {purpose: experimental, paths: ["database/experiments/**"]}
+  - {purpose: ci,           paths: [".github/workflows/**"]}
+  - {purpose: contract,     paths: ["docs/architecture/data-contracts.md"]}
+  - {purpose: doc,          paths: ["docs/**", "**/*.md"]}
+  - {purpose: dependency,   paths: ["requirements.txt", "web/package.json", "web/package-lock.json"]}
+  - {purpose: config,       paths: ["impact.yml", "registry/**", ".gitignore", "web/.gitignore", ".claude/**",
+                                    "web/next.config.ts", "web/tsconfig.json", "web/eslint.config.mjs"]}
+  - {purpose: data,         paths: ["data/**"]}
+
+# Changes with these purposes never create a documentation obligation.
+# (Components with `docs: []` never do either; that is built into the engine.)
+doc_obligation:
+  exempt_purposes: [test, generated, experimental]
+
+# A NEW file matching one of these patterns must be listed in a component's `interfaces`
+# with its contract, otherwise `impact check` reports new-interface-without-contract (ERROR).
+interfaces:
+  - {kind: api-route, paths: ["web/src/app/api/**/route.ts"]}
+
+# Configurable WARNING rules only (value: WARNING or off).
+# Fixed rules are built into the engine and cannot be listed here: the ERROR rules
+# registry-invalid, registry-missing-path, stale-reference and
+# new-interface-without-contract, and the review rule config-changed (WARNING).
+rules:
+  unregistered-path: WARNING
+  docs-not-updated: WARNING      # reported as "Documentation review required"
+  content-trigger: WARNING
+  ack-problem: WARNING
+
+# Rules used by `impact validate` (registry completeness and ambiguity).
+validate:
+  registry-incomplete: WARNING
+
+# Where `impact check` looks for references to deleted or renamed paths.
+reference_scan:
+  include: ["**/*.md", "registry/**", "impact.yml"]
+  # Known limitation: the whole of docs/agents/task-board.md is excluded, because its
+  # Evidence log and findings are append-only history that must not be rewritten. Its
+  # non-historical sections (header, task index) are therefore not scanned either.
+  exclude: ["docs/agents/task-board.md"]
+
+# Acknowledgements (`- ack <finding-id>: <reason>`) apply to WARNINGs only.
+# Reasons are checked mechanically; the tool cannot judge whether a reason is correct.
+acks:
+  min_reason_length: 15
+  placeholders: ["n/a", "na", "none", "ok", "tbd", "todo", "-", "fine", "no change", "not needed"]
