@@ -9,3 +9,5 @@ __pycache__/
 .vscode/
 data/raw/
 data/processed/
+# Local reports from the change-impact tool (tools/impact, T-83); never committed.
+.local/
