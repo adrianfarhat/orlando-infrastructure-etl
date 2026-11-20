@@ -1,6 +1,10 @@
-"""Command line: `python -m tools.impact validate [--root DIR] [--format text|json] [--out [DIR]]`.
+"""Command line.
 
-Exit codes:
+  python -m tools.impact validate [--root DIR] [--format text|json] [--out [DIR]]
+  python -m tools.impact check [--root DIR] [--base REF] [--ack-file FILE]
+                               [--format text|json|md] [--out [DIR]]
+
+validate exit codes:
   0  validation completed with no ERROR findings (WARNINGs allowed);
   1  validation completed with at least one ERROR finding, including a missing or
      malformed configuration file (reported as a registry-invalid finding);
@@ -8,10 +12,19 @@ Exit codes:
      arguments, Git missing or failing, an unreadable file, an unusable --out
      target, or an unexpected internal error.
 
+check analyses the changes of the working tree against HEAD, or with --base against
+the merge-base of REF and HEAD (committed changes plus local ones). Exit codes:
+  0  no ERROR findings (WARNINGs, acknowledged or not, never fail the check);
+  1  at least one ERROR finding (acknowledgements never apply to ERRORs);
+  2  operational or configuration failure: bad arguments, Git missing or failing, a
+     bad --base, git older than 2.44, an invalid or unloadable impact.yml or registry
+     (run `validate`), an unusable --ack-file or --out target, or an internal error.
+
 Output: without --out, the selected format is printed to stdout and no file is
-written. With --out, both validate.txt and validate.json are written to the given
-directory (default .local/impact/ under the repository root) and the selected
-format is also printed. The only files this tool ever writes are those two.
+written. With --out, every report of the command is written to the given directory
+(default .local/impact/ under the repository root): validate.txt and validate.json,
+or check.txt, check.json and check.md. The selected format is also printed. The only
+files this tool ever writes are those reports.
 """
 
 from __future__ import annotations
@@ -24,10 +37,10 @@ import traceback
 from pathlib import Path
 from typing import TextIO
 
-from . import gitfiles
-from .config import LoadError, Problem, check_files, load_for_report
+from . import acks, changes, checkreport, gitfiles, rules
+from .config import LoadError, Problem, check_files, load, load_for_report
 from .paths import printable
-from .findings import Report, from_problems, render_json, render_text
+from .findings import DuplicateFindingError, Finding, Report, from_problems, render_json, render_text
 from .resolve import ambiguities
 
 EXIT_OK, EXIT_ERRORS, EXIT_FAILURE = 0, 1, 2
@@ -53,6 +66,16 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--out", nargs="?", const=DEFAULT_OUT, default=None, metavar="DIR",
                    help=f"also write validate.txt and validate.json to DIR, a folder inside the repository; "
                         f"a relative DIR is taken from the repository root (default {DEFAULT_OUT}/)")
+    c = sub.add_parser("check", help="analyse the changes of the working tree or branch and their impact")
+    c.add_argument("--root", type=Path, help="repository to check (default: the one containing the current folder)")
+    c.add_argument("--base", metavar="REF", help="compare from the merge-base of REF and HEAD (committed and "
+                                                 "local changes); without it, local changes against HEAD")
+    c.add_argument("--ack-file", type=Path, metavar="FILE",
+                   help="acknowledgements, one per line: - ack <finding-id>: <reason> (WARNINGs only)")
+    c.add_argument("--format", choices=("text", "json", "md"), default="text", help="report printed to stdout")
+    c.add_argument("--out", nargs="?", const=DEFAULT_OUT, default=None, metavar="DIR",
+                   help=f"also write check.txt, check.json and check.md to DIR, a folder inside the repository; "
+                        f"a relative DIR is taken from the repository root (default {DEFAULT_OUT}/)")
     return parser
 
 
@@ -69,15 +92,16 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     except SystemExit as exc:              # argparse --help / --version
         return EXIT_OK if exc.code in (0, None) else EXIT_FAILURE
     try:
-        return validate(args, out)
-    except (UsageError, OutputError, gitfiles.GitError) as exc:
+        return check(args, out) if args.command == "check" else validate(args, out)
+    except (UsageError, OutputError, gitfiles.GitError, acks.AckFileError, rules.InvalidConfiguration) as exc:
         print(f"impact: error: {safe(str(exc))}", file=err)
         return EXIT_FAILURE
-    except LoadError as exc:               # only operational load failures reach here
+    except LoadError as exc:               # validate: only operational load failures reach here
         print(f"impact: error: {safe(str(exc))}", file=err)
         return EXIT_FAILURE
     except Exception:                      # never let a bug look like "ERROR found" (exit 1)
-        print("impact: internal error; validation did not complete. Details:", file=err)
+        what = "the check" if args.command == "check" else "validation"
+        print(f"impact: internal error; {what} did not complete. Details:", file=err)
         # The traceback can carry repository-controlled text (file names in an OS error):
         # every line is escaped and bounded, and only the last lines are kept.
         lines = traceback.format_exc().splitlines()
@@ -106,11 +130,15 @@ class _Parser(argparse.ArgumentParser):
         raise CommandLineError(message)
 
 
-def validate(args: argparse.Namespace, out: TextIO) -> int:
+def _repository_root(args: argparse.Namespace) -> Path:
     start = args.root if args.root is not None else Path.cwd()
     if not start.is_dir():
         raise UsageError(f"--root is not a folder: {printable(str(start), double_backslash=False)}")
-    root = gitfiles.toplevel(start.resolve())
+    return gitfiles.toplevel(start.resolve())
+
+
+def validate(args: argparse.Namespace, out: TextIO) -> int:
+    root = _repository_root(args)
 
     config, registry, problems, sources = load_for_report(root)
     listing = gitfiles.list_files(root)
@@ -127,6 +155,54 @@ def validate(args: argparse.Namespace, out: TextIO) -> int:
         write_reports(root, args.out, {"validate.txt": text, "validate.json": data})
     out.write(data if args.format == "json" else text)
     return report.exit_code
+
+
+def check(args: argparse.Namespace, out: TextIO) -> int:
+    root = _repository_root(args)
+    ack_text = ""
+    if args.ack_file is not None:              # read first: a bad --ack-file fails before any analysis
+        try:
+            ack_text = acks.decode(args.ack_file.read_bytes())
+        except OSError as exc:
+            raise UsageError(f"cannot read --ack-file {printable(str(args.ack_file), double_backslash=False)}: "
+                             f"{printable(str(exc.strerror or exc))}") from None
+    try:
+        loaded = load(root)
+    except LoadError as exc:
+        raise rules.InvalidConfiguration(f"the impact configuration could not be loaded ({exc}); "
+                                         "run `python -m tools.impact validate`") from None
+    config, registry = rules.ready(loaded)
+    with changes.analysis(root):               # one private index and one git version check
+        change_set = changes.collect(root, base=args.base)
+        analysis = rules.analyse(root, config, registry, change_set)
+    unsupported = [Problem("(working tree)", "file name", name, "unsupported-path", "WARNING",
+                           f"a file name Git reported cannot be analysed: {name}") for name in analysis.unsupported]
+    findings = _merge(analysis.findings, from_problems(unsupported))
+    applied = acks.apply(findings, acks.parse(ack_text), config)
+    findings = _merge(findings, from_problems(applied.problems))
+    report = checkreport.CheckReport(
+        head=change_set.head, base_ref=change_set.base_ref, baseline=change_set.baseline,
+        sources=("impact.yml", config.registry) if config.registry else ("impact.yml",),
+        findings=findings, acknowledged=applied.acknowledged, impact=analysis.impact,
+        component_docs={c.id: c.docs for c in registry.components},
+        unsupported=analysis.unsupported, references_not_scanned=analysis.references_not_scanned)
+    rendered = {"check.txt": checkreport.render_text(report), "check.json": checkreport.render_json(report),
+                "check.md": checkreport.render_markdown(report)}
+    if args.out is not None:
+        write_reports(root, args.out, rendered)
+    out.write(rendered[{"text": "check.txt", "json": "check.json", "md": "check.md"}[args.format]])
+    return report.exit_code
+
+
+def _merge(*groups: tuple[Finding, ...]) -> tuple[Finding, ...]:
+    """Combine finding lists in the fixed finding order. Findings are merged as built
+    (IDs come from the full, uncut values), never rebuilt from their capped fields."""
+    by_id: dict[str, Finding] = {}
+    for f in (f for group in groups for f in group):
+        if f.id in by_id and by_id[f.id] != f:
+            raise DuplicateFindingError(f"finding id {f.id} produced by two different problems")
+        by_id[f.id] = f
+    return tuple(sorted(by_id.values(), key=Finding.sort_key))
 
 
 def write_reports(root: Path, out: str, contents: dict[str, str]) -> None:
@@ -224,5 +300,7 @@ def write_reports(root: Path, out: str, contents: dict[str, str]) -> None:
             for new in new_folders:
                 try:
                     os.rmdir(new)
+                except FileNotFoundError:
+                    continue      # never created (mkdir failed deeper): its parent may still be new
                 except OSError:
                     break
