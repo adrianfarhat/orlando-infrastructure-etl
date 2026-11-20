@@ -214,6 +214,7 @@ class PurityAndDeterminismTests(unittest.TestCase):
         "regexsafe.py": {}, "findings.py": {},
         "gitfiles.py": {"imports": {"subprocess", "os", "tempfile", "shutil"}},  # tempfile/shutil: the private index copy, outside the repository
         "changes.py": {"imports": {"os"}},  # reads working-tree files; runs git only via gitfiles
+        "rules.py": {},  # reads reference files with pathlib; runs git only via changes/gitfiles
         "cli.py": {"imports": {"os", "tempfile"}, "attrs": {"mkdir", "unlink", "rmdir"}},  # rmdir: remove only folders a failed --out created
     }
 
