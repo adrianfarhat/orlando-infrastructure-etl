@@ -130,6 +130,7 @@ Which source wins when two disagree.
 | UI behaviour | `web/src/components/**` | |
 | Task status, scope, priority, dependencies, acceptance criteria | [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private) | Never copied into Markdown; link to the card |
 | Findings, decision outcomes, verification evidence | [docs/agents/task-board.md](../agents/task-board.md) ([Evidence log](../agents/task-board.md#evidence-log)) | Versioned in git; evidence is required before a card moves to Done |
+| Proposed feature designs | [designs/](../../designs/README.md) | Proposals only; they never define current state. The built system is described here in `docs/architecture/` |
 | Generated docs | Their generator | Never hand-edited. None exist yet (planned: `docs/architecture/generated/`) |
 
 ### Where task information lives
@@ -140,8 +141,9 @@ Which source wins when two disagree.
 | [docs/agents/task-board.md](../agents/task-board.md) | Task index (links only), findings, decision outcomes, risks and the Evidence log |
 | [docs/agents/development-status.md](../agents/development-status.md) | Dependency and wave diagrams derived from the Project (a navigation view) |
 | `docs/architecture/*.md` | The system: architecture, data contracts, ETL, schema and these conventions |
+| [designs/](../../designs/README.md) | Proposed feature designs and each design's `design_status` (the state of the design, not of the task) |
 
-Do not copy live task fields (status, scope, priority, wave, dependencies, acceptance criteria) into Markdown, except the derived dependency and wave diagrams in development-status.md, which follow the cards. Link to the Project card instead. Evidence and architectural findings stay in Markdown because they must be versioned in git.
+Do not copy live task fields (status, scope, priority, wave, dependencies, acceptance criteria) into Markdown, except the derived dependency and wave diagrams in development-status.md, which follow the cards, and `design_status` in `designs/`, which describes a design and is not a task field. Link to the Project card instead. Evidence and architectural findings stay in Markdown because they must be versioned in git.
 
 Priority scale (Project field): P0 safety or rule violation · P1 correctness or reliability · P2 quality · P3 later or optional.
 

@@ -106,13 +106,25 @@ components:
 
   - id: repo-tooling
     paths: [".gitignore", "web/.gitignore", "web/tsconfig.json", "web/eslint.config.mjs",
-            "web/package-lock.json", "web/README.md"]
+            "web/package-lock.json", "web/README.md", ".vscode/tasks.json"]
     docs: []
 
   - id: impact-tool
     paths: ["tools/impact/**", "impact.yml", "registry/**"]
     docs: [docs/architecture/conventions.md]
     note: conventions.md section 5 describes the documentation workflow this tool supports.
+
+  # --- added for the Feature Design Workspace (T-94) ---
+
+  - id: design-workspace
+    paths: ["designs/**"]
+    docs: []
+    note: Proposed feature designs, not the implemented system (designs/README.md). designs/index/ is generated.
+
+  - id: design-tool
+    paths: ["tools/design/**"]
+    docs: [designs/README.md]
+    note: designs/README.md is the user guide for the New Feature, index and check commands.
 
 content_triggers:
 

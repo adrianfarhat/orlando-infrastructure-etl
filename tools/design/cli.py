@@ -1,0 +1,109 @@
+"""Command line for the Feature Design Workspace.
+
+  python -m tools.design new feature [--name NAME] [--parent PARENT] [--convert-parent] [--root DIR]
+  python -m tools.design index [--check] [--root DIR]
+  python -m tools.design check [--root DIR]
+
+Exit codes: 0 success; 1 problems found (check, index --check); 2 a usage or file error,
+including a refused name or destination. Nothing is ever overwritten, and no other program
+is run: new files are ordinary uncommitted changes (never staged, committed or pushed).
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import traceback
+from pathlib import Path
+from typing import Callable, TextIO
+
+from . import workspace
+from .workspace import DesignError
+
+EXIT_OK, EXIT_PROBLEMS, EXIT_FAILURE = 0, 1, 2
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str):
+        raise DesignError(message)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = _Parser(prog="python -m tools.design", description="Feature Design Workspace (T-94).")
+    sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    new = sub.add_parser("new", help="create a document from a template")
+    kinds = new.add_subparsers(dest="kind", required=True, metavar="KIND")
+    feature = kinds.add_parser("feature", help="create a feature specification (asks for missing values)")
+    feature.add_argument("--name", help="feature name, e.g. \"Pipe road intersections\"")
+    # nargs="?" with const="": "--parent" with an empty or missing value (an editor may drop an
+    # empty argument) means a standalone feature, never an error.
+    feature.add_argument("--parent", nargs="?", const="", default=None,
+                         help="parent feature ID (e.g. FD-0003) or a folder under designs/features/; "
+                              "empty or omitted for a standalone feature")
+    feature.add_argument("--convert-parent", action="store_true",
+                         help="allow turning a standalone parent feature x.md into x/README.md")
+    index = sub.add_parser("index", help="regenerate designs/index/feature-index.md")
+    index.add_argument("--check", action="store_true", help="only report whether the index is up to date")
+    sub.add_parser("check", help="check every feature specification and the index")
+    for p in (feature, index, sub.choices["check"]):
+        p.add_argument("--root", type=Path, help="repository root (default: found from the current folder)")
+    return parser
+
+
+def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None,
+         ask: Callable[[str], str] | None = None, interactive: bool | None = None) -> int:
+    out = stdout if stdout is not None else sys.stdout
+    err = stderr if stderr is not None else sys.stderr
+    try:
+        args = build_parser().parse_args(argv)
+        root = workspace.find_root(args.root if args.root is not None else Path.cwd())
+        if args.command == "new":
+            if interactive is None:                 # a closed stdin (None) is not interactive
+                interactive = sys.stdin is not None and sys.stdin.isatty()
+            return _new_feature(args, root, out, ask or input, interactive)
+        if args.command == "index":
+            if args.check:
+                fresh = workspace.index_is_fresh(root)
+                print(f"{workspace.INDEX} is {'up to date' if fresh else 'out of date: run `python -m tools.design index`'}",
+                      file=out)
+                return EXIT_OK if fresh else EXIT_PROBLEMS
+            fresh = workspace.index_is_fresh(root)
+            path = workspace.write_index(root)
+            print(f"{path} is already up to date" if fresh else f"wrote {path}", file=out)
+            return EXIT_OK
+        problems = workspace.check(root)
+        features, _ = workspace.discover(root)
+        for p in problems:
+            print(f"{p.path}: {p.message}", file=out)
+        print(f"{len(features)} feature file(s), {len(problems)} problem(s)", file=out)
+        return EXIT_PROBLEMS if problems else EXIT_OK
+    except DesignError as exc:
+        print(f"design: error: {exc}", file=err)
+        return EXIT_FAILURE
+    except (KeyboardInterrupt, EOFError):           # Ctrl+C, or Ctrl+Z / end of input at a prompt
+        print("design: cancelled; nothing was created or changed", file=err)
+        return EXIT_FAILURE
+    except SystemExit as exc:                       # --help
+        return EXIT_OK if exc.code in (0, None) else EXIT_FAILURE
+    except Exception:                               # never let a bug look like "problems found"
+        print("design: internal error; nothing more was done. Details:", file=err)
+        print("\n".join(traceback.format_exc().splitlines()[-20:]), file=err)
+        return EXIT_FAILURE
+
+
+def _new_feature(args, root: Path, out: TextIO, ask: Callable[[str], str], interactive: bool) -> int:
+    name, parent = args.name, args.parent
+    if name is None:
+        if not interactive:
+            raise DesignError("--name is required when not running interactively")
+        name = ask("Feature name: ")
+        if args.parent is None:
+            parent = ask("Parent feature ID or folder (Enter for a standalone feature): ")
+    created = workspace.new_feature(root, name, parent or None, args.convert_parent)
+    if created.moved:
+        print(f"moved {created.moved[0]} -> {created.moved[1]} (same feature ID; its relative links were "
+              "adjusted)", file=out)
+    print(f"created {created.path} ({created.feature_id})", file=out)
+    print(f"updated {created.index}", file=out)
+    print("These are uncommitted working-tree changes: nothing was staged, committed or pushed.", file=out)
+    return EXIT_OK

@@ -211,7 +211,8 @@ Plan approved by the user 2026-11-17; T-91 to T-93 added 2026-11-18. These tasks
 use the same Wave field as the rest of the board (waves 1–4); each subgraph below
 is one wave. Dotted rectangles are prerequisites from the wave diagrams above.
 T-59 appears in the Wave 1 diagram above and is a prerequisite of T-83 and T-85
-here. Card links: [Task index](task-board.md#task-index).
+here. T-94 (Feature Design Workspace, added 2026-11-20) builds on T-83 and is shown
+in its Wave 1 subgraph. Card links: [Task index](task-board.md#task-index).
 
 ```mermaid
 flowchart LR
@@ -226,6 +227,7 @@ flowchart LR
     T83["T-83 change-impact<br/>engine (MVP core)"]
     T81["T-81 links + deleted-path<br/>validator"]
     T84["T-84 PR template +<br/>CLAUDE.md docs rules"]
+    T94["T-94 feature design<br/>workspace"]
   end
   subgraph DS2["Wave 2"]
     T82["T-82 Mermaid +<br/>conventions lint"]
@@ -260,6 +262,7 @@ flowchart LR
   T91 --> T92
   T83 --> T93
   T85 --> T93
+  T83 --> T94
 
   classDef decision fill:#ffffff,stroke:#374151,color:#111827
   classDef otherwave stroke-dasharray:4 3

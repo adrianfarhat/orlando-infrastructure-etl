@@ -138,6 +138,7 @@ card titles as of 2026-11-18.
 - [T-91](https://github.com/users/adrianfarhat/projects/1/views/1?filterQuery=T-91): Dataset registry and provenance (v1.1)
 - [T-92](https://github.com/users/adrianfarhat/projects/1/views/1?filterQuery=T-92): Dataset validity checks (v1.2)
 - [T-93](https://github.com/users/adrianfarhat/projects/1/views/1?filterQuery=T-93): Framework reuse and deeper analysis (v2)
+- [T-94](https://github.com/users/adrianfarhat/projects/1/views/1?filterQuery=T-94): Feature Design Workspace
 
 ### Integration gates
 
@@ -207,6 +208,7 @@ in [Project #1](https://github.com/users/adrianfarhat/projects/1) (private).
 - **2026-11-20 · T-83 Phase 83b Stage 4.** Commit `f3ba3f9` added `impact plan --paths` (predicted impact of proposed changes); 398 tests pass. integration-qa: no unresolved defects; details in the commit message.
 - **2026-11-20 · T-83 Phase 83b Stage 5.** Commit `9af86a3` (final acceptance): `config-changed` now also covers the tool's own top-level modules, found from the package location; user guide `tools/impact/README.md`; `conventions.md` section 5 (technical-lead). 409 tests pass; `impact validate` 0 ERROR, 0 WARNING; `check` against the merged T-59 change (PR #4, `565706f`) gave the expected findings; integration-qa final acceptance review: accepted, no blockers. Remaining limitations are listed under "Known limitations" in `tools/impact/README.md`.
 - **2026-11-20 · T-83 Phase 83b checks on every stage.** The commit messages of `c6c9f79`, `e80344b`, `0974181`, `f3ba3f9` and `9af86a3` each record: migration check unchanged (0 relationships lost, 4 approved additions), frozen fixtures unchanged, and `impact validate` 0 ERROR, 0 WARNING.
+- **2026-11-20 · PR #5 (T-83).** Merged to main as merge commit `7f0cbc8` (parents `565706f` and `dd9c3c7`). technical-lead confirmed with `git log` and `git merge-base --is-ancestor` that all T-83 stage commits (`17022c1`, `2d7f572`, `ebbf84a`, `5fc4230`, `c6c9f79`, `e80344b`, `0974181`, `f3ba3f9`, `9af86a3`) and the evidence commit `dd9c3c7` are reachable from main. The T-83 Project card was set to Done (reported by the main conversation).
 
 The work done before this board existed (the ETL loaders, the three API
 routes, and the map and dashboard) is described in `docs/architecture/` but has
