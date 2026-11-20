@@ -3,6 +3,8 @@
   python -m tools.impact validate [--root DIR] [--format text|json] [--out [DIR]]
   python -m tools.impact check [--root DIR] [--base REF] [--ack-file FILE]
                                [--format text|json|md] [--out [DIR]]
+  python -m tools.impact plan --paths PATH [PATH ...] [--root DIR]
+                              [--format text|json|md] [--out [DIR]]
 
 validate exit codes:
   0  validation completed with no ERROR findings (WARNINGs allowed);
@@ -20,11 +22,17 @@ the merge-base of REF and HEAD (committed changes plus local ones). Exit codes:
      bad --base, git older than 2.44, an invalid or unloadable impact.yml or registry
      (run `validate`), an unusable --ack-file or --out target, or an internal error.
 
+plan predicts what a change to the given (existing or proposed) files would involve:
+components, docs to review, contracts, suggested tests, one-hop dependents and the
+check rules that could apply. It is informational only (no findings) and inspects no
+change. Exit codes: 0 when the prediction is printed; 2 for a usage, configuration or
+Git failure, including an invalid path (absolute, "..", empty, a folder).
+
 Output: without --out, the selected format is printed to stdout and no file is
 written. With --out, every report of the command is written to the given directory
 (default .local/impact/ under the repository root): validate.txt and validate.json,
-or check.txt, check.json and check.md. The selected format is also printed. The only
-files this tool ever writes are those reports.
+check.txt, check.json and check.md, or plan.txt, plan.json and plan.md. The selected
+format is also printed. The only files this tool ever writes are those reports.
 """
 
 from __future__ import annotations
@@ -37,7 +45,7 @@ import traceback
 from pathlib import Path
 from typing import TextIO
 
-from . import acks, changes, checkreport, gitfiles, rules
+from . import acks, changes, checkreport, gitfiles, plan as planning, rules
 from .config import LoadError, Problem, check_files, load, load_for_report
 from .paths import printable
 from .findings import DuplicateFindingError, Finding, Report, from_problems, render_json, render_text
@@ -76,6 +84,14 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--out", nargs="?", const=DEFAULT_OUT, default=None, metavar="DIR",
                    help=f"also write check.txt, check.json and check.md to DIR, a folder inside the repository; "
                         f"a relative DIR is taken from the repository root (default {DEFAULT_OUT}/)")
+    pl = sub.add_parser("plan", help="predict the impact of changing the given files (no findings)")
+    pl.add_argument("--paths", nargs="+", required=True, metavar="PATH",
+                    help="repository-relative file paths, existing or proposed")
+    pl.add_argument("--root", type=Path, help="repository (default: the one containing the current folder)")
+    pl.add_argument("--format", choices=("text", "json", "md"), default="text", help="report printed to stdout")
+    pl.add_argument("--out", nargs="?", const=DEFAULT_OUT, default=None, metavar="DIR",
+                    help=f"also write plan.txt, plan.json and plan.md to DIR, a folder inside the repository; "
+                         f"a relative DIR is taken from the repository root (default {DEFAULT_OUT}/)")
     return parser
 
 
@@ -92,15 +108,17 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     except SystemExit as exc:              # argparse --help / --version
         return EXIT_OK if exc.code in (0, None) else EXIT_FAILURE
     try:
-        return check(args, out) if args.command == "check" else validate(args, out)
-    except (UsageError, OutputError, gitfiles.GitError, acks.AckFileError, rules.InvalidConfiguration) as exc:
+        commands = {"check": check, "plan": plan, "validate": validate}
+        return commands[args.command](args, out)
+    except (UsageError, OutputError, gitfiles.GitError, acks.AckFileError, rules.InvalidConfiguration,
+            planning.PlanUsageError) as exc:
         print(f"impact: error: {safe(str(exc))}", file=err)
         return EXIT_FAILURE
     except LoadError as exc:               # validate: only operational load failures reach here
         print(f"impact: error: {safe(str(exc))}", file=err)
         return EXIT_FAILURE
     except Exception:                      # never let a bug look like "ERROR found" (exit 1)
-        what = "the check" if args.command == "check" else "validation"
+        what = {"check": "the check", "plan": "the plan"}.get(args.command, "validation")
         print(f"impact: internal error; {what} did not complete. Details:", file=err)
         # The traceback can carry repository-controlled text (file names in an OS error):
         # every line is escaped and bounded, and only the last lines are kept.
@@ -157,6 +175,31 @@ def validate(args: argparse.Namespace, out: TextIO) -> int:
     return report.exit_code
 
 
+def _valid_configuration(root: Path):
+    try:
+        loaded = load(root)
+    except LoadError as exc:
+        raise rules.InvalidConfiguration(f"the impact configuration could not be loaded ({exc}); "
+                                         "run `python -m tools.impact validate`") from None
+    return rules.ready(loaded)
+
+
+def plan(args: argparse.Namespace, out: TextIO) -> int:
+    root = _repository_root(args)
+    paths = planning.normalise_paths(args.paths, root)
+    config, registry = _valid_configuration(root)
+    predictions = planning.predict(root, config, registry, paths, gitfiles.list_files(root).files,
+                                   planning.git_ignored(root, paths))
+    report = planning.Plan(gitfiles.head(root),
+                           ("impact.yml", config.registry) if config.registry else ("impact.yml",), predictions)
+    rendered = {"plan.txt": planning.render_text(report), "plan.json": planning.render_json(report),
+                "plan.md": planning.render_markdown(report)}
+    if args.out is not None:
+        write_reports(root, args.out, rendered)
+    out.write(rendered[{"text": "plan.txt", "json": "plan.json", "md": "plan.md"}[args.format]])
+    return EXIT_OK
+
+
 def check(args: argparse.Namespace, out: TextIO) -> int:
     root = _repository_root(args)
     ack_text = ""
@@ -166,12 +209,7 @@ def check(args: argparse.Namespace, out: TextIO) -> int:
         except OSError as exc:
             raise UsageError(f"cannot read --ack-file {printable(str(args.ack_file), double_backslash=False)}: "
                              f"{printable(str(exc.strerror or exc))}") from None
-    try:
-        loaded = load(root)
-    except LoadError as exc:
-        raise rules.InvalidConfiguration(f"the impact configuration could not be loaded ({exc}); "
-                                         "run `python -m tools.impact validate`") from None
-    config, registry = rules.ready(loaded)
+    config, registry = _valid_configuration(root)
     with changes.analysis(root):               # one private index and one git version check
         change_set = changes.collect(root, base=args.base)
         analysis = rules.analyse(root, config, registry, change_set)
