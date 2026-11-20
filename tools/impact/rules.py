@@ -23,13 +23,19 @@ Rules (severities are fixed unless noted; configurable ones are WARNING or off i
 - content-trigger (WARNING, configurable): a trigger's `match` found in the ADDED or
   REMOVED lines of a matching changed file (never the whole file). Changed lines that
   could not be scanned give a "not scanned" WARNING, never "no match".
-- config-changed (WARNING, fixed): a change to impact.yml, the registry (registry/**
-  and the configured registry file) or the rule-defining engine files
-  tools/impact/config.py and tools/impact/rules.py (the approved, narrow list).
-- ack-problem is not produced here: acknowledgements arrive in stage 83b-3.
+- config-changed (WARNING, fixed; impact.yml cannot switch it off or narrow it): a change
+  to impact.yml, the registry (registry/** and the configured registry file), or one of
+  the engine's own top-level Python modules. The engine's folder is derived at run time
+  from where this package is, relative to the repository root (never hardcoded, so the
+  tool stays portable); every *.py file directly in that folder counts, including added,
+  deleted and renamed ones, but not its tests/ or other subfolders and not other files.
+  When the package is outside the repository (installed or run from elsewhere), no
+  engine path can change in that repository and only impact.yml and the registry count.
+- ack-problem is not produced here: acks.py checks acknowledgements after the analysis.
 
 Exclusions:
-- Paths matching impact.yml `ignore` are skipped entirely (listed in the report as ignored).
+- Paths matching impact.yml `ignore` are skipped entirely (listed in the report as ignored),
+  except for config-changed, which impact.yml cannot suppress.
 - Files whose purpose is test, generated or experimental (doc_obligation.exempt_purposes)
   create no documentation obligation and no content-trigger WARNING; components with
   `docs: []` create no obligation either.
@@ -68,8 +74,10 @@ from .gitfiles import list_files
 from .paths import matches
 from .resolve import GENERATED, REVIEWED, TRIGGER, Resolution, best_components, purpose_of, resolve
 
-# Approved narrow config-changed list (decision 4); the configured registry file is added.
-CONFIG_CHANGE_PATTERNS = ("impact.yml", "registry/**", "tools/impact/config.py", "tools/impact/rules.py")
+# Fixed config-changed inputs; the configured registry file and the engine's own modules
+# (engine_folder) are added at run time.
+CONFIG_CHANGE_PATTERNS = ("impact.yml", "registry/**")
+_PACKAGE_DIR = Path(__file__).resolve().parent
 NOT_MAPPED = "not mapped"
 TESTS_BASIS = "test files in the same component (component paths + impact.yml purposes); not a verified test mapping"
 CHANGED, NO_CONTENT_CHANGE = "changed", "no content change"
@@ -80,6 +88,27 @@ _QUOTES = frozenset("`\"'")
 
 class InvalidConfiguration(Exception):
     """impact.yml or the registry has ERROR problems: run `impact validate` (exit code 2)."""
+
+
+def engine_folder(root: Path) -> str | None:
+    """The folder of this package relative to the repository root, as a Git-style path
+    ("" for the root itself), or None when the package is outside the repository."""
+    try:
+        rel = _PACKAGE_DIR.relative_to(Path(root).resolve())
+    except ValueError:
+        return None
+    return rel.as_posix() if rel.parts else ""
+
+
+def is_config_input(path: str, config: Config, engine: str | None) -> bool:
+    """config-changed applies to this repository path (fixed; not configurable)."""
+    patterns = CONFIG_CHANGE_PATTERNS + ((config.registry,) if config.registry else ())
+    if any(matches(path, p) for p in patterns):
+        return True
+    if engine is None:
+        return False
+    folder, _, name = path.rpartition("/")
+    return folder == engine and name.endswith(".py")
 
 
 def ready(loaded: Loaded) -> tuple[Config, Registry]:
@@ -159,7 +188,7 @@ def _analyse(root: Path, config: Config, registry: Registry, change_set: ChangeS
     problems: list[Problem] = []
     reg_source = config.registry or "registry"
     listed_interfaces = {i.path for c in registry.components for i in c.interfaces}
-    config_patterns = CONFIG_CHANGE_PATTERNS + ((config.registry,) if config.registry else ())
+    engine = engine_folder(root)
 
     def rule_on(name: str) -> bool:
         return config.rules.get(name, "WARNING") != "off"
@@ -181,7 +210,15 @@ def _analyse(root: Path, config: Config, registry: Registry, change_set: ChangeS
         own = (change.path,) + ((change.old_path,) if change.kind == "renamed" and change.old_path else ())
         res = {p: resolve(p, config, registry, from_git=True) for p in own}
         live = {p: r for p, r in res.items() if not r.ignored}
+        # config-changed (fixed WARNING) is decided before impact.yml `ignore` applies, so
+        # the configuration cannot hide changes to itself, the registry or the engine.
+        config_hit = any(is_config_input(p, config, engine) for p in own)
         if not live:
+            phantom_ignored = change.kind == "modified" and config_hit and \
+                _content(change, lines_for(change)) == NO_CONTENT_CHANGE
+            if config_hit and not phantom_ignored:
+                problems.append(Problem(change.path, "impact configuration", change.path, "config-changed",
+                                        "WARNING", _config_message(change)))
             entries.append(_ignored_entry(change))
             continue
         for p in change.removed_paths:
@@ -200,7 +237,7 @@ def _analyse(root: Path, config: Config, registry: Registry, change_set: ChangeS
 
         if not phantom:
             # config-changed (fixed WARNING)
-            if any(matches(p, pat) for p in live for pat in config_patterns):
+            if config_hit:
                 problems.append(Problem(change.path, "impact configuration", change.path, "config-changed",
                                         "WARNING", _config_message(change)))
             # new-interface-without-contract (fixed ERROR)

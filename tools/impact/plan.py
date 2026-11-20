@@ -44,7 +44,8 @@ from .config import Config, Registry
 from .findings import SCHEMA_VERSION
 from .paths import PathError, matches, normalize
 from .resolve import GENERATED, REVIEWED, TRIGGER, best_components, purpose_of, resolve
-from .rules import CONFIG_CHANGE_PATTERNS, NOT_MAPPED, TESTS_BASIS, Dependent, find_references
+from . import rules as _rules
+from .rules import NOT_MAPPED, TESTS_BASIS, Dependent, find_references
 
 
 class PlanUsageError(Exception):
@@ -154,17 +155,23 @@ def predict(root: Path, config: Config, registry: Registry, paths: Iterable[str]
             for comp in best_components(f, registry):
                 tests_by_component.setdefault(comp.id, set()).add(f)
     reference_files = _reference_texts(root, config, listing)
-    return tuple(_predict(p, p in present, p in gitignored, config, registry, tests_by_component, reference_files)
-                 for p in sorted(set(paths)))
+    engine = _rules.engine_folder(root)
+    return tuple(_predict(p, p in present, p in gitignored, config, registry, tests_by_component, reference_files,
+                          engine) for p in sorted(set(paths)))
 
 
 def _predict(path: str, exists: bool, gitignored: bool, config: Config, registry: Registry,
-             tests_by_component: dict[str, set[str]], reference_files: dict[str, str]) -> Prediction:
+             tests_by_component: dict[str, set[str]], reference_files: dict[str, str],
+             engine: str | None) -> Prediction:
     res = resolve(path, config, registry)
     if res.ignored or gitignored:
         reasons = [r for r, on in ((".gitignore", gitignored), ("impact.yml ignore", res.ignored)) if on]
+        # check never sees a Git-ignored path; an impact.yml-ignored one is still checked
+        # for config-changed (impact.yml cannot suppress it).
+        ignored_rules = (PredictedRule("config-changed", "WARNING", "on any content change, rename or deletion"),) \
+            if not gitignored and _rules.is_config_input(path, config, engine) else ()
         return Prediction(path, exists, True, " and ".join(reasons), None, (), False, (), (), (), NOT_MAPPED,
-                          (), (), ())
+                          (), ignored_rules, ())
     comps = best_components(path, registry)
     ids = {c.id for c in comps}
     exempt = res.purpose in config.exempt_purposes
@@ -210,8 +217,7 @@ def _predict(path: str, exists: bool, gitignored: bool, config: Config, registry
         rules.append(PredictedRule("new-interface-without-contract", "ERROR",
                                    f"if the file is new (added, renamed or copied to this path) without being listed "
                                    f"in a component's `interfaces` with its contract ({kinds[0]})"))
-    config_patterns = CONFIG_CHANGE_PATTERNS + ((config.registry,) if config.registry else ())
-    if any(matches(path, p) for p in config_patterns):
+    if _rules.is_config_input(path, config, engine):
         rules.append(PredictedRule("config-changed", "WARNING", "on any content change, rename or deletion"))
     referenced_by = tuple(sorted(f for f, text in reference_files.items() if f != path and find_references(text, path)))
     if exists:

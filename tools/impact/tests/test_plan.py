@@ -207,6 +207,22 @@ class QaRoundOneFixes(unittest.TestCase):
             entry = next(e for e in json.loads(out)["impact"] if e["path"] == "app/tests/test_x.py")
             self.assertEqual([d["doc"] for d in entry["docs"] if d["kind"] == "trigger"], [])
 
+    def test_engine_modules_are_predicted_where_the_package_is(self):
+        from tools.impact import rules
+        hide = {**IMPACT, "ignore": [".local/**", "data/raw/**", "vendor/kit/hidden/**"]}
+        with rules_repo(impact=hide) as repo:
+            for engine, flagged in (("vendor/kit/impact", "vendor/kit/impact/cli.py"),
+                                    ("vendor/kit/hidden", "vendor/kit/hidden/cli.py")):   # impact.yml-ignored
+                with self.subTest(engine=engine), mock.patch.object(rules, "engine_folder", return_value=engine):
+                    data = by_path(plan_json(repo, flagged, "vendor/kit/impact/tests/t.py", "tools/impact/cli.py")[1])
+                    self.assertIn(("config-changed", "WARNING"), rules_of(data[flagged]))
+                    self.assertNotIn(("config-changed", "WARNING"), rules_of(data["vendor/kit/impact/tests/t.py"]))
+                    self.assertNotIn(("config-changed", "WARNING"), rules_of(data["tools/impact/cli.py"]))
+            with mock.patch.object(rules, "engine_folder", return_value=None):          # package outside the repo
+                data = by_path(plan_json(repo, "vendor/kit/impact/cli.py", "impact.yml")[1])
+                self.assertNotIn(("config-changed", "WARNING"), rules_of(data["vendor/kit/impact/cli.py"]))
+                self.assertIn(("config-changed", "WARNING"), rules_of(data["impact.yml"]))
+
     def test_reference_matching_respects_path_boundaries(self):
         with rules_repo() as repo:
             repo.write("docs/refs.md", "See app/old.py.bak and other/app/old.py.\n"); repo.add_all(); repo.commit("r")

@@ -406,19 +406,82 @@ class ContentTrigger(unittest.TestCase):
 
 
 class ConfigChanged(unittest.TestCase):
-    def test_configuration_and_rule_engine_files(self):
+    """config-changed covers impact.yml, the registry and the engine's own top-level
+    modules, whose folder is derived from where the package is (rules.engine_folder)."""
+
+    def engine_at(self, folder):
+        return unittest.mock.patch.object(rules, "engine_folder", return_value=folder)
+
+    def test_configuration_and_engine_modules(self):
         with rules_repo() as repo:
             repo.write_json("impact.yml", {**IMPACT, "ignore": [".local/**", "data/raw/**", "misc/**"]})
             repo.write("tools/impact/config.py", "x = 2\n")
-            repo.write("tools/impact/rules.py", "z = 1\n")
-            repo.write("tools/impact/other.py", "y = 2\n")                       # not on the list
-            a = run(repo)
-            self.assertEqual(found(a, "config-changed"), [("config-changed", "impact.yml", "impact.yml"),
-                                                          ("config-changed", "tools/impact/config.py",
-                                                           "tools/impact/config.py"),
-                                                          ("config-changed", "tools/impact/rules.py",
-                                                           "tools/impact/rules.py")])
+            repo.write("tools/impact/rules.py", "z = 1\n")                       # new module
+            repo.write("tools/impact/other.py", "y = 2\n")
+            repo.write("tools/impact/tests/test_x.py", "t = 1\n")                # tests: not engine modules
+            repo.write("tools/impact/README.md", "# r\n")                        # not a .py module
+            repo.write("tools/impact/sub/deep.py", "d = 1\n")                     # subfolder: not top level
+            with self.engine_at("tools/impact"):
+                a = run(repo)
+            self.assertEqual([f[1] for f in found(a, "config-changed")],
+                             ["impact.yml", "tools/impact/config.py", "tools/impact/other.py", "tools/impact/rules.py"])
             self.assertTrue(all(f.severity == "WARNING" for f in a.findings if f.rule == "config-changed"))
+
+    def test_engine_at_a_different_repository_path(self):
+        with rules_repo() as repo:
+            repo.write("vendor/kit/impact/cli.py", "c = 1\n"); repo.write("vendor/kit/impact/gone.py", "g = 1\n")
+            repo.add_all(); repo.commit("vendored engine")
+            repo.write("vendor/kit/impact/cli.py", "c = 2\n")
+            repo.git("rm", "-q", "vendor/kit/impact/gone.py")                    # deleted module: still flagged
+            repo.write("tools/impact/config.py", "x = 2\n")                       # not the engine here
+            with self.engine_at("vendor/kit/impact"):
+                a = run(repo)
+            self.assertEqual([f[1] for f in found(a, "config-changed")],
+                             ["vendor/kit/impact/cli.py", "vendor/kit/impact/gone.py"])
+
+    def test_engine_folder_is_derived_from_the_package_location(self):
+        from tools.impact.tests.test_cli import REPO_ROOT
+        self.assertEqual(rules.engine_folder(REPO_ROOT), "tools/impact")
+        with rules_repo() as repo:
+            for package, expected in ((repo.root / "vendor" / "kit" / "impact", "vendor/kit/impact"),
+                                      (repo.root, ""), (repo.root.parent / "elsewhere", None)):
+                with self.subTest(expected=expected), \
+                        unittest.mock.patch.object(rules, "_PACKAGE_DIR", package.resolve()):
+                    self.assertEqual(rules.engine_folder(repo.root), expected)
+
+    def test_package_outside_the_repository(self):
+        with rules_repo() as repo:
+            repo.write("tools/impact/config.py", "x = 2\n")
+            repo.write_json("impact.yml", {**IMPACT, "ignore": [".local/**", "data/raw/**", "zz/**"]})
+            with self.engine_at(None):
+                a = run(repo)
+            self.assertEqual([f[1] for f in found(a, "config-changed")], ["impact.yml"])   # only the fixed inputs
+
+    def test_impact_yml_ignore_cannot_hide_configuration_changes(self):
+        hide = {**IMPACT, "ignore": [".local/**", "data/raw/**", "tools/**", "registry/**"]}
+        with rules_repo(impact=hide) as repo:
+            repo.write("tools/impact/config.py", "x = 2\n")
+            repo.write_json("registry/components.yml", {**REGISTRY, "content_triggers": []})
+            repo.git("mv", "tools/impact/other.py", "tools/impact/renamed.py")
+            repo.write("tools/impact/tests/t.py", "t = 2\n")                     # ignored and not an engine module
+            with self.engine_at("tools/impact"):
+                a = run(repo)
+            self.assertEqual([f[1] for f in found(a, "config-changed")],
+                             ["registry/components.yml", "tools/impact/config.py", "tools/impact/renamed.py"])
+            self.assertTrue(entry(a, "tools/impact/config.py").ignored)            # still ignored otherwise
+            self.assertEqual(found(a, "unregistered-path"), [])
+        with rules_repo(impact=hide) as repo:
+            repo.git("rm", "-q", "--cached", "tools/impact/config.py")          # phantom: no content change
+            with self.engine_at("tools/impact"):
+                self.assertEqual(found(run(repo), "config-changed"), [])
+
+    def test_finding_ids_are_stable_across_stages(self):
+        from tools.impact.findings import finding_id
+        # IDs reported by `check --base main` on this repository since Stage 83b-2/83b-3.
+        known = {"impact.yml": "config-changed:c9dfbe1cbf", "registry/components.yml": "config-changed:80fcea8f82",
+                 "tools/impact/config.py": "config-changed:b1cd50b1d6", "tools/impact/rules.py": "config-changed:0649b7ab94"}
+        for path, fid in known.items():
+            self.assertEqual(finding_id("config-changed", path, "impact configuration", path), fid)
 
     def test_registry_change_rename_and_phantom(self):
         with rules_repo() as repo:

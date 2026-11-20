@@ -174,9 +174,11 @@ only through geometry, computed at query time.
      beats `web/src/app/**` (3), and an exact file path beats any glob that matches the
      same file. The broader component's docs are then not added.
    - If several components tie for the highest score, the file belongs to all of them:
-     their `docs` and `generated` lists are combined, and
-     `python -m tools.impact validate` reports the file as a `registry-incomplete`
-     WARNING ("ambiguous: equally specific match ...") so the registry can be fixed.
+     their `docs` and `generated` lists are combined. `python -m tools.impact validate`
+     reports a `registry-incomplete` WARNING ("ambiguous: equally specific match ...")
+     for each such file that Git lists in the working tree (tracked, or untracked and
+     not ignored by Git) and that impact.yml `ignore` does not exclude, so the registry
+     can be fixed.
    - Review the matched component's `docs` in the same branch. There is no
      documentation obligation when the component has `docs: []`, or when the file's
      purpose is `test`, `generated` or `experimental`. A file's purpose is the first
@@ -187,18 +189,44 @@ only through geometry, computed at query time.
      edit them by hand. A component marked `planned: true` covers paths that do not
      exist yet.
    - Also check `content_triggers`. If a changed file matches a trigger's `paths` and
-     its content matches the trigger's `match`, review that trigger's `docs` as well.
-     A trigger adds docs to review; it does not by itself create a documentation
-     obligation.
+     a trigger's `match` appears in the lines the change adds or removes (not anywhere
+     in the whole file), review that trigger's `docs` as well. A trigger adds docs to
+     review; it does not by itself create a documentation obligation. Files whose
+     purpose is `test`, `generated` or `experimental` are not scanned.
    - `python -m tools.impact validate` checks the registry and
      [impact.yml](../../impact.yml) against the working tree. It does not analyse a
-     branch's changes.
-2. Preview locally (VS Code Markdown preview with Mermaid support) or in a draft PR.
-3. Docs reach `main` **only at merge**, after user approval. Nothing is published
+     branch's changes; run it after editing either file.
+2. Use the change-impact tool, which applies the rules above. The user guide,
+   [tools/impact/README.md](../../tools/impact/README.md), covers the commands,
+   exit codes, reports and known limitations.
+   - **At task start:** `python -m tools.impact plan --paths <files>` predicts, for
+     the files you expect to change, their components, docs to review, contracts,
+     test suggestions (the test files of the same component, not a verified test
+     mapping), one-hop dependents and which `check` rules could apply. It inspects no
+     change and reports no findings.
+   - **Before asking for review:** `python -m tools.impact check --base main` (the
+     whole branch, committed and uncommitted) or `python -m tools.impact check`
+     (local changes against `HEAD`). It reports ERROR findings
+     (`new-interface-without-contract`, `stale-reference`), which give exit code 1,
+     and WARNING findings (`unregistered-path`, `docs-not-updated` shown as
+     "Documentation review required", `content-trigger`, `config-changed`,
+     `ack-problem`, `unsupported-path`), which never give exit code 1. It also prints
+     an informational change-impact list.
+   - **Acknowledge** each reviewed WARNING with a line
+     `- ack <finding-id>: <reason>`, passed with `--ack-file` (the PR description can
+     be used as it is). This is how a "no change needed" decision about a doc is
+     recorded. ERRORs cannot be acknowledged; they must be fixed. The tool checks a
+     reason only mechanically (not empty, not a placeholder, at least 15
+     characters); it cannot judge whether the reason is true.
+   - The tool does not prove that documentation is correct. A doc marked "changed"
+     was changed in the change set; that is not a record that it was reviewed.
+3. Preview locally (VS Code Markdown preview with Mermaid support) or in a draft PR.
+4. Docs reach `main` **only at merge**, after user approval. Nothing is published
    separately.
-4. The PR description has a **Documentation impact** section: which docs changed,
-   or "no change needed" with a reason.
-5. Implementation-status labels must be honest **at merge time**: a component
+5. The PR description has a **Documentation impact** section: which docs changed,
+   or "no change needed" with a reason recorded as an acknowledgement.
+   `python -m tools.impact check --base main --format md` produces this section.
+6. Implementation-status labels must be honest **at merge time**: a component
    becomes `verified` only if its evidence is recorded by then.
 
 ## 6. Line references
