@@ -77,10 +77,21 @@ class GitCommandTests(unittest.TestCase):
 
     def test_run_git_uses_fixed_arguments_and_no_shell(self):
         ok = subprocess.CompletedProcess(["git"], 0, b"", b"")
-        with mock.patch("tools.impact.gitfiles.subprocess.run", return_value=ok) as run:
+        hooks_at_call = []
+
+        def fake_run(argv, **kwargs):
+            hooks = Path(argv[7].split("=", 1)[1])
+            hooks_at_call.append((hooks, hooks.is_dir() and not any(hooks.iterdir())))
+            return ok
+        with mock.patch("tools.impact.gitfiles.subprocess.run", side_effect=fake_run) as run:
             gitfiles.run_git(Path("repo"), "ls-files", "-z")
         args, kwargs = run.call_args
-        self.assertEqual(args[0], ["git", "-C", "repo", "ls-files", "-z"])
+        hooks, was_empty_folder = hooks_at_call[0]
+        self.assertEqual(args[0], ["git", "-C", "repo", "--no-optional-locks", "-c", "core.fsmonitor=false",
+                                   "-c", f"core.hooksPath={hooks}", "ls-files", "-z"])  # safety options on every call
+        self.assertTrue(was_empty_folder)                    # an existing, empty hooks folder during the call
+        self.assertTrue(hooks.name.startswith(gitfiles.HOOKS_FOLDER_PREFIX))
+        self.assertFalse(hooks.exists())                     # removed afterwards
         self.assertNotIn("shell", kwargs)
         self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
         self.assertEqual(kwargs["timeout"], gitfiles.GIT_TIMEOUT_SECONDS)
