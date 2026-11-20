@@ -51,3 +51,28 @@ on GitHub Project #1.
    the Phase 2 link check.
 6. **Retired features** should be marked `deferred` rather than deleted: IDs come from the
    highest ID in use, so deleting the newest feature would let its ID be issued again.
+
+## 2026-11-20: Gate 2 revisions (approved by the user)
+
+1. **Line endings.** The index and summary freshness checks ignore CRLF versus LF, so a
+   Git checkout with `core.autocrlf=true` is never reported as stale. Generated text is
+   written with LF, or with the line ending the file already uses around the summary block.
+   No `.gitattributes` is added.
+2. **Presentation.** The feature specification reads like a professional design document,
+   following the user's reference screenshot: a prominent title ("Feature Specification —
+   …"), a compact summary table, an evidence legend (✅ VERIFIED, 🔷 PROPOSED, ❔ UNKNOWN),
+   the six sections with bold-label prompts, a collapsible Mermaid diagram, acceptance
+   checkboxes, and collapsed "Architecture references" and "Proposed diagrams" sections.
+   Portable Markdown only: no custom CSS, web UI or new dependency. A coloured status pill
+   is approximated with `<kbd>`, because GitHub removes inline styles.
+3. **Metadata synchronisation (Option A).** The YAML metadata stays the single source of
+   truth. The summary table is generated from it between `<!-- summary:start … -->` and
+   `<!-- summary:end -->`: New Feature creates it, `index` refreshes it, and `check` (and
+   `index --check`) report a stale table without writing. Only the lines between the two
+   markers are rewritten; files whose metadata has a problem, or without exactly one
+   summary block, are never touched.
+4. **Data contract** keeps readable summary bullets and a source → database field-mapping
+   table.
+5. **Related features** rows sit between `<!-- related-features:start … -->` and
+   `<!-- related-features:end -->`, ready for generation in Phase 2.
+6. **The diagram template** follows the same presentation style and keeps its metadata.

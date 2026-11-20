@@ -8,17 +8,99 @@ architecture_refs: []
 depends_on: []
 ---
 
-# {{title}}
+# Feature Specification — {{title}}
 
-> **Design document: PROPOSED, not the implemented system.** The current system is
-> described in [docs/architecture]({{architecture}}/). Tag every claim **VERIFIED** (with
-> its source), **PROPOSED** or **UNKNOWN**; see
-> [evidence classifications]({{designs}}/README.md#evidence-classifications).
+<!-- summary:start · generated from the metadata above by New Feature and `python -m tools.design index`; edit the metadata, not this table -->
+| Field | Value |
+|---|---|
+| **Feature ID** | `{{feature_id}}` |
+<!-- summary:end -->
 
-## Architecture references
+> **Evidence status legend:** ✅ **VERIFIED** = confirmed in the current repository (cite the source) · 🔷 **PROPOSED** = design or planned change · ❔ **UNKNOWN** = not yet determined
+>
+> This is a proposed design, not the implemented system. The current system is described in [docs/architecture]({{architecture}}/); see the [evidence classifications]({{designs}}/README.md#evidence-classifications).
 
-<!-- Keep the documents and headings this feature builds on, link to headings with #anchor,
-     delete the rest. Also list their repository paths in architecture_refs above. -->
+## 1. Objective
+
+- **Problem:** [Describe the real problem to be solved]
+- **Users:** [Who needs the result?]
+- **Desired outcome:** [Measurable or observable result]
+
+## 2. Data contract
+
+- **Sources:** [Verified source systems, datasets or endpoints, with evidence]
+- **Fields:** [Key fields and types; map them in the table below]
+- **IDs:** [Primary keys, join keys or unique identifiers]
+- **Geometry:** [Geometry type(s) and format, if applicable]
+- **CRS:** [Coordinate reference system, if applicable]
+- **Limits and refresh:** [Record limits, pagination, update frequency]
+- **Outputs:** [What this feature produces]
+- **Unknowns / to be confirmed:** [Open data questions or gaps]
+
+**Field mapping (source → database)**
+
+| Source field | Database field | Type, CRS or limit | Evidence | Status |
+|---|---|---|---|---|
+| [source field] | [database field] | [type] | [path or URL] | ❔ UNKNOWN |
+
+## 3. Logic
+
+- **Processing steps:** [Describe the ETL, transformation or application logic]
+- **Assumptions:** [What must hold for the logic to be correct]
+- **Example:** [A small input and its expected output]
+
+<details open>
+<summary><b>Proposed diagram (Mermaid)</b></summary>
+
+```mermaid
+flowchart LR
+  %% diagram-type: process
+  A["Input (planned)"] --> B["Processing step (planned)"] --> C["Output (planned)"]
+```
+
+</details>
+
+## 4. Dependencies
+
+### System components
+
+*ETL, database tables, APIs, UI. Use reads_from, writes_to, calls, exposes or renders only when the evidence supports it; label optional or conditional dependencies.*
+
+| Component | Relationship | Reference | Evidence status |
+|---|---|---|---|
+| — | — | — | — |
+
+### Related features
+
+*Other Orlando features. Prerequisites are declared once, in `depends_on` in the metadata above; the rows between the markers, including reverse "used by" rows, are generated in Phase 2. Do not edit them by hand.*
+
+<!-- related-features:start · generated from depends_on (Phase 2); do not edit by hand -->
+| Feature | Relationship | Reference | Evidence status |
+|---|---|---|---|
+| — | — | — | — |
+<!-- related-features:end -->
+
+## 5. Downstream impact
+
+*A dependency is a reason to investigate, not proof that something must change.*
+
+- **Confirmed affected:** [Components, data or features that will be modified]
+- **Potentially affected:** [Items that may be impacted, with the reason]
+- **Unknown:** [Areas that require further investigation]
+
+## 6. Acceptance criteria
+
+- [ ] **Verifiable result:** [What must be true when complete] (evidence: [what proves it])
+- [ ] **Tests:** [Unit, integration, data or manual tests]
+- [ ] **Edge cases:** [Important scenarios to validate, e.g. limits, pagination, empty results]
+- [ ] **Performance:** ❔ UNKNOWN unless measured; do not invent numbers
+
+---
+
+<details>
+<summary><b>Architecture references</b></summary>
+
+Keep the documents and headings this feature builds on (link to a heading with `#anchor`), delete the rest, and list their repository paths in `architecture_refs` above.
 
 - [System architecture]({{architecture}}/system-architecture.md)
 - [Data contracts]({{architecture}}/data-contracts.md)
@@ -27,86 +109,11 @@ depends_on: []
 - [System overview]({{architecture}}/system-overview.md)
 - [Conventions]({{architecture}}/conventions.md)
 
-## 1. Objective
+</details>
 
-<!-- What real problem is solved? Who needs the result? What measurable or observable
-     outcome is required? Link to evidence; do not invent use cases. -->
+<details>
+<summary><b>Proposed diagrams</b></summary>
 
-- **Problem:** UNKNOWN
-- **Who needs the result:** UNKNOWN
-- **Observable outcome:** UNKNOWN
+- [none yet] Create one from {{templates}}/diagram.md in a `diagrams/` folder next to this file and link it here.
 
-## 2. Data contract
-
-<!-- Source systems, endpoints, fields, types, IDs, geometry types, coordinate systems,
-     limits, refresh behaviour, required outputs and unknowns. Record the evidence path or
-     URL and any test or sample confirming each claim. Keep source fields separate from
-     normalized database fields. -->
-
-| Item | Source field | Database field | Type, CRS or limit | Evidence | Status |
-|---|---|---|---|---|---|
-| _item_ | _source field_ | _database field_ | _type_ | _path or URL_ | UNKNOWN |
-
-## 3. Logic
-
-<!-- Processing sequence, SQL and spatial operations, assumptions, expected inputs and
-     outputs, and small testable examples. Proposed logic is not running code. -->
-
-```mermaid
-flowchart LR
-  %% diagram-type: process
-  A["Input (planned)"] --> B["Processing step (planned)"] --> C["Output (planned)"]
-```
-
-## 4. Dependencies
-
-### System components
-
-<!-- Real tables, code, endpoints or documents this feature touches. Use reads_from,
-     writes_to, calls, exposes or renders only when the evidence supports it, and label
-     optional or conditional dependencies. -->
-
-| Component | Relationship | Reference | Evidence status |
-|---|---|---|---|
-| _component_ | _relationship_ | _relative link to the table, code or document_ | PROPOSED |
-
-### Related features
-
-<!-- Feature prerequisites are declared once, in depends_on in the metadata block at the
-     top (feature IDs). Do not list them by hand here: Phase 2 generates these rows from
-     depends_on, including the reverse "used by" rows. -->
-
-| Feature | Relationship | Reference | Evidence status |
-|---|---|---|---|
-| _generated from depends_on_ | depends_on | _feature ID and relative link_ | PROPOSED |
-
-## 5. Downstream impact
-
-<!-- A dependency is a reason to investigate, not proof that something must change. -->
-
-### Confirmed affected
-
-- _none yet_
-
-### Potentially affected
-
-- _none yet_
-
-### Unknown
-
-- _none yet_
-
-## 6. Acceptance criteria
-
-<!-- Verifiable expected results, correctness checks, edge cases, API limits and
-     pagination where relevant, performance expectations, tests and the evidence required.
-     Mark unknown benchmarks UNKNOWN; do not invent numbers. -->
-
-- [ ] _criterion_ (evidence required: _what proves it_)
-
-## Proposed diagrams
-
-<!-- Create proposed diagrams from {{templates}}/diagram.md in a diagrams/ folder next to
-     this file and link them here. -->
-
-- _none yet_
+</details>

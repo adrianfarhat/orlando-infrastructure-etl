@@ -42,8 +42,10 @@ def build_parser() -> argparse.ArgumentParser:
                               "empty or omitted for a standalone feature")
     feature.add_argument("--convert-parent", action="store_true",
                          help="allow turning a standalone parent feature x.md into x/README.md")
-    index = sub.add_parser("index", help="regenerate designs/index/feature-index.md")
-    index.add_argument("--check", action="store_true", help="only report whether the index is up to date")
+    index = sub.add_parser("index", help="refresh each feature's generated summary table, then regenerate "
+                                         "designs/index/feature-index.md")
+    index.add_argument("--check", action="store_true",
+                       help="only report whether the index and the summary tables are up to date (writes nothing)")
     sub.add_parser("check", help="check every feature specification and the index")
     for p in (feature, index, sub.choices["check"]):
         p.add_argument("--root", type=Path, help="repository root (default: found from the current folder)")
@@ -64,9 +66,14 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         if args.command == "index":
             if args.check:
                 fresh = workspace.index_is_fresh(root)
+                stale = workspace.stale_summaries(root)
                 print(f"{workspace.INDEX} is {'up to date' if fresh else 'out of date: run `python -m tools.design index`'}",
                       file=out)
-                return EXIT_OK if fresh else EXIT_PROBLEMS
+                for p in stale:
+                    print(f"{p.path}: {p.message}", file=out)
+                return EXIT_OK if fresh and not stale else EXIT_PROBLEMS
+            for path in workspace.refresh_summaries(root):
+                print(f"refreshed the summary table in {path}", file=out)
             fresh = workspace.index_is_fresh(root)
             path = workspace.write_index(root)
             print(f"{path} is already up to date" if fresh else f"wrote {path}", file=out)

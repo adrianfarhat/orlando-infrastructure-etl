@@ -75,7 +75,9 @@ class StandaloneFeatures(unittest.TestCase):
             text = ws.text(created.path)
             for heading in workspace.SECTIONS + tuple(workspace.TABLES) + tuple(workspace.TABLES.values()):
                 self.assertIn(heading, text)
-            self.assertIn("# Pipe road intersections", text)
+            self.assertIn("\n# Feature Specification — Pipe road intersections\n", text)
+            self.assertIn("| **Feature ID** | `FD-0001` |", text)                     # summary generated at creation
+            self.assertIn("| **Design status** | <kbd>investigating</kbd> |", text)
             self.assertIn("(../../docs/architecture/system-architecture.md)", text)   # resolves from the file
             self.assertIn("(../README.md#evidence-classifications)", text)
             self.assertIn("../templates/diagram.md", text)
@@ -216,9 +218,11 @@ class GateTwoFixes(unittest.TestCase):
                     text = ws.text(created.path).replace("design_status: investigating", f"design_status: {status}", 1)
                     path = ws.root / created.path
                     path.write_bytes(text.encode("utf-8"))
-                    workspace.write_index(ws.root)
+                    self.assertEqual(cmd(ws.root, "index")[0], 0)            # refreshes the summary and the index
                     self.assertEqual(workspace.check(ws.root), [])
                     self.assertIn(f"| FD-0001 | Status | {status} |", ws.text(workspace.INDEX))
+                    self.assertIn(f"| **Design status** | <kbd>{status}</kbd> |", ws.text(created.path))
+                    text = ws.text(created.path)
                     path.write_bytes(text.replace(f"design_status: {status}", "design_status: investigating", 1)
                                      .encode("utf-8"))
 
@@ -313,6 +317,170 @@ class GateTwoFixes(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertTrue((ws.root / "designs/features/task-feature.md").is_file())
                 self.assertIn("| FD-0001 | Task feature | investigating | - |", ws.text(workspace.INDEX))
+
+
+class SummarySync(unittest.TestCase):
+    """Option A: the summary table is generated from the YAML front matter. Only the lines
+    between the two markers are ever rewritten; check reports staleness without writing."""
+
+    @staticmethod
+    def split(text):
+        start = text.index("<!-- summary:start")
+        start = text.index("\n", start) + 1
+        end = text.index("<!-- summary:end -->")
+        return text[:start], text[start:end], text[end:]
+
+    def test_refresh_rewrites_only_between_the_markers(self):
+        with Workspace() as ws:
+            created = new_feature(ws.root, "Sync")
+            path = ws.root / created.path
+            text = ws.text(created.path)
+            text = text.replace("- **Problem:** [Describe the real problem to be solved]",
+                                "- **Problem:** Hand-written problem statement | with a pipe")
+            text = text.replace("# Feature Specification — Sync\n", "# Feature Specification — Sync\n\nManual intro.\n")
+            text = text.replace("<!-- summary:end -->\n", "<!-- summary:end -->\nManual note right after.\n")
+            text = text.replace('design_status: investigating', 'design_status: proposed')
+            text = text.replace('owner: ""', 'owner: "Ada | Lovelace"').replace('branch: ""', 'branch: "design/sync"')
+            text = text.replace("architecture_refs: []", "architecture_refs:\n  - docs/architecture/system-architecture.md"
+                                "#1-current-state-the-big-picture\n  - docs/architecture/data-contracts.md")
+            path.write_bytes(text.encode("utf-8"))
+            before, _, after = self.split(text)
+
+            problems = [p.message for p in workspace.check(ws.root)]
+            self.assertIn("the summary table is out of date with the metadata: run `python -m tools.design index`",
+                          problems)
+            self.assertEqual(path.read_bytes(), text.encode("utf-8"))                  # check never writes
+            code, out, _ = cmd(ws.root, "index", "--check")
+            self.assertEqual(code, 1)
+            self.assertIn("summary table is out of date", out)
+            self.assertEqual(path.read_bytes(), text.encode("utf-8"))                  # nor does index --check
+
+            code, out, _ = cmd(ws.root, "index")
+            self.assertEqual(code, 0)
+            self.assertIn(f"refreshed the summary table in {created.path}", out)
+            refreshed = ws.text(created.path)
+            new_before, block, new_after = self.split(refreshed)
+            self.assertEqual((new_before, new_after), (before, after))                 # everything else byte for byte
+            self.assertIn("| **Design status** | <kbd>proposed</kbd> |", block)
+            self.assertIn("| **Owner** | Ada \\| Lovelace |", block)
+            self.assertIn("| **Branch** | `design/sync` |", block)
+            self.assertIn("[docs/architecture/system-architecture.md#1-current-state-the-big-picture]"
+                          "(../../docs/architecture/system-architecture.md#1-current-state-the-big-picture)", block)
+            self.assertIn("<br>[docs/architecture/data-contracts.md](../../docs/architecture/data-contracts.md)", block)
+            self.assertEqual(workspace.check(ws.root), [])
+            mtime = path.stat().st_mtime_ns
+            self.assertNotIn("refreshed", cmd(ws.root, "index")[1])                    # idempotent
+            self.assertEqual(path.stat().st_mtime_ns, mtime)
+
+    def test_hand_edits_inside_the_block_are_regenerated(self):
+        with Workspace() as ws:
+            created = new_feature(ws.root, "Tamper")
+            original = ws.text(created.path)
+            tampered = original.replace("<kbd>investigating</kbd>", "<kbd>verified</kbd>")
+            (ws.root / created.path).write_bytes(tampered.encode("utf-8"))
+            self.assertIn("summary table is out of date", "\n".join(p.message for p in workspace.check(ws.root)))
+            cmd(ws.root, "index")
+            self.assertEqual(ws.text(created.path), original)
+
+    def test_files_with_problems_or_bad_markers_are_never_rewritten(self):
+        with Workspace() as ws:
+            created = new_feature(ws.root, "Base")
+            good = ws.text(created.path)
+            start_line = good[good.index("<!-- summary:start"):good.index("\n", good.index("<!-- summary:start"))]
+            cases = {
+                "bad-status.md": (good.replace("FD-0001", "FD-0020", 1).replace("design_status: investigating",
+                                                                              "design_status: doing"), None),
+                "no-markers.md": (good.replace("FD-0001", "FD-0021", 1).replace(start_line + "\n", "")
+                                  .replace("<!-- summary:end -->\n", ""), "missing the generated summary block"),
+                "two-blocks.md": (good.replace("FD-0001", "FD-0022", 1).replace(
+                    "## 1. Objective", start_line + "\n<!-- summary:end -->\n\n## 1. Objective"), "repeated"),
+                "unclosed.md": (good.replace("FD-0001", "FD-0023", 1).replace("<!-- summary:end -->\n", ""),
+                                "not closed"),
+                "fenced-marker.md": (good.replace("FD-0001", "FD-0024", 1).replace(start_line + "\n", "```\n" + start_line
+                                     + "\n```\n"), "not closed"),
+            }
+            for name, (content, _) in cases.items():
+                (ws.root / "designs/features" / name).write_bytes(content.encode("utf-8"))
+            messages = {(p.path.rsplit("/", 1)[1], p.message) for p in workspace.check(ws.root)}
+            for name, (content, expected) in cases.items():
+                with self.subTest(file=name):
+                    if expected:
+                        self.assertTrue(any(n == name and expected in m for n, m in messages), messages)
+            before = {name: (ws.root / "designs/features" / name).read_bytes() for name in cases}
+            cmd(ws.root, "index")
+            for name in cases:
+                with self.subTest(untouched=name):
+                    self.assertEqual((ws.root / "designs/features" / name).read_bytes(), before[name])
+
+    def test_converted_parent_summary_links_follow_the_move(self):
+        with Workspace() as ws:
+            parent = new_feature(ws.root, "Parent")
+            text = ws.text(parent.path).replace("architecture_refs: []",
+                                                "architecture_refs: [docs/architecture/conventions.md]")
+            (ws.root / parent.path).write_bytes(text.encode("utf-8"))
+            cmd(ws.root, "index")
+            new_feature(ws.root, "Child", parent=parent.feature_id, convert_parent=True)
+            moved = ws.text("designs/features/parent/README.md")
+            self.assertIn("(../../../docs/architecture/conventions.md)", self.split(moved)[1])
+            self.assertEqual(workspace.check(ws.root), [])
+
+    def test_template_without_a_summary_block_is_refused(self):
+        with Workspace() as ws:
+            template = ws.root / workspace.TEMPLATE
+            text = template.read_bytes().decode("utf-8")
+            template.write_bytes(text.replace("<!-- summary:end -->", "").encode("utf-8"))
+            with self.assertRaisesRegex(DesignError, "needs exactly one summary block"):
+                new_feature(ws.root, "No summary")
+            self.assertFalse((ws.root / "designs/features").exists())
+
+
+class WindowsLineEndings(unittest.TestCase):
+    """A Git checkout with core.autocrlf=true writes CRLF; that is not a stale index or summary."""
+
+    def test_crlf_index_and_summaries_are_up_to_date(self):
+        with Workspace() as ws:
+            created = new_feature(ws.root, "Crlf one")
+            for rel in (workspace.INDEX, created.path):
+                path = ws.root / rel
+                path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+            mtimes = {rel: (ws.root / rel).stat().st_mtime_ns for rel in (workspace.INDEX, created.path)}
+            self.assertEqual(workspace.check(ws.root), [])
+            self.assertEqual(cmd(ws.root, "index", "--check")[0], 0)
+            code, out, _ = cmd(ws.root, "index")
+            self.assertIn("is already up to date", out)
+            self.assertNotIn("refreshed", out)
+            for rel, mtime in mtimes.items():
+                self.assertEqual((ws.root / rel).stat().st_mtime_ns, mtime, rel)       # not rewritten
+
+    def test_refresh_keeps_crlf_and_everything_outside_the_block(self):
+        with Workspace() as ws:
+            created = new_feature(ws.root, "Crlf two")
+            path = ws.root / created.path
+            text = ws.text(created.path).replace("design_status: investigating", "design_status: approved")
+            data = text.replace("\n", "\r\n").encode("utf-8")
+            path.write_bytes(data)
+            cmd(ws.root, "index")
+            after = path.read_bytes()
+            self.assertEqual(after.count(b"\n"), after.count(b"\r\n"))                  # still CRLF throughout
+            self.assertIn(b"<kbd>approved</kbd>", after)
+            start = data.index(b"\n", data.index(b"<!-- summary:start")) + 1
+            end = data.index(b"<!-- summary:end -->")
+            new_end = after.index(b"<!-- summary:end -->")
+            self.assertEqual(after[:start], data[:start])
+            self.assertEqual(after[new_end:], data[end:])
+
+    def test_real_git_checkout_with_autocrlf_is_not_stale(self):
+        with Workspace(real_git=True) as ws:
+            new_feature(ws.root, "Checked out")
+            ws.git("add", "-A"); ws.git("commit", "-q", "-m", "features")
+            for rel in (workspace.INDEX, "designs/features/checked-out.md"):
+                (ws.root / rel).unlink()
+            r = subprocess.run(GIT + ["-c", "core.autocrlf=true", "-C", str(ws.root), "checkout", "--", "."],
+                               capture_output=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn(b"\r\n", (ws.root / workspace.INDEX).read_bytes())          # Git really wrote CRLF
+            self.assertEqual(workspace.check(ws.root), [])
+            self.assertEqual(cmd(ws.root, "index", "--check")[0], 0)
 
 
 class Refusals(unittest.TestCase):

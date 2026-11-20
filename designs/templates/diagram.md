@@ -8,12 +8,25 @@ source_heading: ""      # the heading anchor of that diagram, e.g. 1-current-sta
 base_commit: ""         # the commit the copy was taken from: git rev-parse --short HEAD
 ---
 
-# Diagram title
+# Proposed Diagram — [Diagram title]
 
-> **PROPOSED diagram**, not the implemented system. Copy this file into a `diagrams/`
-> folder next to the feature and link it from the feature's "Proposed diagrams" section.
+| Field | Value |
+|---|---|
+| **Diagram ID** | [feature ID plus a number, e.g. FD-0001-D1] |
+| **Feature** | [feature ID, with a relative link to its specification] |
+| **Status** | <kbd>PROPOSED</kbd> |
+| **Copied from** | [source document and heading, or "new diagram"] |
+| **Base commit** | [the commit the copy was taken from, or "n/a"] |
 
-What question this diagram answers:
+> **Evidence status legend:** ✅ **VERIFIED** = confirmed in the current repository (cite the source) · 🔷 **PROPOSED** = design or planned change · ❔ **UNKNOWN** = not yet determined
+>
+> **PROPOSED diagram**, not the implemented system. Copy this file into a `diagrams/` folder next to the feature and link it from the feature's "Proposed diagrams" section. Keep the metadata at the top and this table in step.
+
+## Question this diagram answers
+
+[One sentence: what the reader should understand from this diagram]
+
+## Diagram
 
 ```mermaid
 flowchart LR
@@ -21,6 +34,6 @@ flowchart LR
   A["Existing step"] --> B["New step (planned)"]
 ```
 
-What this diagram does **not** show or prove:
+## What this diagram does not show
 
-- _for example: exact parameters, performance, error handling_
+- [For example: exact parameters, performance, error handling]

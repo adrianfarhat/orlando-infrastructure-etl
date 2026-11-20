@@ -37,8 +37,8 @@ Other commands:
 
 | Command | What it does |
 |---|---|
-| `python -m tools.design index` | Regenerate the feature index |
-| `python -m tools.design index --check` | Exit code 1 if the index is out of date |
+| `python -m tools.design index` | Refresh each feature's generated summary table from its metadata, then regenerate the feature index |
+| `python -m tools.design index --check` | Exit code 1 if the index or any summary table is out of date (writes nothing) |
 | `python -m tools.design check` | Check every feature: IDs (including duplicates), metadata, the six sections, both dependency tables, and index freshness |
 
 Exit codes: 0 success, 1 problems found, 2 a usage or file error.
@@ -69,6 +69,8 @@ designs/features/
   from the file name, so a name must contain at least one ASCII letter or digit. The
   title in the specification keeps the name as typed, except that leading and trailing
   spaces are removed and repeated spaces become one.
+- **Windows line endings are fine.** A Git checkout with `core.autocrlf=true` writes
+  generated files with CRLF line endings; `check` and `index` treat them as up to date.
 - **One New Feature at a time.** Two commands run at the same moment (for example in two
   terminals) can both take the same next ID. `python -m tools.design check` reports
   duplicate IDs, and New Feature refuses to run until they are fixed: give one of the two
@@ -76,6 +78,20 @@ designs/features/
   the same ID, once they are merged.
 
 ## The feature specification
+
+A feature file reads like a design document: a title, a summary table, an evidence legend,
+the six sections, and collapsed "Architecture references" and "Proposed diagrams" at the
+end. It renders in VS Code's Markdown preview (Mermaid needs a Mermaid preview extension,
+such as "Markdown Preview Mermaid Support") and on GitHub. GitHub also shows the metadata
+block itself as a small table at the top.
+
+**The metadata block is the single source of truth.** The summary table under the title
+is generated from it, between the lines `<!-- summary:start … -->` and
+`<!-- summary:end -->`: New Feature creates it and `python -m tools.design index`
+refreshes it. Edit the metadata, never the table: `check` reports a table that no longer
+matches, and `index` rewrites only the lines between the two markers, never anything you
+wrote elsewhere. A file whose metadata has a problem is left untouched until it is fixed.
+The "Related features" rows have similar markers, for the generation planned in Phase 2.
 
 Every feature file starts with a metadata block, then six mandatory sections:
 
