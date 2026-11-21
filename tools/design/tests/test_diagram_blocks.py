@@ -330,6 +330,42 @@ class ProposedDiagrams(unittest.TestCase):
             self.assertEqual(problems(ws), [])
 
 
+class EndToEnd(unittest.TestCase):
+    """Milestone 3: every real architecture diagram, attached across the six sections of a
+    New Feature spec through the real commands, regenerates exactly and stays valid."""
+
+    def test_all_catalog_diagrams_round_trip(self):
+        with Workspace() as ws:
+            f = new_feature(ws.root, "All diagrams")
+            catalog = architecture.catalog(architecture.documents(ws.root))
+            self.assertEqual(len(catalog), 14)
+            path = ws.root / f.path
+            text = path.read_bytes().decode("utf-8")
+            for i, d in enumerate(catalog):
+                h = SECTIONS[i % 6]
+                text = text.replace(h + "\n", h + block(d.diagram_id), 1)
+            path.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+            self.assertEqual(cmd(ws.root, "index")[0], 0)
+            self.assertEqual(problems(ws), [])
+            raw = path.read_bytes().decode("utf-8")
+            lf = raw.replace("\r\n", "\n")
+            self.assertNotIn("\n", raw.replace("\r\n", ""))                              # CRLF kept
+            known = diagrams.sources(ws.root)
+            lines = lf.split("\n")
+            for b in diagrams.scan(lf)[0]:
+                with self.subTest(b.diagram_id):
+                    body = lines[b.start + 1:b.end]
+                    self.assertEqual(body[2:-1], [l if l.strip() else "%%" for l in known[b.diagram_id].lines])
+                    link = body[0].split("](", 1)[1].split(")", 1)[0]
+                    self.assertIsNone(links.check_link(links._Repo(ws.root), f.path, link))
+            doc = markdown.parse(workspace.split_front_matter(lf)[1])
+            self.assertEqual([h.text for h in doc.headings if h.level == 2], [s[3:] for s in SECTIONS])
+            self.assertTrue(all(d.closed for d in doc.diagrams))
+            mtime = path.stat().st_mtime_ns
+            cmd(ws.root, "index")
+            self.assertEqual(path.stat().st_mtime_ns, mtime)                            # idempotent
+
+
 class Integration(unittest.TestCase):
     def test_links_catalog_index_and_editor(self):
         with Workspace() as ws:

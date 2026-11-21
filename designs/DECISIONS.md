@@ -209,3 +209,8 @@ on GitHub Project #1.
    `base_commit`) are unchanged.
 7. **Feature index.** A "Diagrams" column lists the IDs each feature shows, derived from its
    markers (no metadata).
+8. **Docs workflow (milestone 3).** conventions.md section 5 (technical-lead) now also asks,
+   when the content of a Mermaid diagram in `docs/architecture/` changes, to run
+   `python -m tools.design index` and commit the refreshed feature files in the same branch;
+   `check` reports stale copies until then. Enforcement in CI is T-85 (its card asks for
+   `python -m tools.design check` in the advisory workflow).

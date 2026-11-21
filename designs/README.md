@@ -252,6 +252,18 @@ its "Diagrams" column.
 - Marker examples inside code blocks (like the one above) are ignored. Files without markers
   are never changed.
 
+**The whole workflow:**
+
+1. **Attach:** find the diagram ID (architecture index, or a proposed file's `diagram_id`) and
+   add the two marker lines where the diagram helps.
+2. **Generate:** `python -m tools.design index`.
+3. **View:** open the VS Code preview (`Ctrl+K V`) or the file on GitHub; the caption links to
+   the source. In Mark Sharp's free tier the block is not drawn; use the preview.
+4. **Edit the source** (never the block) and run `index` again; `check` reports any feature
+   whose copy is out of date until you do.
+5. **Commit** the source, the refreshed feature files and `designs/index/` together, after
+   `python -m tools.design check` and a look at `git diff`.
+
 ## Editing in a formatted view (Mark Sharp)
 
 Feature specifications stay ordinary Markdown. For a document-like editing view, use the
