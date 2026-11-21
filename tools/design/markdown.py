@@ -60,6 +60,8 @@ class Diagram:
     line: int                # 1-based line of the opening fence
     heading: int | None      # index into Document.headings of the heading it sits under
     diagram_type: str | None
+    source: tuple[str, ...] = ()   # the lines between the fences, exactly as written (T-96)
+    closed: bool = True            # False when the fence runs to the end of the document
 
 
 @dataclass(frozen=True)
@@ -148,19 +150,23 @@ def parse(text: str) -> Document:
             m = _FENCE.match(line)
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] and not m.group(2).strip():
                 if mermaid is not None:
-                    diagrams.append(Diagram(mermaid["line"], mermaid["heading"], mermaid["type"]))
+                    diagrams.append(Diagram(mermaid["line"], mermaid["heading"], mermaid["type"],
+                                            tuple(mermaid["source"])))
                 fence, mermaid = None, None
-            elif mermaid is not None and mermaid["type"] is None:
-                t = _DIAGRAM_TYPE.match(line)
-                if t:
-                    mermaid["type"] = t.group(1)
+            elif mermaid is not None:
+                mermaid["source"].append(line)
+                if mermaid["type"] is None:
+                    t = _DIAGRAM_TYPE.match(line)
+                    if t:
+                        mermaid["type"] = t.group(1)
             continue
         m = _FENCE.match(line)
         if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
             fence = (m.group(1)[0], len(m.group(1)))
             info = m.group(2).strip().split()
             if info and info[0].lower() == "mermaid":
-                mermaid = {"line": number, "heading": len(headings) - 1 if headings else None, "type": None}
+                mermaid = {"line": number, "heading": len(headings) - 1 if headings else None, "type": None,
+                           "source": []}
             paragraph = []
             continue
         atx = _ATX.match(line)
@@ -184,5 +190,6 @@ def parse(text: str) -> Document:
         else:
             paragraph = []
     if mermaid is not None:                       # an unclosed fence runs to the end of the document
-        diagrams.append(Diagram(mermaid["line"], mermaid["heading"], mermaid["type"]))
+        diagrams.append(Diagram(mermaid["line"], mermaid["heading"], mermaid["type"],
+                                tuple(mermaid["source"]), closed=False))
     return Document(tuple(headings), tuple(diagrams))

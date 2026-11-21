@@ -222,19 +222,30 @@ def table_cells(row: str) -> list[str]:
     return [cell.strip() for cell in re.split(r"(?<!\\)\|", s)]
 
 
+_FENCE_LINE = re.compile(r"\s*(`{3,}|~{3,})(.*)")
+
+
+def _fence_step(line: str, fence):
+    """(new fence state, is this line a fence line). A fence opens with three or more
+    backticks or tildes and closes only with the same character, at least as long and with
+    nothing after it (CommonMark), so a ```` fence is not closed by a ``` line inside it."""
+    m = _FENCE_LINE.match(line.rstrip("\r\n"))
+    if fence is None:
+        if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+            return (m.group(1)[0], len(m.group(1))), True
+        return None, False
+    if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] and not m.group(2).strip():
+        return None, True
+    return fence, False
+
+
 def _outside_code(body: str) -> list[str]:
     """Body lines with fenced code blocks blanked (so headings inside code don't count)."""
     out, fence = [], None
     for line in body.split("\n"):
-        stripped = line.lstrip()
-        if fence is None and (stripped.startswith("```") or stripped.startswith("~~~")):
-            fence = stripped[:3]
-            out.append("")
-        elif fence is not None and stripped.startswith(fence):
-            fence = None
-            out.append("")
-        else:
-            out.append("" if fence else line)
+        inside = fence is not None
+        fence, is_fence = _fence_step(line, fence)
+        out.append("" if inside or is_fence else line)
     return out
 
 
@@ -547,13 +558,13 @@ def marker_span(lines: list[str], start_prefix: str, end_line: str) -> tuple[str
     starts, ends, fence = [], [], None
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if fence is None and (stripped.startswith("```") or stripped.startswith("~~~")):
-            fence = stripped[:3]
-        elif fence is not None and stripped.startswith(fence):
-            fence = None
-        elif fence is None and stripped.startswith(start_prefix) and stripped.endswith("-->"):
+        inside = fence is not None
+        fence, is_fence = _fence_step(line, fence)
+        if inside or is_fence:
+            continue
+        if stripped.startswith(start_prefix) and stripped.endswith("-->"):
             starts.append(i)
-        elif fence is None and stripped == end_line:
+        elif stripped == end_line:
             ends.append(i)
     if not starts and not ends:
         return "missing", -1, -1
@@ -633,18 +644,23 @@ def not_refreshable(root: Path) -> list[Problem]:
     metadata has a problem, or the markers of a block are missing, repeated or not
     closed. Nothing is read beyond what the refresh itself reads, and nothing is written."""
     from .dependencies import RELATED_END, RELATED_START          # imports this module
+    from . import diagrams
     features, _ = discover(root)
+    known = diagrams.sources(root)
     out = []
     for f in features:
         if not f.meta_ok:
-            out.append(Problem(f.path, "its metadata has a problem, so its summary table and Related features "
-                                       "rows were not refreshed"))
+            out.append(Problem(f.path, "its metadata has a problem, so its summary table, Related features "
+                                       "rows and diagram blocks were not refreshed"))
             continue
-        lines = (root / f.path).read_bytes().decode("utf-8").splitlines(keepends=True)
+        text = (root / f.path).read_bytes().decode("utf-8")
+        lines = text.splitlines(keepends=True)
         reasons = [f"the {name} markers are {_SPAN_WORDS[status]}"
                    for name, status in (("summary table", _summary_span(lines)[0]),
                                         ("Related features", marker_span(lines, RELATED_START, RELATED_END)[0]))
                    if status != "ok"]
+        if diagrams.blocking(text, f.path, known):
+            reasons.append("a diagram block has a problem (see check)")
         if reasons:
             out.append(Problem(f.path, "; ".join(reasons) + ", so that block was not refreshed"
                                if len(reasons) == 1 else "; ".join(reasons) + ", so those blocks were not refreshed"))
@@ -675,7 +691,7 @@ def _link(path_from_index: str) -> str:
 
 
 def render_index(root: Path) -> str:
-    from . import dependencies                    # imports this module
+    from . import dependencies, diagrams          # imports this module
     features, problems = discover(root)
     graph = dependencies.build(features)
     by_folder = {posixpath.dirname(f.path): f for f in features if posixpath.basename(f.path) == "README.md"}
@@ -683,17 +699,20 @@ def render_index(root: Path) -> str:
     for f in sorted((f for f in features if f.feature_id),
                     key=lambda f: (int(ID_RE.match(f.feature_id).group(1)), f.path)):
         depends_on, used_by = dependencies.index_cells(f, graph, posixpath.dirname(INDEX))
+        shown = diagrams.ids_in((root / f.path).read_bytes().decode("utf-8", "replace"))
         rows.append(f"| {f.feature_id} | {_cell(f.title or '')} | {f.status or ''} | "
-                    f"{_parent_label(f, by_folder)} | {depends_on} | {used_by} | [{_cell(f.path[len(FEATURES) + 1:])}]"
+                    f"{_parent_label(f, by_folder)} | {depends_on} | {used_by} | "
+                    f"{', '.join(_code_cell(d) for d in shown) or '-'} | [{_cell(f.path[len(FEATURES) + 1:])}]"
                     f"({_link(posixpath.relpath(f.path, posixpath.dirname(INDEX)))}) |")
     summary = (f"Features under `designs/features/`, from their metadata. "
                f"{len(rows)} feature{'s' if len(rows) != 1 else ''}.")
     lines = [INDEX_HEADER, "", "# Feature index", "", summary, ""]
     if rows:
         lines += ["\"Depends on\" is each feature's `depends_on` list; \"Used by\" is derived from the other "
-                  "features' lists. All relationships are PROPOSED.", "",
-                  "| Feature ID | Title | Design status | Parent | Depends on | Used by | File |",
-                  "|---|---|---|---|---|---|---|", *rows]
+                  "features' lists. All relationships are PROPOSED. \"Diagrams\" lists the diagram IDs each "
+                  "feature shows in generated diagram blocks.", "",
+                  "| Feature ID | Title | Design status | Parent | Depends on | Used by | Diagrams | File |",
+                  "|---|---|---|---|---|---|---|---|", *rows]
     else:
         lines.append("No features yet. Create one with New Feature (see [designs/README.md](../README.md)).")
     unindexed = sorted({p.path for p in problems} | {f.path for f in features if not f.feature_id})
@@ -763,6 +782,8 @@ def check(root: Path) -> list[Problem]:
     problems += dependencies.related_problems(root, features, graph)
     from . import links                           # M3: links, architecture_refs, diagram references
     problems += links.check(root, features)
+    from . import diagrams                        # T-96: generated diagram blocks
+    problems += diagrams.problems(root, features)
     if not index_is_fresh(root):
         problems.append(Problem(INDEX, "out of date or missing: run `python -m tools.design index`"))
     from .architecture import ARCHITECTURE_INDEX, architecture_index_is_fresh   # imports this module

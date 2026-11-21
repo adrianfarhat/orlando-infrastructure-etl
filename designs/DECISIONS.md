@@ -181,3 +181,36 @@ on GitHub Project #1.
    inline Markdown inside table cells (taken as unchanged), and its save of a file whose
    generated blocks contain blank lines. `index`, `check` and `git diff` before committing
    cover both.
+
+## 2026-11-21: Diagram blocks (T-96)
+
+1. **Attachment by markers only.** A feature shows a diagram through a pair of lines
+   `<!-- diagram:start <ID> -->` / `<!-- diagram:end -->`, placed anywhere in the six
+   sections, any number of times. There is no metadata list: the markers are the single
+   declaration (approved by the user, replacing the earlier `diagrams:` proposal).
+2. **Generated, never edited.** `index` writes a caption and a copy of the source Mermaid
+   between the markers; `check` compares the whole block with what the source produces now
+   (not a fingerprint). Files with a structural problem or an unknown ID are never rewritten.
+3. **One contiguous block.** The copy writes each blank line of the source as `%%`, a Mermaid
+   comment line, so the block has no blank line: 7 of the 14 architecture diagrams contain
+   blank lines, and Mark Sharp keeps a block that starts with an HTML comment verbatim only
+   up to the first blank line (observed on a real buffer). The diagram renders the same.
+4. **Fence.** The copy's fence is at least three backticks and longer than any backtick run
+   that starts a source line, so it always closes before the end marker.
+5. **Sources.** Milestone 1: architecture catalog IDs (current architecture). The catalog and
+   the architecture index are unchanged: copies live in `designs/`, which the catalog does
+   not read, so no diagram ID is duplicated.
+6. **Proposed diagrams (milestone 2).** A block may also name the `diagram_id` of a proposed
+   diagram file in a `diagrams/` folder; that file, with exactly one Mermaid block, is the
+   source, labelled "Proposed" and linked to the file. An ID used by two sources (two files,
+   or a file and the catalog) or a file without exactly one Mermaid block is reported and
+   never guessed. A template copy without a `diagram_id` is not attachable. The existing
+   proposed-diagram checks (`source_diagram`, `source_document`, `source_heading`,
+   `base_commit`) are unchanged.
+7. **Feature index.** A "Diagrams" column lists the IDs each feature shows, derived from its
+   markers (no metadata).
+8. **Docs workflow (milestone 3).** conventions.md section 5 (technical-lead) now also asks,
+   when the content of a Mermaid diagram in `docs/architecture/` changes, to run
+   `python -m tools.design index` and commit the refreshed feature files in the same branch;
+   `check` reports stale copies until then. Enforcement in CI is T-85 (its card asks for
+   `python -m tools.design check` in the advisory workflow).

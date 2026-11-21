@@ -138,6 +138,10 @@ def _checked_lines(text: str) -> list[str]:
         if status == "ok":
             for i in range(start, end + 1):
                 lines[i] = ""
+    from .diagrams import spans                   # generated diagram blocks (T-96): checked by `check`
+    for start, end in spans(text):                # against their source instead, so reported once
+        for i in range(start, end + 1):
+            lines[i] = ""
     lines = _outside_code("\n".join(lines))
     # HTML comments (also across lines) are not rendered, so their links are not checked
     text = _COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), "\n".join(lines))

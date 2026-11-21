@@ -38,6 +38,9 @@ class CatalogDiagram:
     document: str                 # repository-relative path
     heading: markdown.Heading | None
     diagram_type: str | None
+    source: tuple[str, ...] = ()  # the Mermaid lines between the fences (T-96 embeds copy them)
+    closed: bool = True
+    title: str = ""               # the document's title (its first-level heading), if any
 
 
 @dataclass(frozen=True)
@@ -85,12 +88,14 @@ def catalog(docs: list[ArchitectureDocument]) -> list[CatalogDiagram]:
             continue
         stem = doc.path[len(ARCHITECTURE) + 1:]
         stem = stem[:-3] if stem.lower().endswith(".md") else stem
+        heads = doc.parsed.headings
+        title = heads[0].text if heads and heads[0].level == 1 else ""
         for d in doc.parsed.diagrams:
             heading = doc.parsed.headings[d.heading] if d.heading is not None else None
             base = f"{stem}/{heading.anchor if heading is not None and heading.anchor else 'top'}"
             used[base] = used.get(base, 0) + 1
             did = base if used[base] == 1 else f"{base}~{used[base]}"
-            out.append(CatalogDiagram(did, doc.path, heading, d.diagram_type))
+            out.append(CatalogDiagram(did, doc.path, heading, d.diagram_type, d.source, d.closed, title))
     return out
 
 

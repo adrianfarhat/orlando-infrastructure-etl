@@ -220,6 +220,51 @@ require, so the diagram rules stay the same everywhere.
 Mermaid stays editable text. Preview it in VS Code (Markdown preview with Mermaid support)
 or on GitHub.
 
+### Showing a diagram inside a feature (generated blocks)
+
+To show an authoritative diagram rendered inside a feature, without copying it by hand, put
+two marker lines wherever it helps the reader (any of the six sections, as many as you like,
+the same diagram more than once if useful), with a blank line before and after:
+
+```markdown
+<!-- diagram:start system-architecture/4-target-state-the-product-vision-mostly-planned -->
+<!-- diagram:end -->
+```
+
+The ID is either a diagram ID from the [architecture index](index/architecture-index.md#diagrams)
+(current architecture) or the `diagram_id` of a proposed diagram file in a `diagrams/` folder
+(made from [templates/diagram.md](templates/diagram.md), with exactly one Mermaid block). Then
+run `python -m tools.design index`: it fills the lines between the markers with a caption
+(✅ Current architecture or 🔷 Proposed, the title linked to the source, the ID, and a link to
+the legend for architecture diagrams) and a copy of the source Mermaid, which renders on GitHub
+and in VS Code's preview with the Mermaid preview extension. Blank lines of the source are written as `%%` (a Mermaid
+comment), so the block stays one piece. The feature index lists each feature's diagrams in
+its "Diagrams" column.
+
+- **The source is the only place a diagram is edited.** Change a current-state diagram in
+  `docs/architecture/` (through the docs workflow) or a proposed one in its `diagrams/` file,
+  then run `index` again; every feature that shows it is updated.
+- **Never edit between the two markers.** `check` compares each block with what its source
+  produces now and fails on stale or hand-edited copies, unknown or renamed IDs (with a
+  suggestion), a missing, nested or malformed marker, and a Mermaid fence that is not closed
+  before the end marker. `index` never rewrites the diagram blocks of a file that has such a
+  problem; it says so instead.
+- Put each marker alone on its own line, below `## 1. Objective`. `check` reports markers in
+  list items, quotes or sentences, and blocks above the first section. Marker examples inside
+  code blocks (like the one above) are ignored. Files without markers are never changed.
+
+**The whole workflow:**
+
+1. **Attach:** find the diagram ID (architecture index, or a proposed file's `diagram_id`) and
+   add the two marker lines where the diagram helps.
+2. **Generate:** `python -m tools.design index`.
+3. **View:** open the VS Code preview (`Ctrl+K V`) or the file on GitHub; the caption links to
+   the source. In Mark Sharp's free tier the block is not drawn; use the preview.
+4. **Edit the source** (never the block) and run `index` again; `check` reports any feature
+   whose copy is out of date until you do.
+5. **Commit** the source, the refreshed feature files and `designs/index/` together, after
+   `python -m tools.design check` and a look at `git diff`.
+
 ## Editing in a formatted view (Mark Sharp)
 
 Feature specifications stay ordinary Markdown. For a document-like editing view, use the
