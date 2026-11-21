@@ -500,17 +500,21 @@ def render_summary(meta: dict, rel_path: str) -> list[str]:
     def text_or(value, fallback):
         return _cell(value) if isinstance(value, str) and value.strip() else fallback
 
+    from .links import architecture_path_problem, normal_architecture_ref     # imports this module
     links = []
     for ref in meta.get("architecture_refs") or []:
-        path, hash_, anchor = ref.partition("#")
-        target = posixpath.relpath(path, here) if path else ""
-        links.append(f"[{_cell(ref)}]({_link(target)}{hash_ + anchor if hash_ else ''})")
+        if architecture_path_problem(ref):              # D2: never a broken link; `check` says why
+            links.append(f"{_cell(ref) or '*(empty)*'} *(not a valid reference: run check)*")
+            continue
+        path, anchor = normal_architecture_ref(ref)
+        target = _link(posixpath.relpath(path, here)) + ("#" + quote(anchor, safe="-_.~%") if anchor else "")
+        links.append(f"[{_cell(ref)}]({target})")
     branch = meta.get("branch")
     return ["| Field | Value |", "|---|---|",
             f"| **Feature ID** | `{meta.get('feature_id')}` |",
             f"| **Design status** | <kbd>{meta.get('design_status')}</kbd> |",
             f"| **Owner** | {text_or(meta.get('owner'), '*not set*')} |",
-            f"| **Branch** | {'`' + _cell(branch).replace('`', '') + '`' if isinstance(branch, str) and branch.strip() else '*not set*'} |",
+            f"| **Branch** | {_code_cell(branch) if isinstance(branch, str) and branch.strip() else '*not set*'} |",
             f"| **Architecture references** | {'<br>'.join(links) if links else '*none yet*'} |"]
 
 
@@ -640,6 +644,13 @@ def _cell(text: str) -> str:
     return "".join("\\" + ch if ch in "\\|`*_[]<>" else ch for ch in text)
 
 
+def _code_cell(text: str) -> str:
+    """Text as a code span in a table cell. Backslash escapes are shown literally inside a
+    code span (D1), so only '|' is escaped (GitHub tables need it, even in code) and
+    backticks, which would end the span, are removed."""
+    return "`" + " ".join(str(text).split()).replace("`", "").replace("|", "\\|") + "`"
+
+
 def _link(path_from_index: str) -> str:
     return quote(path_from_index, safe="/-._~")
 
@@ -731,6 +742,8 @@ def check(root: Path) -> list[Problem]:
     graph = dependencies.build(features)
     problems += list(graph.problems)
     problems += dependencies.related_problems(root, features, graph)
+    from . import links                           # M3: links, architecture_refs, diagram references
+    problems += links.check(root, features)
     if not index_is_fresh(root):
         problems.append(Problem(INDEX, "out of date or missing: run `python -m tools.design index`"))
     from .architecture import ARCHITECTURE_INDEX, architecture_index_is_fresh   # imports this module

@@ -41,7 +41,29 @@ Other commands:
 |---|---|
 | `python -m tools.design index` | Refresh each feature's generated summary table and Related features rows from its metadata, then regenerate the feature index and the architecture index |
 | `python -m tools.design index --check` | Exit code 1 if either index, any summary table or any Related features rows are out of date (writes nothing) |
-| `python -m tools.design check` | Check every feature: IDs (including duplicates), metadata, the six sections, both dependency tables, `depends_on` (unknown IDs, self-dependencies, repeats, cycles), and the freshness of the generated rows and both indexes |
+| `python -m tools.design check` | Check every feature: IDs (including duplicates), metadata, the six sections, both dependency tables, `depends_on` (unknown IDs, self-dependencies, repeats, cycles), links and references (see below), and the freshness of the generated rows and both indexes |
+
+`check` also validates links and references inside `designs/`, without changing anything:
+
+- **Relative links** in the Markdown files you write (features, `diagrams/`, `evidence/`,
+  and the guides in `designs/`): the target must exist, with the exact letter case (GitHub
+  is case-sensitive), and stay inside the repository; a `#anchor` into a Markdown file,
+  including the documents in `docs/architecture/`, must be one of its headings. Absolute
+  paths and `\` are reported. Each problem gives the file, the line and, where it can, a
+  "did you mean" suggestion.
+- **`architecture_refs`**: each entry must be a path such as
+  `docs/architecture/system-architecture.md`, optionally with `#heading-anchor`, to an
+  existing document and heading. An entry that is not a valid reference is shown in the
+  summary table as plain text, never as a broken link.
+- **Proposed diagrams** (files in `diagrams/` folders with metadata): `source_diagram` must
+  be a diagram ID in the [architecture index](index/architecture-index.md#diagrams), and
+  `source_document` and `source_heading` must exist and agree with it; `base_commit` must
+  look like a commit hash.
+
+Not checked here: generated files and blocks (their sources are checked instead),
+`designs/templates/`, web links, `#L` line anchors, links in code or HTML comments, and
+anything outside `designs/` (repository-wide link checking is T-81), and Mermaid syntax
+(T-82). Write a link target that contains parentheses as `<file(1).md>`.
 
 The architecture index is rebuilt from `docs/architecture/`, so a change there that adds,
 renames or removes a heading or a Mermaid diagram makes `check` report it as out of date

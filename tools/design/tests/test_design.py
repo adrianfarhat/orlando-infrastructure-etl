@@ -21,13 +21,23 @@ GIT = ["git", "-c", "init.defaultBranch=main", "-c", "core.autocrlf=false", "-c"
 
 
 class Workspace:
-    """A temporary repository root with the real templates (and a .git marker or a real repo)."""
+    """A temporary repository root with the real templates (and a .git marker or a real repo).
 
-    def __init__(self, real_git: bool = False, folder_name: str = "repo"):
+    With architecture=True (the default since M3), it also holds copies of this repository's
+    docs/architecture/, the designs/ guides and the committed architecture index, so the
+    links in generated specifications resolve as they do here. M1 tests that build their
+    own docs/architecture/ pass architecture=False."""
+
+    def __init__(self, real_git: bool = False, folder_name: str = "repo", architecture: bool = True):
         self._tmp = tempfile.TemporaryDirectory(prefix="design-test-")
         self.root = Path(self._tmp.name) / folder_name
         (self.root / "designs").mkdir(parents=True)
         shutil.copytree(REPO_ROOT / "designs" / "templates", self.root / "designs" / "templates")
+        if architecture:
+            shutil.copytree(REPO_ROOT / "docs" / "architecture", self.root / "docs" / "architecture")
+            for name in ("README.md", "DECISIONS.md", "IMPLEMENTATION_BRIEF.md", "index/architecture-index.md"):
+                (self.root / "designs" / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(REPO_ROOT / "designs" / name, self.root / "designs" / name)
         if real_git:
             self.git("init", "-q")
         else:

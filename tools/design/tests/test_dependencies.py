@@ -271,7 +271,12 @@ class MovesAndRenames(unittest.TestCase):
                           related_block(ws, b.path))
             self.assertIn("| FD-0002 · B | Used by | [b.md](../b.md) |",
                           related_block(ws, "designs/features/archive/a-renamed.md"))
-            self.assertEqual(workspace.check(ws.root), [])
+            # M3: the generated rows are fine now; what remains is the moved file's own
+            # hand-written relative links (from the template), one folder too shallow.
+            remaining = workspace.check(ws.root)
+            self.assertTrue(remaining)
+            self.assertEqual({p.path for p in remaining}, {"designs/features/archive/a-renamed.md"})
+            self.assertTrue(all("broken link" in p.message for p in remaining), remaining)
 
     def test_convert_parent_refreshes_only_the_rows_that_mention_it(self):
         with Workspace() as ws:

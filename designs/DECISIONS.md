@@ -117,3 +117,28 @@ on GitHub Project #1.
 3. **Moves.** `index` updates the links after any move or rename. New Feature's
    `--convert-parent` refreshes only the Related features rows that mention the moved
    feature, never unrelated files.
+
+## 2026-11-21: M3 implementation choices (for review)
+
+1. **Scope.** `check` validates relative links and reference-style definitions in the
+   hand-written Markdown under `designs/` (features, `diagrams/`, `evidence/` and the
+   guides), including `#anchors` into any Markdown target such as `docs/architecture/`.
+   Not checked: `designs/index/` and the generated summary and Related features blocks
+   (their sources are checked, so each problem is reported once), `designs/templates/`
+   (placeholders), web links, `#L` and other anchors into non-Markdown files, HTML links,
+   and everything outside `designs/` (T-81). Mermaid syntax stays with T-82.
+2. **Exact letter case.** A target must exist with the same case, as on GitHub, even on a
+   case-insensitive disk.
+3. **`architecture_refs`** must be repository-relative paths to Markdown documents in
+   `docs/architecture/`, optionally with a heading anchor. D2: an entry that is not a valid
+   reference (empty, absolute, outside `docs/architecture/`, or using `\`) is shown as plain
+   text in the summary table, never as a broken link; anchors are percent-encoded.
+4. **Proposed diagrams.** In files under `diagrams/` that have metadata: `source_diagram`
+   must be in the diagram catalog (computed from `docs/architecture/`, as the architecture
+   index is); `source_document` and `source_heading` must exist and agree with it;
+   `base_commit` is checked for its format only (the tool runs no Git).
+5. **D1.** The branch cell of the summary table is a code span with only `|` escaped, so no
+   stray backslashes are shown.
+6. **Tests.** The test workspaces copy this repository's `docs/architecture/`, the guides
+   in `designs/` and the committed architecture index, so generated links resolve as they
+   do here; the M1 tests that build their own `docs/architecture/` opt out.
