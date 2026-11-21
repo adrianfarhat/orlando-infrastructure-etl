@@ -220,6 +220,42 @@ require, so the diagram rules stay the same everywhere.
 Mermaid stays editable text. Preview it in VS Code (Markdown preview with Mermaid support)
 or on GitHub.
 
+## Editing in a formatted view (Mark Sharp)
+
+Feature specifications stay ordinary Markdown. For a document-like editing view, use the
+VS Code extension **Mark Sharp** (`jonathan-yeung.mark-sharp`; the free tier is enough).
+
+- **Open a specification:** right-click it → **Open With… → Mark Sharp**. It is opt-in: `.md`
+  files still open in the normal text editor by default. **Switch** between the formatted
+  view and the Markdown source with `Ctrl+K Y` (the "M→" icon in the editor title).
+- **Trust the folder.** Mark Sharp is disabled in VS Code's Restricted Mode: if
+  **Open With…** does not list it, trust the folder (Command Palette → "Workspaces: Manage
+  Workspace Trust").
+- **Headings, paragraphs, lists and checkboxes** are edited directly in the formatted view.
+  On the free tier, **editing table cells and rendering Mermaid diagrams are Premium
+  features** (Mark Sharp's documentation): edit tables and Mermaid in the source
+  (`Ctrl+K Y`) and view diagrams in the preview.
+- **Tables are re-aligned when Mark Sharp saves** (setting
+  `mark-sharp.formatting.tableAlignment`, default `alignColumns`: cells are padded to the
+  column width). The first save of a file therefore re-pads its hand-written tables; later
+  saves keep them as they are. The checks compare table columns, not padding, so this never
+  breaks `check`. The generated summary and Related features blocks are kept as they are.
+  Keep the default: `condensed` (no spaces at all) changes only slightly fewer lines and is
+  much harder to read.
+- **See diagrams** in VS Code's Markdown preview (`Ctrl+K V`, side by side), which renders
+  Mermaid with the Mermaid preview extension. Links in the preview open the target document
+  in the preview, at the heading. On GitHub, Mermaid renders in the file view.
+- **Navigate the six sections** with the preview, the **Outline** view (Explorer → Outline,
+  in the text editor) or `Ctrl+Shift+O` in the text editor; on GitHub, use the outline button
+  of the rendered file.
+- **Edit a diagram at its source:** a current-state diagram in `docs/architecture/` (through
+  the docs workflow, never as part of a design), a proposed diagram in its `diagrams/` file.
+- **Never edit between `<!-- … -->` markers.** Those lines are generated: edit the metadata
+  or the source instead.
+- **Before committing:** run `python -m tools.design index` (refreshes the generated blocks
+  and indexes) and `python -m tools.design check`, then review `git diff`. Expect the
+  one-time table re-alignment; anything else you did not intend should be undone.
+
 ## Branches and publishing
 
 - **Explore on any branch.** New Feature works anywhere and changes nothing in Git.
