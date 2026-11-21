@@ -72,9 +72,9 @@ flowchart LR
 
 ### Related features
 
-*Other Orlando features. Prerequisites are declared once, in `depends_on` in the metadata above; the rows between the markers, including reverse "used by" rows, are generated in Phase 2. Do not edit them by hand.*
+*Other Orlando features. Prerequisites are declared once, in `depends_on` in the metadata above; the rows between the markers, including the reverse "Used by" rows, are generated from those lists by `python -m tools.design index`. Do not edit them by hand.*
 
-<!-- related-features:start · generated from depends_on (Phase 2); do not edit by hand -->
+<!-- related-features:start · generated from depends_on by `python -m tools.design index`; do not edit by hand -->
 | Feature | Relationship | Reference | Evidence status |
 |---|---|---|---|
 | — | — | — | — |
@@ -100,7 +100,7 @@ flowchart LR
 <details>
 <summary><b>Architecture references</b></summary>
 
-Keep the documents and headings this feature builds on (link to a heading with `#anchor`), delete the rest, and list their repository paths in `architecture_refs` above.
+Keep the documents and headings this feature builds on (link to a heading with `#anchor`), delete the rest, and list their repository paths in `architecture_refs` above. Every heading and every diagram, with its diagram ID, is listed in the [architecture index]({{designs}}/index/architecture-index.md).
 
 - [System architecture]({{architecture}}/system-architecture.md)
 - [Data contracts]({{architecture}}/data-contracts.md)

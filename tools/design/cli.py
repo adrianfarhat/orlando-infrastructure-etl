@@ -17,7 +17,7 @@ import traceback
 from pathlib import Path
 from typing import Callable, TextIO
 
-from . import workspace
+from . import architecture, dependencies, workspace
 from .workspace import DesignError
 
 EXIT_OK, EXIT_PROBLEMS, EXIT_FAILURE = 0, 1, 2
@@ -42,11 +42,13 @@ def build_parser() -> argparse.ArgumentParser:
                               "empty or omitted for a standalone feature")
     feature.add_argument("--convert-parent", action="store_true",
                          help="allow turning a standalone parent feature x.md into x/README.md")
-    index = sub.add_parser("index", help="refresh each feature's generated summary table, then regenerate "
-                                         "designs/index/feature-index.md")
+    index = sub.add_parser("index", help="refresh each feature's generated summary table and Related features rows, "
+                                         "then regenerate designs/index/feature-index.md and "
+                                         "designs/index/architecture-index.md")
     index.add_argument("--check", action="store_true",
-                       help="only report whether the index and the summary tables are up to date (writes nothing)")
-    sub.add_parser("check", help="check every feature specification and the index")
+                       help="only report whether the indexes, summary tables and Related features rows are up to "
+                            "date (writes nothing)")
+    sub.add_parser("check", help="check every feature specification and both indexes")
     for p in (feature, index, sub.choices["check"]):
         p.add_argument("--root", type=Path, help="repository root (default: found from the current folder)")
     return parser
@@ -66,17 +68,30 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         if args.command == "index":
             if args.check:
                 fresh = workspace.index_is_fresh(root)
-                stale = workspace.stale_summaries(root)
+                arch_fresh = architecture.architecture_index_is_fresh(root)
+                stale = workspace.stale_summaries(root) + dependencies.stale_related(root)
                 print(f"{workspace.INDEX} is {'up to date' if fresh else 'out of date: run `python -m tools.design index`'}",
                       file=out)
+                print(f"{architecture.ARCHITECTURE_INDEX} is "
+                      f"{'up to date' if arch_fresh else 'out of date: run `python -m tools.design index`'}", file=out)
                 for p in stale:
                     print(f"{p.path}: {p.message}", file=out)
-                return EXIT_OK if fresh and not stale else EXIT_PROBLEMS
+                return EXIT_OK if fresh and arch_fresh and not stale else EXIT_PROBLEMS
             for path in workspace.refresh_summaries(root):
                 print(f"refreshed the summary table in {path}", file=out)
+            for path in dependencies.refresh_related(root):
+                print(f"refreshed the Related features rows in {path}", file=out)
+            for p in workspace.not_refreshable(root):           # one line per file; nothing is repaired
+                print(f"design: warning: {p.path}: {p.message}; run `python -m tools.design check`", file=err)
             fresh = workspace.index_is_fresh(root)
             path = workspace.write_index(root)
             print(f"{path} is already up to date" if fresh else f"wrote {path}", file=out)
+            arch_fresh = architecture.architecture_index_is_fresh(root)
+            path = architecture.write_architecture_index(root)
+            if path is None:
+                print(f"no {workspace.ARCHITECTURE}/ folder, so there is no architecture index", file=out)
+            else:
+                print(f"{path} is already up to date" if arch_fresh else f"wrote {path}", file=out)
             return EXIT_OK
         problems = workspace.check(root)
         features, _ = workspace.discover(root)
@@ -110,6 +125,8 @@ def _new_feature(args, root: Path, out: TextIO, ask: Callable[[str], str], inter
     if created.moved:
         print(f"moved {created.moved[0]} -> {created.moved[1]} (same feature ID; its relative links were "
               "adjusted)", file=out)
+    for path in created.refreshed:
+        print(f"refreshed the Related features rows in {path} (links to the moved feature)", file=out)
     print(f"created {created.path} ({created.feature_id})", file=out)
     print(f"updated {created.index}", file=out)
     print("These are uncommitted working-tree changes: nothing was staged, committed or pushed.", file=out)

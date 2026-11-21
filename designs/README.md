@@ -7,6 +7,8 @@ planning, written before any code changes. The implemented system is described i
 - [IMPLEMENTATION_BRIEF.md](IMPLEMENTATION_BRIEF.md): the governing brief, kept unchanged.
 - [DECISIONS.md](DECISIONS.md): decisions taken since the brief.
 - [index/feature-index.md](index/feature-index.md): every feature, generated.
+- [index/architecture-index.md](index/architecture-index.md): every current-state document
+  in `docs/architecture/`, its headings and its Mermaid diagrams (with diagram IDs), generated.
 - [templates/](templates/): the feature specification and diagram templates.
 
 ## Create a feature
@@ -37,9 +39,36 @@ Other commands:
 
 | Command | What it does |
 |---|---|
-| `python -m tools.design index` | Refresh each feature's generated summary table from its metadata, then regenerate the feature index |
-| `python -m tools.design index --check` | Exit code 1 if the index or any summary table is out of date (writes nothing) |
-| `python -m tools.design check` | Check every feature: IDs (including duplicates), metadata, the six sections, both dependency tables, and index freshness |
+| `python -m tools.design index` | Refresh each feature's generated summary table and Related features rows from its metadata, then regenerate the feature index and the architecture index |
+| `python -m tools.design index --check` | Exit code 1 if either index, any summary table or any Related features rows are out of date (writes nothing) |
+| `python -m tools.design check` | Check every feature: IDs (including duplicates), metadata, the six sections, both dependency tables, `depends_on` (unknown IDs, self-dependencies, repeats, cycles), links and references (see below), and the freshness of the generated rows and both indexes |
+
+`check` also validates links and references inside `designs/`, without changing anything:
+
+- **Relative links** in the Markdown files you write (features, `diagrams/`, `evidence/`,
+  and the guides in `designs/`): the target must exist, with the exact letter case (GitHub
+  is case-sensitive), and stay inside the repository; a `#anchor` into a Markdown file,
+  including the documents in `docs/architecture/`, must be one of its headings. Absolute
+  paths and `\` are reported. Each problem gives the file, the line and, where it can, a
+  "did you mean" suggestion.
+- **`architecture_refs`**: each entry must be a path such as
+  `docs/architecture/system-architecture.md`, optionally with `#heading-anchor`, to an
+  existing document and heading. An entry that is not a valid reference is shown in the
+  summary table as plain text, never as a broken link.
+- **Proposed diagrams** (files in `diagrams/` folders with metadata): `source_diagram` must
+  be a diagram ID in the [architecture index](index/architecture-index.md#diagrams), and
+  `source_document` and `source_heading` must exist and agree with it; `base_commit` must
+  look like a commit hash.
+
+Not checked here: generated files and blocks (their sources are checked instead),
+`designs/templates/`, web links, `#L` line anchors, links in code or HTML comments, and
+anything outside `designs/` (repository-wide link checking is T-81), and Mermaid syntax
+(T-82). Write a link target that contains parentheses as `<file(1).md>`.
+
+The architecture index is rebuilt from `docs/architecture/`, so a change there that adds,
+renames or removes a heading or a Mermaid diagram makes `check` report it as out of date
+until `python -m tools.design index` is run and the result committed with that change.
+Other edits to those documents leave it up to date (it records no line numbers).
 
 Exit codes: 0 success, 1 problems found, 2 a usage or file error.
 
@@ -65,7 +94,9 @@ designs/features/
   Prefer `design_status: deferred` to deleting a feature, so its ID is never reused.
 - **File names** are made from the feature name: letters are lower-cased, accents are
   removed (`Résumé` → `resume`) and everything that is not an ASCII letter or digit
-  becomes a hyphen. Characters with no ASCII equivalent (for example 日本語) are dropped
+  becomes a hyphen, including Unicode dashes and the minus sign
+  (`Pipe–Road Intersection Analysis` → `pipe-road-intersection-analysis.md`). Existing
+  files are never renamed. Other characters with no ASCII equivalent (for example 日本語) are dropped
   from the file name, so a name must contain at least one ASCII letter or digit. The
   title in the specification keeps the name as typed, except that leading and trailing
   spaces are removed and repeated spaces become one.
@@ -90,8 +121,12 @@ is generated from it, between the lines `<!-- summary:start … -->` and
 `<!-- summary:end -->`: New Feature creates it and `python -m tools.design index`
 refreshes it. Edit the metadata, never the table: `check` reports a table that no longer
 matches, and `index` rewrites only the lines between the two markers, never anything you
-wrote elsewhere. A file whose metadata has a problem is left untouched until it is fixed.
-The "Related features" rows have similar markers, for the generation planned in Phase 2.
+wrote elsewhere. A file whose metadata has a problem is left untouched until it is fixed,
+and so is a block whose markers are missing, repeated or not closed: `index` prints one
+warning line for each such file (and still exits 0), and `check` gives the details.
+The "Related features" rows work the same way, between `<!-- related-features:start … -->`
+and `<!-- related-features:end -->`, generated from `depends_on` (see
+[Dependencies](#dependencies)).
 
 Every feature file starts with a metadata block, then six mandatory sections:
 
@@ -127,9 +162,19 @@ the GitHub Project card; do not copy it here.
       condition: "only for the weekly batch"
   ```
 
-  Phase 2 generates the "Related features" rows from these lists, including the reverse
-  "used by" rows, so nothing is entered twice. Until then, the table shows its columns and
-  this explanation.
+  `python -m tools.design index` generates everything else from these lists, so nothing
+  is entered twice:
+  - each feature's **Related features** rows: a "Depends on" row for each entry in its own
+    list (optional entries show their condition) and a "Used by" row for each feature that
+    lists it, each with the feature ID, title and a relative link;
+  - the **Depends on** and **Used by** columns of the [feature index](index/feature-index.md).
+
+  Every generated relationship is marked 🔷 PROPOSED. Relationships follow the feature
+  ID, so after moving or renaming a file, run `index` and the links follow it (New
+  Feature does this itself when `--convert-parent` moves a parent). `check` reports rows
+  that are out of date, an ID that no feature has, a feature that depends on itself, an
+  ID listed twice, and **dependency cycles** (features that depend on each other in a
+  circle). A cycle is shown for review; nothing is changed to break it.
 - **System components** are written by hand. Use a relationship only when the evidence
   supports it: `reads_from`, `writes_to`, `calls`, `exposes`, `renders`. Label optional or
   conditional dependencies. `related_to` is not `depends_on`.
@@ -155,6 +200,11 @@ require, so the diagram rules stay the same everywhere.
 
 ## Diagrams
 
+- **Find** an existing diagram in the [architecture index](index/architecture-index.md#diagrams).
+  Each one has a **diagram ID**: its document and the anchor of the heading above it, for
+  example `system-architecture/1-current-state-the-big-picture` (a second diagram under the
+  same heading gets `~2`). IDs are derived, never written into `docs/architecture/`, so an
+  ID changes when its heading is renamed.
 - **Link** to an existing diagram in `docs/architecture/` by its document and heading, for
   example `../docs/architecture/system-architecture.md#1-current-state-the-big-picture`
   (adjust `../` to the file's depth).
@@ -162,7 +212,8 @@ require, so the diagram rules stay the same everywhere.
   `diagrams/` folder next to the feature, and link it from the feature's "Proposed
   diagrams" section.
 - **Copy** an existing diagram into a proposed variant: paste its Mermaid source into a new
-  diagram file and fill in `source_document`, `source_heading` and `base_commit`
+  diagram file and fill in `source_diagram` (its diagram ID), `source_document`,
+  `source_heading` and `base_commit`
   (`git rev-parse --short HEAD`), so the original can always be found. Never edit the
   original in `docs/architecture/` as part of a design.
 

@@ -21,13 +21,23 @@ GIT = ["git", "-c", "init.defaultBranch=main", "-c", "core.autocrlf=false", "-c"
 
 
 class Workspace:
-    """A temporary repository root with the real templates (and a .git marker or a real repo)."""
+    """A temporary repository root with the real templates (and a .git marker or a real repo).
 
-    def __init__(self, real_git: bool = False, folder_name: str = "repo"):
+    With architecture=True (the default since M3), it also holds copies of this repository's
+    docs/architecture/, the designs/ guides and the committed architecture index, so the
+    links in generated specifications resolve as they do here. M1 tests that build their
+    own docs/architecture/ pass architecture=False."""
+
+    def __init__(self, real_git: bool = False, folder_name: str = "repo", architecture: bool = True):
         self._tmp = tempfile.TemporaryDirectory(prefix="design-test-")
         self.root = Path(self._tmp.name) / folder_name
         (self.root / "designs").mkdir(parents=True)
         shutil.copytree(REPO_ROOT / "designs" / "templates", self.root / "designs" / "templates")
+        if architecture:
+            shutil.copytree(REPO_ROOT / "docs" / "architecture", self.root / "docs" / "architecture")
+            for name in ("README.md", "DECISIONS.md", "IMPLEMENTATION_BRIEF.md", "index/architecture-index.md"):
+                (self.root / "designs" / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(REPO_ROOT / "designs" / name, self.root / "designs" / name)
         if real_git:
             self.git("init", "-q")
         else:
@@ -84,7 +94,7 @@ class StandaloneFeatures(unittest.TestCase):
             self.assertNotIn("{{", text)
             self.assertEqual(workspace.check(ws.root), [])                         # valid, index fresh
             index = ws.text(workspace.INDEX)
-            self.assertIn("| FD-0001 | Pipe road intersections | investigating | - | "
+            self.assertIn("| FD-0001 | Pipe road intersections | investigating | - | - | - | "     # M2: Depends on, Used by
                           "[pipe-road-intersections.md](../features/pipe-road-intersections.md) |", index)
 
     def test_every_relative_link_resolves_from_the_generated_location(self):
@@ -96,7 +106,7 @@ class StandaloneFeatures(unittest.TestCase):
             for created in (new_feature(ws.root, "Links"), new_feature(ws.root, "Deep links", parent="a/b")):
                 text = ws.text(created.path)
                 targets = [m.group(1) for m in link.finditer(text)] + re.findall(r"from (\S+/diagram\.md)", text)
-                self.assertGreaterEqual(len(targets), 9, created.path)        # 8 links + the diagram template
+                self.assertGreaterEqual(len(targets), 10, created.path)       # 9 links + the diagram template
                 here = (REPO_ROOT / created.path).parent                    # where the file would live in this repo
                 for target in targets:
                     with self.subTest(file=created.path, target=target):
@@ -115,7 +125,7 @@ class StandaloneFeatures(unittest.TestCase):
             self.assertEqual(ws.meta("designs/features/renamed-beta.md")["feature_id"], "FD-0002")
             self.assertEqual(new_feature(ws.root, "Gamma").feature_id, "FD-0003")
             index = ws.text(workspace.INDEX)
-            self.assertIn("| FD-0002 | Beta | investigating | - | [renamed-beta.md]", index)
+            self.assertIn("| FD-0002 | Beta | investigating | - | - | - | [renamed-beta.md]", index)
 
     def test_names_with_spaces_unicode_and_a_root_path_with_spaces(self):
         with Workspace(folder_name="my repo with spaces") as ws:

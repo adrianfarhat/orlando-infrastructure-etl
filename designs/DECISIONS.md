@@ -76,3 +76,83 @@ on GitHub Project #1.
 5. **Related features** rows sit between `<!-- related-features:start … -->` and
    `<!-- related-features:end -->`, ready for generation in Phase 2.
 6. **The diagram template** follows the same presentation style and keeps its metadata.
+
+## 2026-11-21: Phase 2 plan (approved by the user)
+
+1. **One architecture index.** The architecture index and the diagram catalog are one
+   generated file, [index/architecture-index.md](index/architecture-index.md), covering
+   `docs/architecture/` only (`docs/agents/` is project planning, not architecture).
+2. **Diagram IDs** are derived from position: `<document>/<heading anchor>`, with `~2`,
+   `~3` for later diagrams under the same heading and `top` before the first heading.
+   Nothing is written into `docs/architecture/`; IDs inside the documents are deferred
+   (to be coordinated with T-82). Heading anchors follow GitHub's algorithm.
+3. **The architecture index must be fresh**: `check` and `index --check` report it out of
+   date when a heading or diagram in `docs/architecture/` changes. It records no line
+   numbers, so other edits leave it up to date. The docs workflow in conventions.md
+   section 5 notes the extra step.
+4. **Diagram template** gains `source_diagram`, the diagram ID a proposed variant was
+   copied from.
+5. **Dependencies** (M2): "Depends on" and "Used by" columns in the existing feature index,
+   not a separate dependency index; generated relationship rows are marked PROPOSED (no
+   `evidence:` field yet); the Mermaid dependency graph is deferred.
+6. **Validation** (M3): design-specific link and reference checks cover `designs/` only;
+   repository-wide link checking stays with T-81. A dependency cycle is a check failure.
+   D1 (backslashes in the summary's branch cell) is fixed separately; D2 (summary links for
+   `architecture_refs`) is resolved by those checks.
+7. **Deferred:** a `new diagram --from` command.
+
+## 2026-11-21: M2 implementation choices (for review)
+
+1. **Graph checks live with the graph.** `check` reports, from the `depends_on` lists, an
+   ID that no feature has, a feature that depends on itself, an ID listed twice in one
+   list, and each dependency cycle (once, at its lowest ID, naming every feature in the
+   group, with one example path).
+   Optional dependencies count towards cycles. M3 adds the link and reference checks
+   only and does not repeat these.
+2. **Generated rows.** "Depends on" rows keep the order of `depends_on`; "Used by" rows are
+   ordered by feature ID. A self-dependency or a repeated ID gets no extra row; an
+   unknown ID gets a row that says no feature has it; an ID shared by several files links
+   to each of them. Features with any metadata problem add no relationships and their
+   files are not rewritten. With no relationships, the template's `| — |` row is kept.
+3. **Moves.** `index` updates the links after any move or rename. New Feature's
+   `--convert-parent` refreshes only the Related features rows that mention the moved
+   feature, never unrelated files.
+
+## 2026-11-21: M3 implementation choices (for review)
+
+1. **Scope.** `check` validates relative links and reference-style definitions in the
+   hand-written Markdown under `designs/` (features, `diagrams/`, `evidence/` and the
+   guides), including `#anchors` into any Markdown target such as `docs/architecture/`.
+   Not checked: `designs/index/` and the generated summary and Related features blocks
+   (their sources are checked, so each problem is reported once), `designs/templates/`
+   (placeholders), web links, `#L` and other anchors into non-Markdown files, HTML links,
+   and everything outside `designs/` (T-81). Mermaid syntax stays with T-82.
+2. **Exact letter case.** A target must exist with the same case, as on GitHub, even on a
+   case-insensitive disk.
+3. **`architecture_refs`** must be repository-relative paths to Markdown documents in
+   `docs/architecture/`, optionally with a heading anchor. D2: an entry that is not a valid
+   reference (empty, absolute, outside `docs/architecture/`, or using `\`) is shown as plain
+   text in the summary table, never as a broken link; anchors are percent-encoded.
+4. **Proposed diagrams.** In files under `diagrams/` that have metadata: `source_diagram`
+   must be in the diagram catalog (computed from `docs/architecture/`, as the architecture
+   index is); `source_document` and `source_heading` must exist and agree with it;
+   `base_commit` is checked for its format only (the tool runs no Git).
+5. **D1.** The branch cell of the summary table is a code span with only `|` escaped, so no
+   stray backslashes are shown.
+6. **Tests.** The test workspaces copy this repository's `docs/architecture/`, the guides
+   in `designs/` and the committed architecture index, so generated links resolve as they
+   do here; the M1 tests that build their own `docs/architecture/` opt out.
+
+## 2026-11-21: File names from Unicode dashes (approved by the user)
+
+1. **Dashes separate words.** Before a feature name becomes a file name, Unicode dashes
+   (Unicode category Pd: hyphen, non-breaking hyphen, figure, en and em dash, horizontal
+   bar, and so on) and the minus sign U+2212 become an ordinary hyphen, so
+   "Pipe–Road Intersection Analysis" gives `pipe-road-intersection-analysis.md`, not
+   `piperoad-intersection-analysis.md`. Everything else is unchanged: ASCII names, accents,
+   characters with no ASCII equivalent, reserved names, and the title, which keeps the
+   name as typed.
+2. **No renames.** File names are made only when New Feature creates a file; existing
+   files keep their names. A name that now gives the same file name as an existing
+   feature is refused, as before ("already exists; nothing was overwritten").
+3. **Out of scope:** other Unicode punctuation (for example `’` or `·`) is still dropped.

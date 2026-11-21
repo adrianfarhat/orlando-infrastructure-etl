@@ -198,6 +198,10 @@ only through geometry, computed at query time.
    - `python -m tools.impact validate` checks the registry and
      [impact.yml](../../impact.yml) against the working tree. It does not analyse a
      branch's changes; run it after editing either file.
+   - If the change adds, renames or removes a heading or a Mermaid diagram in
+     `docs/architecture/`, run `python -m tools.design index` and commit the regenerated
+     `designs/index/architecture-index.md` in the same branch. Until then
+     `python -m tools.design check` reports it as out of date ([designs/README.md](../../designs/README.md)).
 2. Use the change-impact tool, which applies the rules above. The user guide,
    [tools/impact/README.md](../../tools/impact/README.md), covers the commands,
    exit codes, reports and known limitations.
