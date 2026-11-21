@@ -231,15 +231,19 @@ the same diagram more than once if useful), with a blank line before and after:
 <!-- diagram:end -->
 ```
 
-The ID comes from the [architecture index](index/architecture-index.md#diagrams). Then run
-`python -m tools.design index`: it fills the lines between the markers with a caption
-(✅ Current architecture, the title linked to the source document and heading, the ID, and a
-link to the legend for architecture diagrams) and a copy of the source Mermaid, which renders
-in VS Code's preview and on GitHub. Blank lines of the source are written as `%%` (a Mermaid
-comment), so the block stays one piece.
+The ID is either a diagram ID from the [architecture index](index/architecture-index.md#diagrams)
+(current architecture) or the `diagram_id` of a proposed diagram file in a `diagrams/` folder
+(made from [templates/diagram.md](templates/diagram.md), with exactly one Mermaid block). Then
+run `python -m tools.design index`: it fills the lines between the markers with a caption
+(✅ Current architecture or 🔷 Proposed, the title linked to the source, the ID, and a link to
+the legend for architecture diagrams) and a copy of the source Mermaid, which renders in VS
+Code's preview and on GitHub. Blank lines of the source are written as `%%` (a Mermaid
+comment), so the block stays one piece. The feature index lists each feature's diagrams in
+its "Diagrams" column.
 
-- **The source is the only place a diagram is edited.** Change it in `docs/architecture/`
-  (through the docs workflow), then run `index` again; every feature that shows it is updated.
+- **The source is the only place a diagram is edited.** Change a current-state diagram in
+  `docs/architecture/` (through the docs workflow) or a proposed one in its `diagrams/` file,
+  then run `index` again; every feature that shows it is updated.
 - **Never edit between the two markers.** `check` compares each block with what its source
   produces now and fails on stale or hand-edited copies, unknown or renamed IDs (with a
   suggestion), a missing, nested or malformed marker, and a Mermaid fence that is not closed

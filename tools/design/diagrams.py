@@ -11,9 +11,13 @@ The start marker is the only place a diagram is attached: there is no metadata l
 source, and `check` compares them with what the source produces now (the full text, not a
 fingerprint). Nothing outside the markers is ever rewritten.
 
-Sources (milestone 1: architecture catalog IDs; milestone 2 adds proposed diagrams):
+Sources:
 - an architecture catalog ID (designs/index/architecture-index.md): the Mermaid block under
-  that heading in docs/architecture/, labelled "Current architecture".
+  that heading in docs/architecture/, labelled "Current architecture" (milestone 1);
+- the `diagram_id` of a proposed-diagram file in a `diagrams/` folder under designs/features/
+  (from templates/diagram.md): its single Mermaid block, labelled "Proposed" (milestone 2).
+  An ID used by two sources, or a proposed file without exactly one Mermaid block, is a
+  problem, never a guess.
 
 The generated lines are one contiguous block: a caption line (label, title linked to the
 source document and heading, the ID, a "generated copy" note, and the legend link for
@@ -73,12 +77,14 @@ class Source:
     lines: tuple[str, ...]
     legend: bool          # link the architecture legend (architecture-type diagrams)
     closed: bool = True
+    problem: str = ""     # why this ID cannot be used (ambiguous or malformed source); '' when fine
 
 
 # --------------------------------------------------------------------------- sources
 
 def sources(root: Path) -> dict[str, Source]:
-    """Every diagram a block can name, by ID."""
+    """Every diagram a block can name, by ID: architecture catalog IDs (current architecture)
+    and the `diagram_id` of proposed-diagram files in `diagrams/` folders (milestone 2)."""
     from .architecture import catalog, documents
     out = {}
     for d in catalog(documents(root)):
@@ -87,6 +93,46 @@ def sources(root: Path) -> dict[str, Source]:
         out[d.diagram_id] = Source(d.diagram_id, "current", title, d.document,
                                    d.heading.anchor if d.heading is not None else "", d.source,
                                    d.diagram_type == "architecture", d.closed)
+    for source in _proposed(root):
+        if source.diagram_id in out:
+            first = out[source.diagram_id]
+            reason = (f"is used by more than one diagram ({first.path} and {source.path})"
+                      if first.problem == "" or "more than one" not in first.problem else first.problem)
+            out[source.diagram_id] = Source(source.diagram_id, "ambiguous", "", source.path, "", (), False,
+                                            problem=reason)
+        else:
+            out[source.diagram_id] = source
+    return out
+
+
+def _proposed(root: Path) -> list[Source]:
+    """Proposed diagrams: files in `diagrams/` folders under designs/features/ whose metadata
+    has a `diagram_id`. Each must hold exactly one Mermaid block; the file is the source."""
+    from ruamel.yaml.error import YAMLError
+    from . import markdown
+    from .links import diagram_files
+    from .workspace import _yaml, split_front_matter
+    out = []
+    for rel in diagram_files(root):
+        try:
+            text = (root / rel).read_bytes().decode("utf-8")
+            front, body = split_front_matter(text)
+            meta = _yaml().load(front) if front is not None else None
+        except (OSError, UnicodeDecodeError, YAMLError):
+            continue                                     # reported by the link and reference checks
+        if not isinstance(meta, dict) or not isinstance(meta.get("diagram_id"), str) or not meta["diagram_id"].strip():
+            continue                                     # no ID (for example a copy of the template): not attachable
+        did = meta["diagram_id"].strip()
+        doc = markdown.parse(body)
+        title = meta.get("title") if isinstance(meta.get("title"), str) and meta["title"].strip() else None
+        title = title or (doc.headings[0].text if doc.headings else posixpath.basename(rel))
+        if len(doc.diagrams) != 1:
+            out.append(Source(did, "proposed", title, rel, "", (), False,
+                              problem=f"is a proposed diagram in {rel}, which must hold exactly one Mermaid block "
+                                      f"(found {len(doc.diagrams)})"))
+            continue
+        d = doc.diagrams[0]
+        out.append(Source(did, "proposed", title, rel, "", d.source, False, d.closed))
     return out
 
 
@@ -202,8 +248,9 @@ def render(source: Source, feature_path: str) -> list[str]:
 # --------------------------------------------------------------------------- check and refresh
 
 def _suggest(diagram_id: str, known) -> str:
-    close = difflib.get_close_matches(diagram_id, sorted(known), n=1, cutoff=0.5)
-    return f" (did you mean {close[0]}?)" if close else " (see designs/index/architecture-index.md#diagrams)"
+    close = difflib.get_close_matches(diagram_id, sorted(k for k, s in known.items() if not s.problem), n=1, cutoff=0.5)
+    return (f" (did you mean {close[0]}?)" if close else
+            " (see designs/index/architecture-index.md#diagrams, or the diagram_id of a proposed diagram file)")
 
 
 def file_problems(rel: str, text: str, known: dict[str, Source]) -> list[Problem]:
@@ -218,6 +265,9 @@ def file_problems(rel: str, text: str, known: dict[str, Source]) -> list[Problem
         if source is None:
             out.append(Problem(rel, f"line {b.start + 1}: unknown diagram ID {b.diagram_id!r}"
                                     f"{_suggest(b.diagram_id, known)}"))
+            continue
+        if source.problem:
+            out.append(Problem(rel, f"line {b.start + 1}: diagram ID {b.diagram_id!r} {source.problem}"))
             continue
         if not source.closed:
             out.append(Problem(rel, f"line {b.start + 1}: the source Mermaid block of {b.diagram_id} in "

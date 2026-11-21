@@ -57,9 +57,9 @@ class Generation(unittest.TestCase):
             self.three(ws)
             cmd(ws.root, "index")
             index = ws.text(workspace.INDEX)
-            self.assertIn("| Feature ID | Title | Design status | Parent | Depends on | Used by | File |", index)
+            self.assertIn("| Feature ID | Title | Design status | Parent | Depends on | Used by | Diagrams | File |", index)
             self.assertIn("| FD-0001 | Road ingestion | investigating | - | - | "
-                          "[FD-0003](../features/pipe-road-intersections.md) | [road-ingestion.md]", index)
+                          "[FD-0003](../features/pipe-road-intersections.md) | - | [road-ingestion.md]", index)
             self.assertIn("| FD-0002 | Pipe ingestion | investigating | - | - | "
                           "[FD-0003](../features/pipe-road-intersections.md) (optional) |", index)
             self.assertIn("| FD-0003 | Pipe road intersections | investigating | - | "

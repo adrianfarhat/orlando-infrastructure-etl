@@ -252,6 +252,84 @@ class Validation(unittest.TestCase):
             self.assertEqual([p for p in problems(ws) if "diagram" in p], [])
 
 
+class ProposedDiagrams(unittest.TestCase):
+    """Milestone 2: proposed diagrams in `diagrams/` files are sources too."""
+
+    def proposed(self, ws, rel, diagram_id, mermaid="flowchart LR\n  A[\"Step (planned)\"] --> B\n\n  B --> C",
+                 title="Overlap model", extra=""):
+        text = (REPO_ROOT / "designs/templates/diagram.md").read_bytes().decode("utf-8").replace("\r\n", "\n")
+        text = text.replace('diagram_id: ""', f'diagram_id: "{diagram_id}"').replace('title: ""', f'title: "{title}"')
+        start = text.index("```mermaid\n") + len("```mermaid\n")
+        text = text[:start] + mermaid + text[text.index("\n```", start):] + extra
+        path = ws.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(text.encode("utf-8"))
+        return path
+
+    def test_a_proposed_diagram_is_embedded_with_its_own_label_and_link(self):
+        with Workspace() as ws:
+            f = new_feature(ws.root, "A")
+            self.proposed(ws, "designs/features/diagrams/overlap.md", "FD-0001-D1")
+            put(ws, f.path, "## 3. Logic\n", block("FD-0001-D1") + block(ETL))
+            cmd(ws.root, "index")
+            text = ws.text(f.path)
+            self.assertIn("**🔷 Proposed: [Overlap model](diagrams/overlap.md)** · `FD-0001-D1` · generated copy", text)
+            self.assertIn("```mermaid\nflowchart LR\n  A[\"Step (planned)\"] --> B\n%%\n  B --> C\n```", text)
+            caption = next(l for l in text.split("\n") if l.startswith("**🔷 Proposed"))
+            self.assertNotIn("legend](", caption)                                        # legend: architecture only
+            self.assertEqual(problems(ws), [])
+            index = ws.text(workspace.INDEX)
+            self.assertIn("| `FD-0001-D1`, `etl-workflow/streets--road_segments` | [a.md]", index)   # Diagrams column
+
+    def test_stale_renamed_missing_and_malformed_proposed_diagrams(self):
+        with Workspace() as ws:
+            f = new_feature(ws.root, "A")
+            src = self.proposed(ws, "designs/features/diagrams/overlap.md", "FD-0001-D1")
+            put(ws, f.path, "## 3. Logic\n", block("FD-0001-D1"))
+            cmd(ws.root, "index")
+            src.write_bytes(src.read_bytes().replace(b"B --> C", b"B --> D"))           # the source changed
+            self.assertIn("differs from the authoritative Mermaid source in designs/features/diagrams/overlap.md",
+                          "\n".join(problems(ws)))
+            cmd(ws.root, "index")
+            self.assertIn("B --> D", ws.text(f.path))
+            self.assertEqual(problems(ws), [])
+            src.write_bytes(src.read_bytes().replace(b'"FD-0001-D1"', b'"FD-0001-D2"'))  # the ID was renamed
+            self.assertIn("unknown diagram ID 'FD-0001-D1' (did you mean FD-0001-D2?)", "\n".join(problems(ws)))
+            src.write_bytes(src.read_bytes().replace(b'"FD-0001-D2"', b'"FD-0001-D1"'))
+            self.proposed(ws, "designs/features/diagrams/overlap.md", "FD-0001-D1",
+                          extra="\n```mermaid\nflowchart LR\n  X --> Y\n```\n")             # two Mermaid blocks
+            self.assertIn("must hold exactly one Mermaid block (found 2)", "\n".join(problems(ws)))
+            before = (ws.root / f.path).read_bytes()
+            cmd(ws.root, "index")
+            self.assertEqual((ws.root / f.path).read_bytes(), before)                     # not rewritten
+            src.unlink()                                                                   # the file is gone
+            self.assertIn("unknown diagram ID 'FD-0001-D1'", "\n".join(problems(ws)))
+
+    def test_ambiguous_ids_are_reported_not_guessed(self):
+        with Workspace() as ws:
+            f = new_feature(ws.root, "A")
+            self.proposed(ws, "designs/features/diagrams/one.md", "FD-0001-D1")
+            self.proposed(ws, "designs/features/grp/diagrams/two.md", "FD-0001-D1")
+            self.proposed(ws, "designs/features/diagrams/clash.md", ETL)                 # same as a catalog ID
+            put(ws, f.path, "## 3. Logic\n", block("FD-0001-D1") + block(ETL))
+            found = "\n".join(problems(ws))
+            self.assertIn("diagram ID 'FD-0001-D1' is used by more than one diagram", found)
+            self.assertIn(f"diagram ID '{ETL}' is used by more than one diagram", found)
+
+    def test_the_existing_proposed_diagram_workflow_still_passes(self):
+        with Workspace() as ws:
+            new_feature(ws.root, "A")
+            path = self.proposed(ws, "designs/features/diagrams/copy.md", "FD-0001-D1")
+            path.write_bytes(path.read_bytes().replace(b'source_diagram: ""', f"source_diagram: {ETL}".encode())
+                             .replace(b'source_document: ""', b"source_document: docs/architecture/etl-workflow.md")
+                             .replace(b'source_heading: ""', b"source_heading: streets--road_segments"))
+            self.assertEqual(problems(ws), [])                                             # links, references: fine
+            self.assertEqual([f.path for f in workspace.discover(ws.root)[0]], ["designs/features/a.md"])
+            empty = ws.root / "designs/features/diagrams/blank.md"                         # a template copy, no ID
+            empty.write_bytes((REPO_ROOT / "designs/templates/diagram.md").read_bytes())
+            self.assertEqual(problems(ws), [])
+
+
 class Integration(unittest.TestCase):
     def test_links_catalog_index_and_editor(self):
         with Workspace() as ws:

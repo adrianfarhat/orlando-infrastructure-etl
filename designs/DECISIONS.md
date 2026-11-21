@@ -200,3 +200,12 @@ on GitHub Project #1.
 5. **Sources.** Milestone 1: architecture catalog IDs (current architecture). The catalog and
    the architecture index are unchanged: copies live in `designs/`, which the catalog does
    not read, so no diagram ID is duplicated.
+6. **Proposed diagrams (milestone 2).** A block may also name the `diagram_id` of a proposed
+   diagram file in a `diagrams/` folder; that file, with exactly one Mermaid block, is the
+   source, labelled "Proposed" and linked to the file. An ID used by two sources (two files,
+   or a file and the catalog) or a file without exactly one Mermaid block is reported and
+   never guessed. A template copy without a `diagram_id` is not attachable. The existing
+   proposed-diagram checks (`source_diagram`, `source_document`, `source_heading`,
+   `base_commit`) are unchanged.
+7. **Feature index.** A "Diagrams" column lists the IDs each feature shows, derived from its
+   markers (no metadata).

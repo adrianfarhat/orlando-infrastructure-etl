@@ -680,7 +680,7 @@ def _link(path_from_index: str) -> str:
 
 
 def render_index(root: Path) -> str:
-    from . import dependencies                    # imports this module
+    from . import dependencies, diagrams          # imports this module
     features, problems = discover(root)
     graph = dependencies.build(features)
     by_folder = {posixpath.dirname(f.path): f for f in features if posixpath.basename(f.path) == "README.md"}
@@ -688,17 +688,20 @@ def render_index(root: Path) -> str:
     for f in sorted((f for f in features if f.feature_id),
                     key=lambda f: (int(ID_RE.match(f.feature_id).group(1)), f.path)):
         depends_on, used_by = dependencies.index_cells(f, graph, posixpath.dirname(INDEX))
+        shown = diagrams.ids_in((root / f.path).read_bytes().decode("utf-8", "replace"))
         rows.append(f"| {f.feature_id} | {_cell(f.title or '')} | {f.status or ''} | "
-                    f"{_parent_label(f, by_folder)} | {depends_on} | {used_by} | [{_cell(f.path[len(FEATURES) + 1:])}]"
+                    f"{_parent_label(f, by_folder)} | {depends_on} | {used_by} | "
+                    f"{', '.join(_code_cell(d) for d in shown) or '-'} | [{_cell(f.path[len(FEATURES) + 1:])}]"
                     f"({_link(posixpath.relpath(f.path, posixpath.dirname(INDEX)))}) |")
     summary = (f"Features under `designs/features/`, from their metadata. "
                f"{len(rows)} feature{'s' if len(rows) != 1 else ''}.")
     lines = [INDEX_HEADER, "", "# Feature index", "", summary, ""]
     if rows:
         lines += ["\"Depends on\" is each feature's `depends_on` list; \"Used by\" is derived from the other "
-                  "features' lists. All relationships are PROPOSED.", "",
-                  "| Feature ID | Title | Design status | Parent | Depends on | Used by | File |",
-                  "|---|---|---|---|---|---|---|", *rows]
+                  "features' lists. All relationships are PROPOSED. \"Diagrams\" lists the diagram IDs each "
+                  "feature shows in generated diagram blocks.", "",
+                  "| Feature ID | Title | Design status | Parent | Depends on | Used by | Diagrams | File |",
+                  "|---|---|---|---|---|---|---|---|", *rows]
     else:
         lines.append("No features yet. Create one with New Feature (see [designs/README.md](../README.md)).")
     unindexed = sorted({p.path for p in problems} | {f.path for f in features if not f.feature_id})
