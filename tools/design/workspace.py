@@ -633,18 +633,23 @@ def not_refreshable(root: Path) -> list[Problem]:
     metadata has a problem, or the markers of a block are missing, repeated or not
     closed. Nothing is read beyond what the refresh itself reads, and nothing is written."""
     from .dependencies import RELATED_END, RELATED_START          # imports this module
+    from . import diagrams
     features, _ = discover(root)
+    known = diagrams.sources(root)
     out = []
     for f in features:
         if not f.meta_ok:
-            out.append(Problem(f.path, "its metadata has a problem, so its summary table and Related features "
-                                       "rows were not refreshed"))
+            out.append(Problem(f.path, "its metadata has a problem, so its summary table, Related features "
+                                       "rows and diagram blocks were not refreshed"))
             continue
-        lines = (root / f.path).read_bytes().decode("utf-8").splitlines(keepends=True)
+        text = (root / f.path).read_bytes().decode("utf-8")
+        lines = text.splitlines(keepends=True)
         reasons = [f"the {name} markers are {_SPAN_WORDS[status]}"
                    for name, status in (("summary table", _summary_span(lines)[0]),
                                         ("Related features", marker_span(lines, RELATED_START, RELATED_END)[0]))
                    if status != "ok"]
+        if diagrams.blocking(text, f.path, known):
+            reasons.append("a diagram block has a problem (see check)")
         if reasons:
             out.append(Problem(f.path, "; ".join(reasons) + ", so that block was not refreshed"
                                if len(reasons) == 1 else "; ".join(reasons) + ", so those blocks were not refreshed"))
@@ -763,6 +768,8 @@ def check(root: Path) -> list[Problem]:
     problems += dependencies.related_problems(root, features, graph)
     from . import links                           # M3: links, architecture_refs, diagram references
     problems += links.check(root, features)
+    from . import diagrams                        # T-96: generated diagram blocks
+    problems += diagrams.problems(root, features)
     if not index_is_fresh(root):
         problems.append(Problem(INDEX, "out of date or missing: run `python -m tools.design index`"))
     from .architecture import ARCHITECTURE_INDEX, architecture_index_is_fresh   # imports this module

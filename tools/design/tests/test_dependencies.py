@@ -216,8 +216,8 @@ class IndexWarnings(unittest.TestCase):
             code, out, err = cmd(ws.root, "index")
             self.assertEqual(code, 0)
             self.assertEqual(self.warnings(err), [
-                "design: warning: designs/features/bad-meta.md: its metadata has a problem, so its summary table "
-                "and Related features rows were not refreshed; run `python -m tools.design check`",
+                "design: warning: designs/features/bad-meta.md: its metadata has a problem, so its summary table, "
+                "Related features rows and diagram blocks were not refreshed; run `python -m tools.design check`",
                 "design: warning: designs/features/no-related.md: the Related features markers are not closed, "
                 "so that block was not refreshed; run `python -m tools.design check`",
                 "design: warning: designs/features/two-problems.md: the summary table markers are not closed; the "

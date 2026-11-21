@@ -220,6 +220,34 @@ require, so the diagram rules stay the same everywhere.
 Mermaid stays editable text. Preview it in VS Code (Markdown preview with Mermaid support)
 or on GitHub.
 
+### Showing a diagram inside a feature (generated blocks)
+
+To show an authoritative diagram rendered inside a feature, without copying it by hand, put
+two marker lines wherever it helps the reader (any of the six sections, as many as you like,
+the same diagram more than once if useful), with a blank line before and after:
+
+```markdown
+<!-- diagram:start system-architecture/4-target-state-the-product-vision-mostly-planned -->
+<!-- diagram:end -->
+```
+
+The ID comes from the [architecture index](index/architecture-index.md#diagrams). Then run
+`python -m tools.design index`: it fills the lines between the markers with a caption
+(✅ Current architecture, the title linked to the source document and heading, the ID, and a
+link to the legend for architecture diagrams) and a copy of the source Mermaid, which renders
+in VS Code's preview and on GitHub. Blank lines of the source are written as `%%` (a Mermaid
+comment), so the block stays one piece.
+
+- **The source is the only place a diagram is edited.** Change it in `docs/architecture/`
+  (through the docs workflow), then run `index` again; every feature that shows it is updated.
+- **Never edit between the two markers.** `check` compares each block with what its source
+  produces now and fails on stale or hand-edited copies, unknown or renamed IDs (with a
+  suggestion), a missing, nested or malformed marker, and a Mermaid fence that is not closed
+  before the end marker. `index` never rewrites a file whose diagram blocks have such a
+  problem; it says so instead.
+- Marker examples inside code blocks (like the one above) are ignored. Files without markers
+  are never changed.
+
 ## Editing in a formatted view (Mark Sharp)
 
 Feature specifications stay ordinary Markdown. For a document-like editing view, use the

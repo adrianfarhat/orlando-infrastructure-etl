@@ -181,3 +181,22 @@ on GitHub Project #1.
    inline Markdown inside table cells (taken as unchanged), and its save of a file whose
    generated blocks contain blank lines. `index`, `check` and `git diff` before committing
    cover both.
+
+## 2026-11-21: Diagram blocks (T-96)
+
+1. **Attachment by markers only.** A feature shows a diagram through a pair of lines
+   `<!-- diagram:start <ID> -->` / `<!-- diagram:end -->`, placed anywhere in the six
+   sections, any number of times. There is no metadata list: the markers are the single
+   declaration (approved by the user, replacing the earlier `diagrams:` proposal).
+2. **Generated, never edited.** `index` writes a caption and a copy of the source Mermaid
+   between the markers; `check` compares the whole block with what the source produces now
+   (not a fingerprint). Files with a structural problem or an unknown ID are never rewritten.
+3. **One contiguous block.** The copy writes each blank line of the source as `%%`, a Mermaid
+   comment line, so the block has no blank line: 9 of the 14 architecture diagrams contain
+   blank lines, and Mark Sharp keeps a block that starts with an HTML comment verbatim only
+   up to the first blank line (observed on a real buffer). The diagram renders the same.
+4. **Fence.** The copy's fence is at least three backticks and longer than any backtick run
+   that starts a source line, so it always closes before the end marker.
+5. **Sources.** Milestone 1: architecture catalog IDs (current architecture). The catalog and
+   the architecture index are unchanged: copies live in `designs/`, which the catalog does
+   not read, so no diagram ID is duplicated.
