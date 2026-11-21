@@ -17,7 +17,7 @@ import traceback
 from pathlib import Path
 from typing import Callable, TextIO
 
-from . import architecture, workspace
+from . import architecture, dependencies, workspace
 from .workspace import DesignError
 
 EXIT_OK, EXIT_PROBLEMS, EXIT_FAILURE = 0, 1, 2
@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             if args.check:
                 fresh = workspace.index_is_fresh(root)
                 arch_fresh = architecture.architecture_index_is_fresh(root)
-                stale = workspace.stale_summaries(root)
+                stale = workspace.stale_summaries(root) + dependencies.stale_related(root)
                 print(f"{workspace.INDEX} is {'up to date' if fresh else 'out of date: run `python -m tools.design index`'}",
                       file=out)
                 print(f"{architecture.ARCHITECTURE_INDEX} is "
@@ -77,6 +77,10 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 return EXIT_OK if fresh and arch_fresh and not stale else EXIT_PROBLEMS
             for path in workspace.refresh_summaries(root):
                 print(f"refreshed the summary table in {path}", file=out)
+            for path in dependencies.refresh_related(root):
+                print(f"refreshed the Related features rows in {path}", file=out)
+            for p in workspace.not_refreshable(root):           # one line per file; nothing is repaired
+                print(f"design: warning: {p.path}: {p.message}; run `python -m tools.design check`", file=err)
             fresh = workspace.index_is_fresh(root)
             path = workspace.write_index(root)
             print(f"{path} is already up to date" if fresh else f"wrote {path}", file=out)
@@ -119,6 +123,8 @@ def _new_feature(args, root: Path, out: TextIO, ask: Callable[[str], str], inter
     if created.moved:
         print(f"moved {created.moved[0]} -> {created.moved[1]} (same feature ID; its relative links were "
               "adjusted)", file=out)
+    for path in created.refreshed:
+        print(f"refreshed the Related features rows in {path} (links to the moved feature)", file=out)
     print(f"created {created.path} ({created.feature_id})", file=out)
     print(f"updated {created.index}", file=out)
     print("These are uncommitted working-tree changes: nothing was staged, committed or pushed.", file=out)

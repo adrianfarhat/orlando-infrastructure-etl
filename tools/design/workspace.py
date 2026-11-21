@@ -166,7 +166,8 @@ def read_feature(root: Path, path: Path) -> tuple[Feature, list[Problem]]:
 
 
 def _check_depends_on(rel: str, value, present: bool) -> list[Problem]:
-    """Phase 1: the format only (existence, cycles and reverse links are Phase 2)."""
+    """The format only; existence, repeats, self-dependencies and cycles are checked on the
+    whole graph (dependencies.build)."""
     if not present:
         return []
     if not isinstance(value, list):
@@ -318,6 +319,7 @@ class Created:
     feature_id: str
     moved: tuple[str, str] | None # (old, new) when a standalone parent was converted
     index: str
+    refreshed: tuple[str, ...] = ()   # Related features blocks rewritten because of the move
 
 
 def new_feature(root: Path, name: str, parent: str | None = None, convert_parent: bool = False) -> Created:
@@ -380,9 +382,13 @@ def new_feature(root: Path, name: str, parent: str | None = None, convert_parent
             handle.write(text)
     except FileExistsError:
         raise DesignError(f"{_rel(root, target)} already exists; nothing was overwritten") from None
+    refreshed: tuple[str, ...] = ()
+    if moved is not None:                        # links to the moved parent change in the generated rows
+        from . import dependencies
+        refreshed = tuple(dependencies.refresh_related(root, concerning=parent))
     index = write_index(root)
     return Created(_rel(root, target), feature_id,
-                   (moved[0], moved[1]) if moved else None, index)
+                   (moved[0], moved[1]) if moved else None, index, refreshed)
 
 
 def _parent_feature(root: Path, fid: str, features: list[Feature], convert: bool):
@@ -509,6 +515,10 @@ def render_summary(meta: dict, rel_path: str) -> list[str]:
 
 
 def _summary_span(lines: list[str]) -> tuple[str, int, int]:
+    return marker_span(lines, "<!-- summary:start", SUMMARY_END)
+
+
+def marker_span(lines: list[str], start_prefix: str, end_line: str) -> tuple[str, int, int]:
     """("ok", start, end) marker line indices outside fenced code, or ("missing"|
     "several"|"unclosed", -1, -1)."""
     starts, ends, fence = [], [], None
@@ -518,9 +528,9 @@ def _summary_span(lines: list[str]) -> tuple[str, int, int]:
             fence = stripped[:3]
         elif fence is not None and stripped.startswith(fence):
             fence = None
-        elif fence is None and stripped.startswith("<!-- summary:start") and stripped.endswith("-->"):
+        elif fence is None and stripped.startswith(start_prefix) and stripped.endswith("-->"):
             starts.append(i)
-        elif fence is None and stripped == SUMMARY_END:
+        elif fence is None and stripped == end_line:
             ends.append(i)
     if not starts and not ends:
         return "missing", -1, -1
@@ -538,9 +548,26 @@ def apply_summary(text: str, meta: dict, rel_path: str) -> tuple[str, str]:
     status, start, end = _summary_span(lines)
     if status != "ok":
         return text, status
+    return replace_span(lines, start, end, render_summary(meta, rel_path)), "ok"
+
+
+def replace_span(lines: list[str], start: int, end: int, block: list[str]) -> str:
+    """The text with the lines strictly between two marker lines replaced; every other
+    line, including its own line ending, stays byte for byte."""
     newline = "\r\n" if lines[start].endswith("\r\n") else "\n"
-    block = [line + newline for line in render_summary(meta, rel_path)]
-    return "".join(lines[:start + 1] + block + lines[end:]), "ok"
+    return "".join(lines[:start + 1] + [line + newline for line in block] + lines[end:])
+
+
+def write_feature_text(path: Path, text: str) -> None:
+    """Replace a feature file atomically (used only for generated blocks)."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".feature.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(text.encode("utf-8"))
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 def _check_summary(rel: str, text: str, meta: dict) -> list[Problem]:
@@ -570,16 +597,35 @@ def refresh_summaries(root: Path) -> list[str]:
         new, status = apply_summary(text, f.meta, f.path)
         if status != "ok" or new.replace("\r\n", "\n") == text.replace("\r\n", "\n"):
             continue
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".feature.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(new.encode("utf-8"))
-            os.replace(tmp, path)
-        finally:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
+        write_feature_text(path, new)
         changed.append(f.path)
     return changed
+
+
+_SPAN_WORDS = {"missing": "missing", "several": "repeated", "unclosed": "not closed"}
+
+
+def not_refreshable(root: Path) -> list[Problem]:
+    """One problem per feature file whose generated blocks `index` leaves alone: its
+    metadata has a problem, or the markers of a block are missing, repeated or not
+    closed. Nothing is read beyond what the refresh itself reads, and nothing is written."""
+    from .dependencies import RELATED_END, RELATED_START          # imports this module
+    features, _ = discover(root)
+    out = []
+    for f in features:
+        if not f.meta_ok:
+            out.append(Problem(f.path, "its metadata has a problem, so its summary table and Related features "
+                                       "rows were not refreshed"))
+            continue
+        lines = (root / f.path).read_bytes().decode("utf-8").splitlines(keepends=True)
+        reasons = [f"the {name} markers are {_SPAN_WORDS[status]}"
+                   for name, status in (("summary table", _summary_span(lines)[0]),
+                                        ("Related features", marker_span(lines, RELATED_START, RELATED_END)[0]))
+                   if status != "ok"]
+        if reasons:
+            out.append(Problem(f.path, "; ".join(reasons) + ", so that block was not refreshed"
+                               if len(reasons) == 1 else "; ".join(reasons) + ", so those blocks were not refreshed"))
+    return out
 
 
 def stale_summaries(root: Path) -> list[Problem]:
@@ -599,19 +645,25 @@ def _link(path_from_index: str) -> str:
 
 
 def render_index(root: Path) -> str:
+    from . import dependencies                    # imports this module
     features, problems = discover(root)
+    graph = dependencies.build(features)
     by_folder = {posixpath.dirname(f.path): f for f in features if posixpath.basename(f.path) == "README.md"}
     rows = []
     for f in sorted((f for f in features if f.feature_id),
                     key=lambda f: (int(ID_RE.match(f.feature_id).group(1)), f.path)):
+        depends_on, used_by = dependencies.index_cells(f, graph, posixpath.dirname(INDEX))
         rows.append(f"| {f.feature_id} | {_cell(f.title or '')} | {f.status or ''} | "
-                    f"{_parent_label(f, by_folder)} | [{_cell(f.path[len(FEATURES) + 1:])}]"
+                    f"{_parent_label(f, by_folder)} | {depends_on} | {used_by} | [{_cell(f.path[len(FEATURES) + 1:])}]"
                     f"({_link(posixpath.relpath(f.path, posixpath.dirname(INDEX)))}) |")
     summary = (f"Features under `designs/features/`, from their metadata. "
                f"{len(rows)} feature{'s' if len(rows) != 1 else ''}.")
     lines = [INDEX_HEADER, "", "# Feature index", "", summary, ""]
     if rows:
-        lines += ["| Feature ID | Title | Design status | Parent | File |", "|---|---|---|---|---|", *rows]
+        lines += ["\"Depends on\" is each feature's `depends_on` list; \"Used by\" is derived from the other "
+                  "features' lists. All relationships are PROPOSED.", "",
+                  "| Feature ID | Title | Design status | Parent | Depends on | Used by | File |",
+                  "|---|---|---|---|---|---|---|", *rows]
     else:
         lines.append("No features yet. Create one with New Feature (see [designs/README.md](../README.md)).")
     unindexed = sorted({p.path for p in problems} | {f.path for f in features if not f.feature_id})
@@ -673,8 +725,12 @@ def index_is_fresh(root: Path) -> bool:
 # --------------------------------------------------------------------------- check
 
 def check(root: Path) -> list[Problem]:
+    from . import dependencies                    # imports this module
     features, problems = discover(root)
     problems += duplicate_ids(features)
+    graph = dependencies.build(features)
+    problems += list(graph.problems)
+    problems += dependencies.related_problems(root, features, graph)
     if not index_is_fresh(root):
         problems.append(Problem(INDEX, "out of date or missing: run `python -m tools.design index`"))
     from .architecture import ARCHITECTURE_INDEX, architecture_index_is_fresh   # imports this module

@@ -100,3 +100,20 @@ on GitHub Project #1.
    D1 (backslashes in the summary's branch cell) is fixed separately; D2 (summary links for
    `architecture_refs`) is resolved by those checks.
 7. **Deferred:** a `new diagram --from` command.
+
+## 2026-11-21: M2 implementation choices (for review)
+
+1. **Graph checks live with the graph.** `check` reports, from the `depends_on` lists, an
+   ID that no feature has, a feature that depends on itself, an ID listed twice in one
+   list, and each dependency cycle (once, at its lowest ID, naming every feature in the
+   group, with one example path).
+   Optional dependencies count towards cycles. M3 adds the link and reference checks
+   only and does not repeat these.
+2. **Generated rows.** "Depends on" rows keep the order of `depends_on`; "Used by" rows are
+   ordered by feature ID. A self-dependency or a repeated ID gets no extra row; an
+   unknown ID gets a row that says no feature has it; an ID shared by several files links
+   to each of them. Features with any metadata problem add no relationships and their
+   files are not rewritten. With no relationships, the template's `| — |` row is kept.
+3. **Moves.** `index` updates the links after any move or rename. New Feature's
+   `--convert-parent` refreshes only the Related features rows that mention the moved
+   feature, never unrelated files.

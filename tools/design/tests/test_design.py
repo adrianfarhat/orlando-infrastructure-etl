@@ -84,7 +84,7 @@ class StandaloneFeatures(unittest.TestCase):
             self.assertNotIn("{{", text)
             self.assertEqual(workspace.check(ws.root), [])                         # valid, index fresh
             index = ws.text(workspace.INDEX)
-            self.assertIn("| FD-0001 | Pipe road intersections | investigating | - | "
+            self.assertIn("| FD-0001 | Pipe road intersections | investigating | - | - | - | "     # M2: Depends on, Used by
                           "[pipe-road-intersections.md](../features/pipe-road-intersections.md) |", index)
 
     def test_every_relative_link_resolves_from_the_generated_location(self):
@@ -115,7 +115,7 @@ class StandaloneFeatures(unittest.TestCase):
             self.assertEqual(ws.meta("designs/features/renamed-beta.md")["feature_id"], "FD-0002")
             self.assertEqual(new_feature(ws.root, "Gamma").feature_id, "FD-0003")
             index = ws.text(workspace.INDEX)
-            self.assertIn("| FD-0002 | Beta | investigating | - | [renamed-beta.md]", index)
+            self.assertIn("| FD-0002 | Beta | investigating | - | - | - | [renamed-beta.md]", index)
 
     def test_names_with_spaces_unicode_and_a_root_path_with_spaces(self):
         with Workspace(folder_name="my repo with spaces") as ws:
