@@ -142,3 +142,17 @@ on GitHub Project #1.
 6. **Tests.** The test workspaces copy this repository's `docs/architecture/`, the guides
    in `designs/` and the committed architecture index, so generated links resolve as they
    do here; the M1 tests that build their own `docs/architecture/` opt out.
+
+## 2026-11-21: File names from Unicode dashes (approved by the user)
+
+1. **Dashes separate words.** Before a feature name becomes a file name, Unicode dashes
+   (Unicode category Pd: hyphen, non-breaking hyphen, figure, en and em dash, horizontal
+   bar, and so on) and the minus sign U+2212 become an ordinary hyphen, so
+   "Pipe–Road Intersection Analysis" gives `pipe-road-intersection-analysis.md`, not
+   `piperoad-intersection-analysis.md`. Everything else is unchanged: ASCII names, accents,
+   characters with no ASCII equivalent, reserved names, and the title, which keeps the
+   name as typed.
+2. **No renames.** File names are made only when New Feature creates a file; existing
+   files keep their names. A name that now gives the same file name as an existing
+   feature is refused, as before ("already exists; nothing was overwritten").
+3. **Out of scope:** other Unicode punctuation (for example `’` or `·`) is still dropped.

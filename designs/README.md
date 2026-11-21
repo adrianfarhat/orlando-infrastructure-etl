@@ -94,7 +94,9 @@ designs/features/
   Prefer `design_status: deferred` to deleting a feature, so its ID is never reused.
 - **File names** are made from the feature name: letters are lower-cased, accents are
   removed (`Résumé` → `resume`) and everything that is not an ASCII letter or digit
-  becomes a hyphen. Characters with no ASCII equivalent (for example 日本語) are dropped
+  becomes a hyphen, including Unicode dashes and the minus sign
+  (`Pipe–Road Intersection Analysis` → `pipe-road-intersection-analysis.md`). Existing
+  files are never renamed. Other characters with no ASCII equivalent (for example 日本語) are dropped
   from the file name, so a name must contain at least one ASCII letter or digit. The
   title in the specification keeps the name as typed, except that leading and trailing
   spaces are removed and repeated spaces become one.

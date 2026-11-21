@@ -284,8 +284,15 @@ def validate_name(name: str) -> tuple[str, str]:
     return title, slugify(title)
 
 
+def _dashes_to_hyphens(text: str) -> str:
+    """Unicode dashes (category Pd: hyphen, en and em dash, ...) and the minus sign U+2212
+    become '-', so they separate words in a file name instead of being dropped."""
+    return "".join("-" if unicodedata.category(ch) == "Pd" or ch == "\u2212" else ch for ch in text)
+
+
 def slugify(text: str) -> str:
-    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
+    ascii_text = (unicodedata.normalize("NFKD", _dashes_to_hyphens(text))
+                  .encode("ascii", "ignore").decode("ascii").lower())
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_text).strip("-")[:MAX_SLUG].strip("-")
     if not slug:
         raise DesignError(f"cannot make a file name from {text!r}: use letters or digits")
