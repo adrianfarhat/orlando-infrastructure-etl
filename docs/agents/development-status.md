@@ -212,7 +212,9 @@ use the same Wave field as the rest of the board (waves 1–4); each subgraph be
 is one wave. Dotted rectangles are prerequisites from the wave diagrams above.
 T-59 appears in the Wave 1 diagram above and is a prerequisite of T-83 and T-85
 here. T-94 (Feature Design Workspace, added 2026-11-20) builds on T-83 and is shown
-in its Wave 1 subgraph. Card links: [Task index](task-board.md#task-index).
+in its Wave 1 subgraph; its follow-ups T-95 (formatted feature document editing)
+and T-96 (diagram integration, which also depends on T-95), added 2026-11-21, are
+in Wave 3. Card links: [Task index](task-board.md#task-index).
 
 ```mermaid
 flowchart LR
@@ -239,6 +241,8 @@ flowchart LR
     T87["T-87 schema doc<br/>generator"]
     T88["T-88 consolidate<br/>schema docs"]
     T92["T-92 dataset<br/>validity"]
+    T95["T-95 formatted feature<br/>document editing"]
+    T96["T-96 diagram<br/>integration"]
   end
   subgraph DS4["Wave 4"]
     T93["T-93 framework<br/>reuse"]
@@ -263,6 +267,9 @@ flowchart LR
   T83 --> T93
   T85 --> T93
   T83 --> T94
+  T94 --> T95
+  T94 --> T96
+  T95 --> T96
 
   classDef decision fill:#ffffff,stroke:#374151,color:#111827
   classDef otherwave stroke-dasharray:4 3

@@ -271,8 +271,8 @@ Each block's `%% diagram-type:` marker follows its Type column: Architecture →
 | agents/development-status.md | ~94 | Wave 2 | Dependency | N | As Wave 1; T-59 moved in (F-18, 2026-11-17), then out to Wave 1 (2026-11-18) |
 | agents/development-status.md | ~131 | Wave 3 | Dependency | N | As Wave 1; T-59 removed (F-18); T-84 → T-04 edge added (F-21) |
 | agents/development-status.md | ~180 | Wave 4 | Dependency | N | As Wave 1 |
-| agents/development-status.md | ~216 | Documentation and change-impact framework (T-80 to T-93) | Dependency | N | Redrawn from the Project cards on 2026-11-18: T-80 and T-59 → T-83 → T-81 → T-82; T-85 after T-83, T-81, T-82 and T-59 (T-03 removed); T-91 to T-93 added in Waves 2–4; prerequisites T-05, T-52, T-59 and D-8; T-94 added in Wave 1 (T-83 → T-94, 2026-11-20) |
-| agents/development-status.md | ~294 | Team workflow | Process | N | Updated: Project #1 sets status, task-board.md records evidence; `TB` node already renamed `BOARD`; its label reads "findings + Evidence log" since 2026-11-18 |
+| agents/development-status.md | ~219 | Documentation and change-impact framework (T-80 to T-93) | Dependency | N | Redrawn from the Project cards on 2026-11-18: T-80 and T-59 → T-83 → T-81 → T-82; T-85 after T-83, T-81, T-82 and T-59 (T-03 removed); T-91 to T-93 added in Waves 2–4; prerequisites T-05, T-52, T-59 and D-8; T-94 added in Wave 1 (T-83 → T-94, 2026-11-20); T-95 and T-96 added in Wave 3 (T-94 → T-95, T-94 → T-96, T-95 → T-96, 2026-11-21) |
+| agents/development-status.md | ~304 | Team workflow | Process | N | Updated: Project #1 sets status, task-board.md records evidence; `TB` node already renamed `BOARD`; its label reads "findings + Evidence log" since 2026-11-18 |
 
 Nothing was reclassified as `verified`. Candidates are listed as questions in the
 T-80 review, not applied.
