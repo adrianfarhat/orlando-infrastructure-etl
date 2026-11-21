@@ -24,7 +24,7 @@ API routes and shows it on a MapLibre map with an operations dashboard.
 | `web/src/app/operations/map/` | Operations map page and its styles |
 | `docs/` | Architecture, contracts, task board |
 | `.claude/agents/` | Project subagent definitions |
-| `designs/` | Feature Design Workspace (T-94): proposed feature specifications, templates, generated index |
+| `designs/` | Feature Design Workspace (T-94): proposed feature specifications, templates, generated feature and architecture indexes |
 | `tools/design/` | New Feature, index and check commands for `designs/` |
 
 ## How work is coordinated

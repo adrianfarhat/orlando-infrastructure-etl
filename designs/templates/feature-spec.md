@@ -100,7 +100,7 @@ flowchart LR
 <details>
 <summary><b>Architecture references</b></summary>
 
-Keep the documents and headings this feature builds on (link to a heading with `#anchor`), delete the rest, and list their repository paths in `architecture_refs` above.
+Keep the documents and headings this feature builds on (link to a heading with `#anchor`), delete the rest, and list their repository paths in `architecture_refs` above. Every heading and every diagram, with its diagram ID, is listed in the [architecture index]({{designs}}/index/architecture-index.md).
 
 - [System architecture]({{architecture}}/system-architecture.md)
 - [Data contracts]({{architecture}}/data-contracts.md)

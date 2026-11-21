@@ -42,10 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
                               "empty or omitted for a standalone feature")
     feature.add_argument("--convert-parent", action="store_true",
                          help="allow turning a standalone parent feature x.md into x/README.md")
-    index = sub.add_parser("index", help="refresh each feature's generated summary table, then regenerate "
-                                         "designs/index/feature-index.md and designs/index/architecture-index.md")
+    index = sub.add_parser("index", help="refresh each feature's generated summary table and Related features rows, "
+                                         "then regenerate designs/index/feature-index.md and "
+                                         "designs/index/architecture-index.md")
     index.add_argument("--check", action="store_true",
-                       help="only report whether the indexes and the summary tables are up to date (writes nothing)")
+                       help="only report whether the indexes, summary tables and Related features rows are up to "
+                            "date (writes nothing)")
     sub.add_parser("check", help="check every feature specification and both indexes")
     for p in (feature, index, sub.choices["check"]):
         p.add_argument("--root", type=Path, help="repository root (default: found from the current folder)")

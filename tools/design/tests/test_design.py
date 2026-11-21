@@ -106,7 +106,7 @@ class StandaloneFeatures(unittest.TestCase):
             for created in (new_feature(ws.root, "Links"), new_feature(ws.root, "Deep links", parent="a/b")):
                 text = ws.text(created.path)
                 targets = [m.group(1) for m in link.finditer(text)] + re.findall(r"from (\S+/diagram\.md)", text)
-                self.assertGreaterEqual(len(targets), 9, created.path)        # 8 links + the diagram template
+                self.assertGreaterEqual(len(targets), 10, created.path)       # 9 links + the diagram template
                 here = (REPO_ROOT / created.path).parent                    # where the file would live in this repo
                 for target in targets:
                     with self.subTest(file=created.path, target=target):
