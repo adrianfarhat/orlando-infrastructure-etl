@@ -236,8 +236,8 @@ The ID is either a diagram ID from the [architecture index](index/architecture-i
 (made from [templates/diagram.md](templates/diagram.md), with exactly one Mermaid block). Then
 run `python -m tools.design index`: it fills the lines between the markers with a caption
 (✅ Current architecture or 🔷 Proposed, the title linked to the source, the ID, and a link to
-the legend for architecture diagrams) and a copy of the source Mermaid, which renders in VS
-Code's preview and on GitHub. Blank lines of the source are written as `%%` (a Mermaid
+the legend for architecture diagrams) and a copy of the source Mermaid, which renders on GitHub
+and in VS Code's preview with the Mermaid preview extension. Blank lines of the source are written as `%%` (a Mermaid
 comment), so the block stays one piece. The feature index lists each feature's diagrams in
 its "Diagrams" column.
 
@@ -247,10 +247,11 @@ its "Diagrams" column.
 - **Never edit between the two markers.** `check` compares each block with what its source
   produces now and fails on stale or hand-edited copies, unknown or renamed IDs (with a
   suggestion), a missing, nested or malformed marker, and a Mermaid fence that is not closed
-  before the end marker. `index` never rewrites a file whose diagram blocks have such a
+  before the end marker. `index` never rewrites the diagram blocks of a file that has such a
   problem; it says so instead.
-- Marker examples inside code blocks (like the one above) are ignored. Files without markers
-  are never changed.
+- Put each marker alone on its own line, below `## 1. Objective`. `check` reports markers in
+  list items, quotes or sentences, and blocks above the first section. Marker examples inside
+  code blocks (like the one above) are ignored. Files without markers are never changed.
 
 **The whole workflow:**
 

@@ -30,9 +30,12 @@ source can close it early.
 Parsing rules (all outside the YAML front matter):
 - Markers are recognised only on a line of their own, outside fenced code (examples in code
   blocks are ignored) and outside the summary and Related features blocks.
-- Inside a diagram block, its own Mermaid fence is tracked: marker-like lines inside that
-  fence are Mermaid content, not markers; an end marker reached while the fence is still
-  open is reported (the fence must be closed before the end marker).
+- Inside a diagram block, its own Mermaid fence is tracked: a start-marker-like line inside
+  that fence is Mermaid content; an end marker reached while the fence is still open is
+  reported (the fence must be closed before the end marker). A source whose Mermaid contains
+  any `<!-- diagram:` line is refused (reported), so a copy can never contain one.
+- Blocks belong in the six sections: a start marker before `## 1. Objective` is reported.
+  A marker that is not alone on its line (in a list item, a quote or a sentence) is reported.
 - A start marker inside a block (nesting), an end marker without a start, a start marker
   without an end, an empty or unknown ID, and any `<!-- diagram:` line that is not exactly a
   start or end marker are problems. A file with any such problem is never rewritten.
@@ -57,6 +60,7 @@ FENCE_OPEN = re.compile(r"\s*(`{3,}|~{3,})(.*)\Z")
 GENERATED_STARTS = ("<!-- summary:start", "<!-- related-features:start")
 GENERATED_ENDS = ("<!-- summary:end -->", "<!-- related-features:end -->")
 LEGEND = "docs/architecture/conventions.md#1-implementation-status-legend"
+FIRST_SECTION = "## 1. Objective"
 NOTE = "generated copy; edit the source, not this block"
 
 
@@ -93,7 +97,9 @@ def sources(root: Path) -> dict[str, Source]:
         out[d.diagram_id] = Source(d.diagram_id, "current", title, d.document,
                                    d.heading.anchor if d.heading is not None else "", d.source,
                                    d.diagram_type == "architecture", d.closed)
-    for source in _proposed(root):
+    for did, source in list(out.items()):
+        out[did] = _refuse_markers(source)
+    for source in map(_refuse_markers, _proposed(root)):
         if source.diagram_id in out:
             first = out[source.diagram_id]
             reason = (f"is used by more than one diagram ({first.path} and {source.path})"
@@ -103,6 +109,16 @@ def sources(root: Path) -> dict[str, Source]:
         else:
             out[source.diagram_id] = source
     return out
+
+
+def _refuse_markers(source: Source) -> Source:
+    """A source whose Mermaid contains a line that looks like a diagram marker could not be
+    told apart from the block's own end marker, so it is never embedded (reported instead)."""
+    if source.problem or not any(LIKE_MARKER.search(line) for line in source.lines):
+        return source
+    return Source(source.diagram_id, source.kind, source.title, source.path, source.anchor, (), False,
+                  problem=f"cannot be embedded: its Mermaid source in {source.path} contains a line with "
+                          "'<!-- diagram:', which would be read as a marker; change that line in the source")
 
 
 def _proposed(root: Path) -> list[Source]:
@@ -124,6 +140,11 @@ def _proposed(root: Path) -> list[Source]:
             continue                                     # no ID (for example a copy of the template): not attachable
         did = meta["diagram_id"].strip()
         doc = markdown.parse(body)
+        if re.search(r"\s", did):
+            out.append(Source(did, "proposed", did, rel, "", (), False,
+                              problem=f"in {rel} contains whitespace, so no diagram marker can name it; "
+                                      "use an ID like FD-0001-D1"))
+            continue
         title = meta.get("title") if isinstance(meta.get("title"), str) and meta["title"].strip() else None
         title = title or (doc.headings[0].text if doc.headings else posixpath.basename(rel))
         if len(doc.diagrams) != 1:
@@ -165,6 +186,7 @@ def scan(text: str) -> tuple[list[Block], list[tuple[int, str]]]:
     generated = None              # inside a summary or Related features block
     block = None                  # (start index, id) of the open diagram block
     inner = None                  # the open Mermaid fence inside the diagram block
+    in_sections = False           # past '## 1. Objective' (blocks belong in the six sections)
     for i in range(_body_start(lines), len(lines)):
         raw = lines[i]
         s = raw.strip()
@@ -174,7 +196,8 @@ def scan(text: str) -> tuple[list[Block], list[tuple[int, str]]]:
                     inner = None
                 elif END_RE.match(s):
                     problems.append((i + 1, f"the Mermaid fence of the diagram block for {block[1] or '(no ID)'} "
-                                            f"(line {block[0] + 1}) is not closed before <!-- diagram:end -->"))
+                                            f"(line {block[0] + 1}) is not closed before <!-- diagram:end -->: delete "
+                                            "the lines between the two markers and run `python -m tools.design index`"))
                     blocks.append(Block(block[0], i, block[1]))
                     block, inner = None, None
                 continue
@@ -210,16 +233,24 @@ def scan(text: str) -> tuple[list[Block], list[tuple[int, str]]]:
                 generated = end
         if generated is not None:
             continue
+        if s == FIRST_SECTION:
+            in_sections = True
         m = START.match(s)
         if m:
             if not m.group("id"):
                 problems.append((i + 1, "diagram:start has no diagram ID: use <!-- diagram:start <ID> --> with an "
                                         "ID from designs/index/architecture-index.md#diagrams"))
+            if not in_sections:
+                problems.append((i + 1, f"diagram blocks belong in the six sections: move this block below "
+                                        f"'{FIRST_SECTION}'"))
             block = (i, m.group("id") or "")
         elif END_RE.match(s):
             problems.append((i + 1, f"{END} without a matching <!-- diagram:start <ID> -->"))
         elif LIKE_MARKER.match(s):
             problems.append((i + 1, f"malformed diagram marker {s!r}: use <!-- diagram:start <ID> --> and {END}"))
+        elif LIKE_MARKER.search(re.sub(r"(`+).+?\1", "", s)):
+            problems.append((i + 1, "a diagram marker must stand alone on its own line (not in a list item, quote "
+                                    "or sentence), with a blank line before and after the block"))
     if block is not None:
         problems.append((block[0] + 1, f"diagram:start {block[1] or '(no ID)'} has no matching {END}"))
     return blocks, problems
@@ -255,23 +286,41 @@ def _suggest(diagram_id: str, known) -> str:
 
 def file_problems(rel: str, text: str, known: dict[str, Source]) -> list[Problem]:
     """Every diagram problem of one feature file: structure, unknown IDs, stale or edited blocks."""
+    return [p for p, _ in _classified(rel, text, known)]
+
+
+def _classified(rel: str, text: str, known: dict[str, Source]) -> list[tuple[Problem, bool]]:
+    """(problem, regenerable): regenerable problems (a stale, empty or hand-edited block in a
+    well-formed file) are what `index` fixes; any other problem stops `index` for the file."""
     blocks, structural = scan(text)
-    out = [Problem(rel, f"line {n}: {msg}") for n, msg in structural]
+    return ([(Problem(rel, f"line {n}: {msg}"), False) for n, msg in structural]
+            + [(p, False) for p in _content_problems(rel, text, known, blocks, unusable=True)]
+            + [(p, True) for p in _content_problems(rel, text, known, blocks)])
+
+
+def _content_problems(rel: str, text: str, known: dict[str, Source], blocks, unusable: bool = False) -> list[Problem]:
+    """unusable=True: IDs that cannot be resolved; False: blocks that differ from their source."""
+    out = []
     lines = text.replace("\r\n", "\n").split("\n")
     for b in blocks:
         if not b.diagram_id:
             continue
         source = known.get(b.diagram_id)
         if source is None:
-            out.append(Problem(rel, f"line {b.start + 1}: unknown diagram ID {b.diagram_id!r}"
-                                    f"{_suggest(b.diagram_id, known)}"))
+            if unusable:
+                out.append(Problem(rel, f"line {b.start + 1}: unknown diagram ID {b.diagram_id!r}"
+                                        f"{_suggest(b.diagram_id, known)}"))
             continue
         if source.problem:
-            out.append(Problem(rel, f"line {b.start + 1}: diagram ID {b.diagram_id!r} {source.problem}"))
+            if unusable:
+                out.append(Problem(rel, f"line {b.start + 1}: diagram ID {b.diagram_id!r} {source.problem}"))
             continue
         if not source.closed:
-            out.append(Problem(rel, f"line {b.start + 1}: the source Mermaid block of {b.diagram_id} in "
-                                    f"{source.path} has no closing fence; fix the source first"))
+            if unusable:
+                out.append(Problem(rel, f"line {b.start + 1}: the source Mermaid block of {b.diagram_id} in "
+                                        f"{source.path} has no closing fence; fix the source first"))
+            continue
+        if unusable:
             continue
         current, expected = lines[b.start + 1:b.end], render(source, rel)
         if current == expected:
@@ -299,27 +348,46 @@ def problems(root: Path, features: list[Feature] | None = None) -> list[Problem]
         except (OSError, UnicodeDecodeError):
             continue
         out += file_problems(f.path, text, known)
+    for source in known.values():                 # a proposed ID no marker could ever name
+        if source.kind == "proposed" and "contains whitespace" in source.problem:
+            out.append(Problem(source.path, f"diagram_id {source.diagram_id!r} contains whitespace, so no "
+                                            "diagram marker can name it; use an ID like FD-0001-D1"))
     return out
 
 
 def stale(root: Path) -> list[Problem]:
     """Only the blocks `index` would rewrite (for `index --check`)."""
-    return [p for p in problems(root) if "run `python -m tools.design index`" in p.message]
+    features, _ = discover(root)
+    known = sources(root)
+    out = []
+    for f in features:
+        try:
+            text = (root / f.path).read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        out += [p for p, regenerable in _classified(f.path, text, known) if regenerable]
+    return out
 
 
 def blocking(text: str, rel: str, known: dict[str, Source]) -> list[str]:
     """Why `index` must leave this file's diagram blocks alone (empty: it may refresh them)."""
-    return [p.message for p in file_problems(rel, text, known)
-            if "run `python -m tools.design index`" not in p.message]
+    return [p.message for p, regenerable in _classified(rel, text, known) if not regenerable]
 
 
 def apply(text: str, rel: str, known: dict[str, Source]) -> str:
     """The file text with every diagram block regenerated; only lines between markers change."""
     blocks, _ = scan(text)
-    keep = text.splitlines(keepends=True)
+    keep = split_keep(text)
     for b in reversed(blocks):
-        keep = replace_span(keep, b.start, b.end, render(known[b.diagram_id], rel)).splitlines(keepends=True)
+        keep = split_keep(replace_span(keep, b.start, b.end, render(known[b.diagram_id], rel)))
     return "".join(keep)
+
+
+def split_keep(text: str) -> list[str]:
+    """Lines with their endings, split on '\\n' only, exactly as `scan` counts them (unlike
+    str.splitlines, which also breaks on U+2028, form feed, a lone CR and others)."""
+    parts = re.split(r"(?<=\n)", text)
+    return parts[:-1] if parts and parts[-1] == "" else parts
 
 
 def refresh(root: Path) -> list[tuple[str, int]]:

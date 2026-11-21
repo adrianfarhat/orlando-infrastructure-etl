@@ -77,6 +77,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 for p in stale:
                     print(f"{p.path}: {p.message}", file=out)
                 return EXIT_OK if fresh and arch_fresh and not stale else EXIT_PROBLEMS
+            for p in diagrams.problems(root):                    # warn before those blocks are regenerated
+                if "inside a generated summary or Related features block" in p.message:
+                    print(f"design: warning: {p.path}: {p.message}", file=err)
             for path in workspace.refresh_summaries(root):
                 print(f"refreshed the summary table in {path}", file=out)
             for path in dependencies.refresh_related(root):

@@ -239,17 +239,76 @@ class Validation(unittest.TestCase):
         self.write(original.replace("<!-- summary:end -->", START.format(ETL) + "\n<!-- summary:end -->"))
         self.assertTrue(any("inside a generated summary" in p for p in problems(self.ws)))
 
-    def test_mermaid_content_is_not_read_as_markers(self):
+    def test_a_source_with_marker_like_lines_is_refused_not_embedded(self):
+        """Such a copy could not be told apart from the block's own end marker (QA R1)."""
         with Workspace(architecture=False) as ws:
             doc = ws.root / "docs/architecture/sample.md"
             doc.parent.mkdir(parents=True)
-            doc.write_text("# S\n\n## P\n\n```mermaid\nflowchart LR\n  %% <!-- diagram:start other -->\n"
-                           "  A --> B\n```\n", encoding="utf-8")
+            for line in ("  %% <!-- diagram:start other -->", "<!-- diagram:end -->"):
+                with self.subTest(line=line):
+                    doc.write_text(f"# S\n\n## P\n\n```mermaid\nflowchart LR\n{line}\n  A --> B\n```\n", encoding="utf-8")
+                    architecture.write_architecture_index(ws.root)
+                    f = workspace.discover(ws.root)[0][0] if workspace.discover(ws.root)[0] else new_feature(ws.root, "A")
+                    path = ws.root / f.path
+                    if "sample/p" not in path.read_text(encoding="utf-8"):
+                        put(ws, f.path, "## 1. Objective\n", block("sample/p"))
+                    before = path.read_bytes()
+                    cmd(ws.root, "index")
+                    self.assertEqual(path.read_bytes(), before)                            # never embedded
+                    self.assertIn("cannot be embedded: its Mermaid source in docs/architecture/sample.md contains",
+                                  "\n".join(problems(ws)))
+
+    def test_unusual_line_breaks_in_prose_never_shift_the_rewrite(self):
+        """QA D1: U+2028, U+2029, form feed, vertical tab, NEL and a lone CR in prose."""
+        for ch in (" ", " ", "\x0c", "\x0b", "\x85", "\r"):
+            with self.subTest(char=hex(ord(ch))), Workspace() as ws:
+                f = new_feature(ws.root, "A")
+                put(ws, f.path, "## 2. Data contract\n", block(ETL))
+                path = ws.root / f.path
+                path.write_bytes(path.read_bytes().replace(b"- **Problem:**", ("- **Prob" + ch + "lem:**").encode("utf-8")))
+                before = path.read_bytes().decode("utf-8")
+                cmd(ws.root, "index")                                                     # empty block filled
+                after = path.read_bytes().decode("utf-8")
+                self.assertEqual(outside(after), outside(before))
+                self.assertEqual(problems(ws), [])
+                path.write_bytes(after.replace("S1 --> S2", "S1 --> S2x").encode("utf-8"))   # stale block
+                cmd(ws.root, "index")
+                self.assertEqual(path.read_bytes().decode("utf-8"), after)              # restored exactly
+                self.assertEqual(problems(ws), [])
+
+    def test_a_long_fence_copy_does_not_confuse_the_section_checks(self):
+        """QA R1 (related): a ```` fence holding a ``` line must not close early anywhere."""
+        with Workspace(architecture=False) as ws:
+            doc = ws.root / "docs/architecture/sample.md"
+            doc.parent.mkdir(parents=True)
+            doc.write_text("# S\n\n## P\n\n````mermaid\nflowchart LR\n```\n  A --> B\n````\n", encoding="utf-8")
             architecture.write_architecture_index(ws.root)
             f = new_feature(ws.root, "A")
             put(ws, f.path, "## 1. Objective\n", block("sample/p"))
+            put(ws, f.path, "## 4. Dependencies\n", block("sample/p"))
             cmd(ws.root, "index")
-            self.assertEqual([p for p in problems(ws) if "diagram" in p], [])
+            relevant = [p for p in problems(ws) if "section" in p or "diagram" in p or "Related" in p or "summary" in p]
+            self.assertEqual(relevant, [])                                                 # no false section errors
+            self.assertIn("````mermaid", ws.text(f.path))
+
+    def test_markers_out_of_place(self):
+        """QA N1/N2: a marker in a list item or a sentence, and a block above section 1, are reported."""
+        original = self.path.read_text(encoding="utf-8")
+        self.write(original.replace("## 3. Logic\n", f"## 3. Logic\n\n- {START.format(ETL)}\n"))
+        self.expect("must stand alone on its own line")
+        self.write(original.replace("## 3. Logic\n", f"## 3. Logic\n\nSee {START.format(ETL)} here.\n"))
+        self.expect("must stand alone on its own line")
+        self.write(original.replace("## 3. Logic\n", "## 3. Logic\n\nUse `<!-- diagram:start ID -->` lines.\n"))
+        self.assertEqual(problems(self.ws), [])                                            # inline code: an example
+        self.write(original.replace("## 1. Objective\n", block(ETL) + "\n## 1. Objective\n"))
+        self.expect("diagram blocks belong in the six sections")
+
+    def test_index_warns_before_erasing_markers_inside_generated_blocks(self):
+        """QA R2: the summary refresh would erase them; index says so."""
+        original = self.path.read_text(encoding="utf-8")
+        self.write(original.replace("<!-- summary:end -->", f"{START.format(ETL)}\n{END}\n<!-- summary:end -->"))
+        code, _, err = cmd(self.ws.root, "index")
+        self.assertIn("inside a generated summary or Related features block", err)
 
 
 class ProposedDiagrams(unittest.TestCase):
@@ -315,6 +374,16 @@ class ProposedDiagrams(unittest.TestCase):
             found = "\n".join(problems(ws))
             self.assertIn("diagram ID 'FD-0001-D1' is used by more than one diagram", found)
             self.assertIn(f"diagram ID '{ETL}' is used by more than one diagram", found)
+
+    def test_an_id_with_whitespace_is_reported(self):
+        """QA N7: no marker can name it, so the file says so."""
+        with Workspace() as ws:
+            f = new_feature(ws.root, "A")
+            self.proposed(ws, "designs/features/diagrams/spaced.md", "FD 0001 D1")
+            put(ws, f.path, "## 3. Logic\n", block("FD"))
+            found = "\n".join(problems(ws))
+            self.assertIn("unknown diagram ID 'FD'", found)
+            self.assertIn("diagram_id 'FD 0001 D1' contains whitespace, so no diagram marker can name it", found)
 
     def test_the_existing_proposed_diagram_workflow_still_passes(self):
         with Workspace() as ws:

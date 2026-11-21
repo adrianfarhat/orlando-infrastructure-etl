@@ -222,19 +222,30 @@ def table_cells(row: str) -> list[str]:
     return [cell.strip() for cell in re.split(r"(?<!\\)\|", s)]
 
 
+_FENCE_LINE = re.compile(r"\s*(`{3,}|~{3,})(.*)")
+
+
+def _fence_step(line: str, fence):
+    """(new fence state, is this line a fence line). A fence opens with three or more
+    backticks or tildes and closes only with the same character, at least as long and with
+    nothing after it (CommonMark), so a ```` fence is not closed by a ``` line inside it."""
+    m = _FENCE_LINE.match(line.rstrip("\r\n"))
+    if fence is None:
+        if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+            return (m.group(1)[0], len(m.group(1))), True
+        return None, False
+    if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] and not m.group(2).strip():
+        return None, True
+    return fence, False
+
+
 def _outside_code(body: str) -> list[str]:
     """Body lines with fenced code blocks blanked (so headings inside code don't count)."""
     out, fence = [], None
     for line in body.split("\n"):
-        stripped = line.lstrip()
-        if fence is None and (stripped.startswith("```") or stripped.startswith("~~~")):
-            fence = stripped[:3]
-            out.append("")
-        elif fence is not None and stripped.startswith(fence):
-            fence = None
-            out.append("")
-        else:
-            out.append("" if fence else line)
+        inside = fence is not None
+        fence, is_fence = _fence_step(line, fence)
+        out.append("" if inside or is_fence else line)
     return out
 
 
@@ -547,13 +558,13 @@ def marker_span(lines: list[str], start_prefix: str, end_line: str) -> tuple[str
     starts, ends, fence = [], [], None
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if fence is None and (stripped.startswith("```") or stripped.startswith("~~~")):
-            fence = stripped[:3]
-        elif fence is not None and stripped.startswith(fence):
-            fence = None
-        elif fence is None and stripped.startswith(start_prefix) and stripped.endswith("-->"):
+        inside = fence is not None
+        fence, is_fence = _fence_step(line, fence)
+        if inside or is_fence:
+            continue
+        if stripped.startswith(start_prefix) and stripped.endswith("-->"):
             starts.append(i)
-        elif fence is None and stripped == end_line:
+        elif stripped == end_line:
             ends.append(i)
     if not starts and not ends:
         return "missing", -1, -1

@@ -192,7 +192,7 @@ on GitHub Project #1.
    between the markers; `check` compares the whole block with what the source produces now
    (not a fingerprint). Files with a structural problem or an unknown ID are never rewritten.
 3. **One contiguous block.** The copy writes each blank line of the source as `%%`, a Mermaid
-   comment line, so the block has no blank line: 9 of the 14 architecture diagrams contain
+   comment line, so the block has no blank line: 7 of the 14 architecture diagrams contain
    blank lines, and Mark Sharp keeps a block that starts with an HTML comment verbatim only
    up to the first blank line (observed on a real buffer). The diagram renders the same.
 4. **Fence.** The copy's fence is at least three backticks and longer than any backtick run
