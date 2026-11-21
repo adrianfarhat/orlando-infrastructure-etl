@@ -6,7 +6,9 @@ __pycache__/
 .env.*
 !.env.example
 .pytest_cache/
-.vscode/
+.vscode/*
+# Shared VS Code tasks (T-94: the "New Feature" task); other editor settings stay local.
+!.vscode/tasks.json
 data/raw/
 data/processed/
 # Local reports from the change-impact tool (tools/impact, T-83); never committed.

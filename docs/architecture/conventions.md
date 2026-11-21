@@ -130,6 +130,7 @@ Which source wins when two disagree.
 | UI behaviour | `web/src/components/**` | |
 | Task status, scope, priority, dependencies, acceptance criteria | [GitHub Project #1](https://github.com/users/adrianfarhat/projects/1) (private) | Never copied into Markdown; link to the card |
 | Findings, decision outcomes, verification evidence | [docs/agents/task-board.md](../agents/task-board.md) ([Evidence log](../agents/task-board.md#evidence-log)) | Versioned in git; evidence is required before a card moves to Done |
+| Proposed feature designs | [designs/](../../designs/README.md) | Proposals only; they never define current state. The built system is described here in `docs/architecture/` |
 | Generated docs | Their generator | Never hand-edited. None exist yet (planned: `docs/architecture/generated/`) |
 
 ### Where task information lives
@@ -140,8 +141,9 @@ Which source wins when two disagree.
 | [docs/agents/task-board.md](../agents/task-board.md) | Task index (links only), findings, decision outcomes, risks and the Evidence log |
 | [docs/agents/development-status.md](../agents/development-status.md) | Dependency and wave diagrams derived from the Project (a navigation view) |
 | `docs/architecture/*.md` | The system: architecture, data contracts, ETL, schema and these conventions |
+| [designs/](../../designs/README.md) | Proposed feature designs and each design's `design_status` (the state of the design, not of the task) |
 
-Do not copy live task fields (status, scope, priority, wave, dependencies, acceptance criteria) into Markdown, except the derived dependency and wave diagrams in development-status.md, which follow the cards. Link to the Project card instead. Evidence and architectural findings stay in Markdown because they must be versioned in git.
+Do not copy live task fields (status, scope, priority, wave, dependencies, acceptance criteria) into Markdown, except the derived dependency and wave diagrams in development-status.md, which follow the cards, and `design_status` in `designs/`, which describes a design and is not a task field. Link to the Project card instead. Evidence and architectural findings stay in Markdown because they must be versioned in git.
 
 Priority scale (Project field): P0 safety or rule violation · P1 correctness or reliability · P2 quality · P3 later or optional.
 
@@ -265,7 +267,7 @@ Each block's `%% diagram-type:` marker follows its Type column: Architecture →
 | agents/development-status.md | ~94 | Wave 2 | Dependency | N | As Wave 1; T-59 moved in (F-18, 2026-11-17), then out to Wave 1 (2026-11-18) |
 | agents/development-status.md | ~131 | Wave 3 | Dependency | N | As Wave 1; T-59 removed (F-18); T-84 → T-04 edge added (F-21) |
 | agents/development-status.md | ~180 | Wave 4 | Dependency | N | As Wave 1 |
-| agents/development-status.md | ~216 | Documentation and change-impact framework (T-80 to T-93) | Dependency | N | Redrawn from the Project cards on 2026-11-18: T-80 and T-59 → T-83 → T-81 → T-82; T-85 after T-83, T-81, T-82 and T-59 (T-03 removed); T-91 to T-93 added in Waves 2–4; prerequisites T-05, T-52, T-59 and D-8 |
+| agents/development-status.md | ~216 | Documentation and change-impact framework (T-80 to T-93) | Dependency | N | Redrawn from the Project cards on 2026-11-18: T-80 and T-59 → T-83 → T-81 → T-82; T-85 after T-83, T-81, T-82 and T-59 (T-03 removed); T-91 to T-93 added in Waves 2–4; prerequisites T-05, T-52, T-59 and D-8; T-94 added in Wave 1 (T-83 → T-94, 2026-11-20) |
 | agents/development-status.md | ~294 | Team workflow | Process | N | Updated: Project #1 sets status, task-board.md records evidence; `TB` node already renamed `BOARD`; its label reads "findings + Evidence log" since 2026-11-18 |
 
 Nothing was reclassified as `verified`. Candidates are listed as questions in the

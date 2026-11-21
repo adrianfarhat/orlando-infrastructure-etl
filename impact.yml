@@ -12,8 +12,8 @@ ignore:
 # Order matters: data-contracts.md is a "contract" before it is a "doc", and
 # database/test_connection.py is a script ("code"), so no test_*.py pattern is used.
 purposes:
-  - {purpose: test,         paths: ["tools/impact/tests/**", "**/*.test.ts", "**/*.test.tsx"]}
-  - {purpose: generated,    paths: ["docs/architecture/generated/**"]}
+  - {purpose: test,         paths: ["tools/impact/tests/**", "tools/design/tests/**", "**/*.test.ts", "**/*.test.tsx"]}
+  - {purpose: generated,    paths: ["docs/architecture/generated/**", "designs/index/**"]}
   - {purpose: experimental, paths: ["database/experiments/**"]}
   - {purpose: ci,           paths: [".github/workflows/**"]}
   - {purpose: contract,     paths: ["docs/architecture/data-contracts.md"]}

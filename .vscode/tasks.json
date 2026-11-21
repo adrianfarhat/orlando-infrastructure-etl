@@ -1,0 +1,63 @@
+{
+  // Feature Design Workspace (T-94). Run with Terminal > Run Task... > "New Feature".
+  // The tasks only create or update files in designs/; they never stage, commit, branch or push.
+  // "process" tasks pass each argument directly to Python (no shell), so names with spaces are safe.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "New Feature",
+      "detail": "Create a feature specification in designs/features/ from the six-section template",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "windows": { "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe" },
+      "args": ["-B", "-m", "tools.design", "new", "feature", "--name", "${input:featureName}",
+               "--parent", "${input:featureParent}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "New Feature (convert a standalone parent)",
+      "detail": "Like New Feature, and allow turning a standalone parent x.md into x/README.md",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "windows": { "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe" },
+      "args": ["-B", "-m", "tools.design", "new", "feature", "--name", "${input:featureName}",
+               "--parent", "${input:featureParent}", "--convert-parent"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Design: rebuild feature index",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "windows": { "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe" },
+      "args": ["-B", "-m", "tools.design", "index"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Design: check workspace",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "windows": { "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe" },
+      "args": ["-B", "-m", "tools.design", "check"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "featureName",
+      "type": "promptString",
+      "description": "Feature name (for example: Pipe road intersections)"
+    },
+    {
+      "id": "featureParent",
+      "type": "promptString",
+      "description": "Parent: a feature ID (FD-0003) or a folder under designs/features/. Leave empty for a standalone feature.",
+      "default": ""
+    }
+  ]
+}

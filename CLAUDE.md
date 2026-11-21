@@ -24,6 +24,8 @@ API routes and shows it on a MapLibre map with an operations dashboard.
 | `web/src/app/operations/map/` | Operations map page and its styles |
 | `docs/` | Architecture, contracts, task board |
 | `.claude/agents/` | Project subagent definitions |
+| `designs/` | Feature Design Workspace (T-94): proposed feature specifications, templates, generated index |
+| `tools/design/` | New Feature, index and check commands for `designs/` |
 
 ## How work is coordinated
 
@@ -59,8 +61,13 @@ never at the same time.
 Files with no agent owner, which only the main conversation may change and only
 with the user's approval: `CLAUDE.md`, `.claude/**`, `.gitignore`,
 `web/package.json`, `web/package-lock.json`, `web/next.config.ts`,
-`web/tsconfig.json`, `web/eslint.config.mjs`, all `.env*` files, and
+`web/tsconfig.json`, `web/eslint.config.mjs`, `.vscode/tasks.json`, all `.env*` files, and
 `extractors/`/`database/` until data-gis is given edit rights.
+
+The Feature Design Workspace (T-94) is also maintained by the main conversation with
+the user's approval: `designs/**` (proposed designs; never the current-state docs in
+`docs/architecture/`) and `tools/design/**` (its commands). `designs/IMPLEMENTATION_BRIEF.md`
+is kept exactly as written; later decisions go in `designs/DECISIONS.md`.
 
 ## Shared rules (all agents)
 
@@ -132,3 +139,5 @@ fixed, Node commands may have to be run by the user.
 | Production build | `cd web && npm run build` |
 | Database connection test (read-only) | `.venv\Scripts\python database\test_connection.py` |
 | ETL loaders (**write to Neon; need approval**) | `.venv\Scripts\python extractors\load_orlando_*.py` |
+| New feature design (creates uncommitted files only) | `.venv\Scripts\python -m tools.design new feature`, or the VS Code task "New Feature" |
+| Design workspace check | `.venv\Scripts\python -m tools.design check` |
