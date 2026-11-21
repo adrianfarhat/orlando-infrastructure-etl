@@ -205,9 +205,21 @@ def _check_body(rel: str, body: str) -> list[Problem]:
             continue
         after = lines[lines.index(heading) + 1:]
         table = next((line for line in after if line.startswith("|") or line.startswith("#")), None)
-        if table != header:
+        if table is None or not table.startswith("|") or table_cells(table) != table_cells(header):
             out.append(Problem(rel, f"the table under '{heading}' must have the columns {header}"))
     return out
+
+
+def table_cells(row: str) -> list[str]:
+    """The cells of a GFM table row, trimmed: `| a | b |`, `|a|b|` and `| a   | b |` are the same
+    row (Markdown ignores the padding), so a formatter that re-aligns tables (for example Mark
+    Sharp) does not break the column check. Names, order and count must still match exactly."""
+    s = row.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|") and not s.endswith("\\|"):
+        s = s[:-1]
+    return [cell.strip() for cell in re.split(r"(?<!\\)\|", s)]
 
 
 def _outside_code(body: str) -> list[str]:
