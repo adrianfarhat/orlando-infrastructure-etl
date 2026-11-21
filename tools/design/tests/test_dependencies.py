@@ -57,9 +57,9 @@ class Generation(unittest.TestCase):
             self.three(ws)
             cmd(ws.root, "index")
             index = ws.text(workspace.INDEX)
-            self.assertIn("| Feature ID | Title | Design status | Parent | Depends on | Used by | File |", index)
+            self.assertIn("| Feature ID | Title | Design status | Parent | Depends on | Used by | Diagrams | File |", index)
             self.assertIn("| FD-0001 | Road ingestion | investigating | - | - | "
-                          "[FD-0003](../features/pipe-road-intersections.md) | [road-ingestion.md]", index)
+                          "[FD-0003](../features/pipe-road-intersections.md) | - | [road-ingestion.md]", index)
             self.assertIn("| FD-0002 | Pipe ingestion | investigating | - | - | "
                           "[FD-0003](../features/pipe-road-intersections.md) (optional) |", index)
             self.assertIn("| FD-0003 | Pipe road intersections | investigating | - | "
@@ -216,8 +216,8 @@ class IndexWarnings(unittest.TestCase):
             code, out, err = cmd(ws.root, "index")
             self.assertEqual(code, 0)
             self.assertEqual(self.warnings(err), [
-                "design: warning: designs/features/bad-meta.md: its metadata has a problem, so its summary table "
-                "and Related features rows were not refreshed; run `python -m tools.design check`",
+                "design: warning: designs/features/bad-meta.md: its metadata has a problem, so its summary table, "
+                "Related features rows and diagram blocks were not refreshed; run `python -m tools.design check`",
                 "design: warning: designs/features/no-related.md: the Related features markers are not closed, "
                 "so that block was not refreshed; run `python -m tools.design check`",
                 "design: warning: designs/features/two-problems.md: the summary table markers are not closed; the "

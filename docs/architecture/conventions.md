@@ -202,6 +202,11 @@ only through geometry, computed at query time.
      `docs/architecture/`, run `python -m tools.design index` and commit the regenerated
      `designs/index/architecture-index.md` in the same branch. Until then
      `python -m tools.design check` reports it as out of date ([designs/README.md](../../designs/README.md)).
+   - If the change edits the content of a Mermaid diagram in `docs/architecture/`,
+     run `python -m tools.design index`. It refreshes the copies of that diagram shown in
+     feature specifications (generated diagram blocks). Commit the regenerated files (the
+     architecture index and any refreshed feature files) in the same branch. Until then
+     `python -m tools.design check` reports the stale copies.
 2. Use the change-impact tool, which applies the rules above. The user guide,
    [tools/impact/README.md](../../tools/impact/README.md), covers the commands,
    exit codes, reports and known limitations.
