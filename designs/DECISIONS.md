@@ -156,3 +156,28 @@ on GitHub Project #1.
    files keep their names. A name that now gives the same file name as an existing
    feature is refused, as before ("already exists; nothing was overwritten").
 3. **Out of scope:** other Unicode punctuation (for example `’` or `·`) is still dropped.
+
+## 2026-11-21: Formatted editing with Mark Sharp (T-95)
+
+1. **Editor.** Feature specifications are edited in the VS Code extension Mark Sharp
+   (`jonathan-yeung.mark-sharp`, 1.13.0, free tier), an opt-in custom editor; the default
+   Markdown editor and the user's global VS Code settings are unchanged. The Markdown format,
+   the six sections and the templates are unchanged. Rendered diagrams are viewed in VS
+   Code's Markdown preview, because Mermaid rendering in Mark Sharp is a Premium feature.
+2. **Tables.** Mark Sharp re-writes tables on save. Its exporter (read from the installed
+   extension and ported into `tools/design/tests/marksharp_port.py`; the port reproduces a
+   real Mark Sharp buffer exactly) has two modes: `alignColumns` (default; cells padded to
+   the column width) and `condensed` (no spaces). On real specifications both rewrite a
+   similar number of lines (12 against 10 of 147 on a filled-in example; 5 against 4 on a new
+   one) and keep the generated summary and Related features blocks verbatim. The default
+   `alignColumns` is kept: it is readable as source and stable on later saves.
+3. **Column check.** The dependency-table check compared the header row as text, so any
+   re-alignment failed `check` (`condensed` always; `alignColumns` whenever a cell was wider
+   than its header). It now compares the header's cells, trimmed: names, order, count and
+   case must still match exactly; only padding, which Markdown ignores, may differ. Tests
+   show the old check failing and the new one passing both modes, and every real column
+   mistake (renamed, reordered, missing, extra, wrong case) still rejected.
+4. **Not verified without the editor's own interface:** Mark Sharp's re-serialisation of
+   inline Markdown inside table cells (taken as unchanged), and its save of a file whose
+   generated blocks contain blank lines. `index`, `check` and `git diff` before committing
+   cover both.
