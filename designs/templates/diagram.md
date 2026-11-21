@@ -3,6 +3,7 @@ diagram_id: ""          # the feature ID plus a number, for example FD-0001-D1
 title: ""
 feature_id: ""          # the feature this diagram belongs to
 status: PROPOSED
+source_diagram: ""      # when copied: its ID in designs/index/architecture-index.md, e.g. system-architecture/1-current-state-the-big-picture
 source_document: ""     # when copied from an existing diagram, e.g. docs/architecture/system-architecture.md
 source_heading: ""      # the heading anchor of that diagram, e.g. 1-current-state-the-big-picture
 base_commit: ""         # the commit the copy was taken from: git rev-parse --short HEAD
@@ -15,7 +16,7 @@ base_commit: ""         # the commit the copy was taken from: git rev-parse --sh
 | **Diagram ID** | [feature ID plus a number, e.g. FD-0001-D1] |
 | **Feature** | [feature ID, with a relative link to its specification] |
 | **Status** | <kbd>PROPOSED</kbd> |
-| **Copied from** | [source document and heading, or "new diagram"] |
+| **Copied from** | [source diagram ID, with a link to its document and heading, or "new diagram"] |
 | **Base commit** | [the commit the copy was taken from, or "n/a"] |
 
 > **Evidence status legend:** ✅ **VERIFIED** = confirmed in the current repository (cite the source) · 🔷 **PROPOSED** = design or planned change · ❔ **UNKNOWN** = not yet determined

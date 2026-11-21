@@ -638,12 +638,17 @@ def _parent_label(feature: Feature, by_folder: dict[str, Feature]) -> str:
 
 
 def write_index(root: Path) -> str:
-    text = render_index(root)
-    path = root / INDEX
+    return write_generated(root, INDEX, render_index(root))
+
+
+def write_generated(root: Path, rel: str, text: str) -> str:
+    """Replace a generated file atomically with LF text, only when its content changed
+    (CRLF versus LF alone is not a change). Returns the repository-relative path."""
+    path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file() and _same_text(path.read_bytes(), text):
         return _rel(root, path)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".feature-index.", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix="." + path.stem + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(text.encode("utf-8"))
@@ -672,4 +677,8 @@ def check(root: Path) -> list[Problem]:
     problems += duplicate_ids(features)
     if not index_is_fresh(root):
         problems.append(Problem(INDEX, "out of date or missing: run `python -m tools.design index`"))
+    from .architecture import ARCHITECTURE_INDEX, architecture_index_is_fresh   # imports this module
+    if not architecture_index_is_fresh(root):
+        problems.append(Problem(ARCHITECTURE_INDEX, f"out of date with {ARCHITECTURE}/ or missing: "
+                                                    "run `python -m tools.design index`"))
     return sorted(set(problems))

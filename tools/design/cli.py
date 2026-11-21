@@ -17,7 +17,7 @@ import traceback
 from pathlib import Path
 from typing import Callable, TextIO
 
-from . import workspace
+from . import architecture, workspace
 from .workspace import DesignError
 
 EXIT_OK, EXIT_PROBLEMS, EXIT_FAILURE = 0, 1, 2
@@ -43,10 +43,10 @@ def build_parser() -> argparse.ArgumentParser:
     feature.add_argument("--convert-parent", action="store_true",
                          help="allow turning a standalone parent feature x.md into x/README.md")
     index = sub.add_parser("index", help="refresh each feature's generated summary table, then regenerate "
-                                         "designs/index/feature-index.md")
+                                         "designs/index/feature-index.md and designs/index/architecture-index.md")
     index.add_argument("--check", action="store_true",
-                       help="only report whether the index and the summary tables are up to date (writes nothing)")
-    sub.add_parser("check", help="check every feature specification and the index")
+                       help="only report whether the indexes and the summary tables are up to date (writes nothing)")
+    sub.add_parser("check", help="check every feature specification and both indexes")
     for p in (feature, index, sub.choices["check"]):
         p.add_argument("--root", type=Path, help="repository root (default: found from the current folder)")
     return parser
@@ -66,17 +66,26 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         if args.command == "index":
             if args.check:
                 fresh = workspace.index_is_fresh(root)
+                arch_fresh = architecture.architecture_index_is_fresh(root)
                 stale = workspace.stale_summaries(root)
                 print(f"{workspace.INDEX} is {'up to date' if fresh else 'out of date: run `python -m tools.design index`'}",
                       file=out)
+                print(f"{architecture.ARCHITECTURE_INDEX} is "
+                      f"{'up to date' if arch_fresh else 'out of date: run `python -m tools.design index`'}", file=out)
                 for p in stale:
                     print(f"{p.path}: {p.message}", file=out)
-                return EXIT_OK if fresh and not stale else EXIT_PROBLEMS
+                return EXIT_OK if fresh and arch_fresh and not stale else EXIT_PROBLEMS
             for path in workspace.refresh_summaries(root):
                 print(f"refreshed the summary table in {path}", file=out)
             fresh = workspace.index_is_fresh(root)
             path = workspace.write_index(root)
             print(f"{path} is already up to date" if fresh else f"wrote {path}", file=out)
+            arch_fresh = architecture.architecture_index_is_fresh(root)
+            path = architecture.write_architecture_index(root)
+            if path is None:
+                print(f"no {workspace.ARCHITECTURE}/ folder, so there is no architecture index", file=out)
+            else:
+                print(f"{path} is already up to date" if arch_fresh else f"wrote {path}", file=out)
             return EXIT_OK
         problems = workspace.check(root)
         features, _ = workspace.discover(root)

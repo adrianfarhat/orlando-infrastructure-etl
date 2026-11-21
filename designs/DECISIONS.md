@@ -76,3 +76,27 @@ on GitHub Project #1.
 5. **Related features** rows sit between `<!-- related-features:start … -->` and
    `<!-- related-features:end -->`, ready for generation in Phase 2.
 6. **The diagram template** follows the same presentation style and keeps its metadata.
+
+## 2026-11-21: Phase 2 plan (approved by the user)
+
+1. **One architecture index.** The architecture index and the diagram catalog are one
+   generated file, [index/architecture-index.md](index/architecture-index.md), covering
+   `docs/architecture/` only (`docs/agents/` is project planning, not architecture).
+2. **Diagram IDs** are derived from position: `<document>/<heading anchor>`, with `~2`,
+   `~3` for later diagrams under the same heading and `top` before the first heading.
+   Nothing is written into `docs/architecture/`; IDs inside the documents are deferred
+   (to be coordinated with T-82). Heading anchors follow GitHub's algorithm.
+3. **The architecture index must be fresh**: `check` and `index --check` report it out of
+   date when a heading or diagram in `docs/architecture/` changes. It records no line
+   numbers, so other edits leave it up to date. The docs workflow in conventions.md
+   section 5 notes the extra step.
+4. **Diagram template** gains `source_diagram`, the diagram ID a proposed variant was
+   copied from.
+5. **Dependencies** (M2): "Depends on" and "Used by" columns in the existing feature index,
+   not a separate dependency index; generated relationship rows are marked PROPOSED (no
+   `evidence:` field yet); the Mermaid dependency graph is deferred.
+6. **Validation** (M3): design-specific link and reference checks cover `designs/` only;
+   repository-wide link checking stays with T-81. A dependency cycle is a check failure.
+   D1 (backslashes in the summary's branch cell) is fixed separately; D2 (summary links for
+   `architecture_refs`) is resolved by those checks.
+7. **Deferred:** a `new diagram --from` command.

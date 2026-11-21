@@ -7,6 +7,8 @@ planning, written before any code changes. The implemented system is described i
 - [IMPLEMENTATION_BRIEF.md](IMPLEMENTATION_BRIEF.md): the governing brief, kept unchanged.
 - [DECISIONS.md](DECISIONS.md): decisions taken since the brief.
 - [index/feature-index.md](index/feature-index.md): every feature, generated.
+- [index/architecture-index.md](index/architecture-index.md): every current-state document
+  in `docs/architecture/`, its headings and its Mermaid diagrams (with diagram IDs), generated.
 - [templates/](templates/): the feature specification and diagram templates.
 
 ## Create a feature
@@ -37,9 +39,14 @@ Other commands:
 
 | Command | What it does |
 |---|---|
-| `python -m tools.design index` | Refresh each feature's generated summary table from its metadata, then regenerate the feature index |
-| `python -m tools.design index --check` | Exit code 1 if the index or any summary table is out of date (writes nothing) |
-| `python -m tools.design check` | Check every feature: IDs (including duplicates), metadata, the six sections, both dependency tables, and index freshness |
+| `python -m tools.design index` | Refresh each feature's generated summary table from its metadata, then regenerate the feature index and the architecture index |
+| `python -m tools.design index --check` | Exit code 1 if either index or any summary table is out of date (writes nothing) |
+| `python -m tools.design check` | Check every feature: IDs (including duplicates), metadata, the six sections, both dependency tables, and the freshness of both indexes |
+
+The architecture index is rebuilt from `docs/architecture/`, so a change there that adds,
+renames or removes a heading or a Mermaid diagram makes `check` report it as out of date
+until `python -m tools.design index` is run and the result committed with that change.
+Other edits to those documents leave it up to date (it records no line numbers).
 
 Exit codes: 0 success, 1 problems found, 2 a usage or file error.
 
@@ -155,6 +162,11 @@ require, so the diagram rules stay the same everywhere.
 
 ## Diagrams
 
+- **Find** an existing diagram in the [architecture index](index/architecture-index.md#diagrams).
+  Each one has a **diagram ID**: its document and the anchor of the heading above it, for
+  example `system-architecture/1-current-state-the-big-picture` (a second diagram under the
+  same heading gets `~2`). IDs are derived, never written into `docs/architecture/`, so an
+  ID changes when its heading is renamed.
 - **Link** to an existing diagram in `docs/architecture/` by its document and heading, for
   example `../docs/architecture/system-architecture.md#1-current-state-the-big-picture`
   (adjust `../` to the file's depth).
@@ -162,7 +174,8 @@ require, so the diagram rules stay the same everywhere.
   `diagrams/` folder next to the feature, and link it from the feature's "Proposed
   diagrams" section.
 - **Copy** an existing diagram into a proposed variant: paste its Mermaid source into a new
-  diagram file and fill in `source_document`, `source_heading` and `base_commit`
+  diagram file and fill in `source_diagram` (its diagram ID), `source_document`,
+  `source_heading` and `base_commit`
   (`git rev-parse --short HEAD`), so the original can always be found. Never edit the
   original in `docs/architecture/` as part of a design.
 
