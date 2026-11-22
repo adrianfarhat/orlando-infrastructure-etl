@@ -6,9 +6,10 @@
 > component described here is `planned`; none is `unverified` or `verified`. The built
 > current state is described in the other `docs/architecture/` documents and in
 > [designs/README.md](../../designs/README.md). Where this page states what exists
-> today (section 2), it says so explicitly. Decisions U1–U12 were **approved on
-> 2026-11-22**; U13 and U14 are **proposed and await approval**
-> ([section 14](#14-decisions-u1u12-approved-2026-11-22)). Statements that rest on a
+> today (section 2), it says so explicitly. Decisions U1–U14 were **approved on
+> 2026-11-22** ([section 14](#14-decisions-u1u14-approved-2026-11-22)); U13 and U14
+> supersede T-96 decisions 2 and 3. Items deferred to stage M1 are listed in
+> [section 12.2](#122-stage-m1-extract-per-document). Statements that rest on a
 > decision cite it as "(Un)".
 
 The diagram library gives every diagram in the project (architecture diagrams and
@@ -242,8 +243,8 @@ docs/architecture/
 ### 6.1 Canonical ID references
 
 - A referencing document holds the T-96 marker pair. **The canonical reference is the
-  start marker, which holds the ID** (or an alias) and, if U13 is approved, an optional
-  fingerprint of the content last generated (section 6.5):
+  start marker, which holds the ID** (or an alias) and, inside the same HTML comment,
+  the fingerprint of the content last generated for that block (U13, section 6.5):
 
   ```text
   <!-- diagram:start FD-0001-D3 -->
@@ -288,8 +289,10 @@ and fields are only added.
    under the lock with compare-and-swap (section 8.1). No document is touched by this
    step.
 2. Every block for that ID is now stale, because its generated content differs from
-   what `resolve` produces. This is detected by the whole-block comparison T-96 already
-   uses (and, with U13, by the fingerprint states of section 6.5).
+   what `resolve` produces. The registry fields that shape a block (title, path) count
+   as part of the source, so an untouched block after a relink is case 1 of
+   section 6.5 (source changed, copy untouched). Blocks whose marker has no fingerprint
+   yet are detected by the whole-block comparison T-96 uses today.
 3. Refreshing:
    - **open documents without unsaved changes**: Feature Designer applies a guarded
      refresh edit (base SHA-256, line count and document version must match) that
@@ -298,7 +301,8 @@ and fields are only added.
      button; nothing is written until the user clicks;
    - **closed documents**: `python -m tools.design index`, which rewrites only the lines
      between markers, in files without a structural problem (T-96 rule).
-   - A block with a manual modification is never refreshed by any of these paths
+   - Only case 1 blocks are refreshed automatically. A block with a manual
+     modification (cases 2 and 3) is never refreshed by any of these paths
      (section 6.5).
 4. Until refreshed, `check` reports E14, and Feature Designer still shows the right
    diagram, because it resolves by ID, not by the stale path.
@@ -323,45 +327,78 @@ of a diagram. Mermaid kept inside an architecture page, or any other document, i
 Generated blocks are never counted as diagrams: the catalog lists each diagram once, by
 its registry ID (U9, section 12.2).
 
-### 6.5 Detecting manual modifications (U13, proposed)
+### 6.5 Generated-content fingerprints (U13)
 
-**PROPOSED, awaiting approval.** This mechanism changes approved T-96 decision 2 ("check
-compares the whole block … not a fingerprint") and therefore needs the user's approval
-before it is built. Until then, the T-96 behaviour applies as described under "Markers
-without a fingerprint" below.
+U13 supersedes T-96 decision 2 ("check compares the whole block … not a fingerprint").
 
-- **Fingerprint.** The start marker gains an optional fingerprint of the content last
-  generated between the markers, for example:
+**Fingerprint.** The start marker stores, inside its HTML comment, a fingerprint of the
+content last generated for that block, for example:
 
-  ```text
-  <!-- diagram:start AD-0013 sha256:<first 16 hex digits> -->
-  ```
+```text
+<!-- diagram:start AD-0013 sha256:<first 16 hex digits> -->
+```
 
-  Markers without a fingerprint stay valid and behave as today (backward compatible).
-- **Normalised form.** The fingerprint is computed over a normalised form of the block:
-  line endings, trailing spaces, indentation and blank lines are ignored. Editor
-  reformatting, such as Mark Sharp's known rewrite of generated blocks, is therefore
-  "formatting only" and is simply restored.
-- **States** of a block with a fingerprint:
+- It is invisible in rendered Markdown and backward compatible: markers without a
+  fingerprint keep working, and existing IDs and aliases keep resolving.
 
-| Block vs fingerprint | Source vs block | State | What happens |
+**Three-way classification.** For each block, compare three things:
+
+- `F`: the fingerprint in the marker (the content last generated);
+- `B`: the block's current content;
+- `G`: the content the source would generate now. The "source" includes the registry
+  fields that shape the block (title, path), so a relink changes `G`.
+
+`≡` means "equal after normalisation" (below).
+
+| Condition | Case | Meaning | What happens |
 |---|---|---|---|
-| matches | matches | current | nothing |
-| matches | source changed | stale, safe to refresh | refreshed as in section 6.3, subject to the unsaved-edits rule |
-| differs | any | **manual modification (conflict)** | reported as E15 (file, line, ID and a diff summary); never overwritten automatically; not refreshed by `index` or Feature Designer |
+| `B ≡ F` and `G ≡ F` | current | nothing changed | nothing |
+| `B ≡ F` and `G ≢ F` | **case 1** | source changed, copy untouched (includes a relink) | refreshed; the **only** case refreshed automatically, and only in documents without unsaved changes (section 6.3, U5) |
+| `B ≢ F` and `G ≡ F` | **case 2** | manual edit, source unchanged | conflict E15 (manual edit) |
+| `B ≢ F` and `G ≢ F` | **case 3** | both the block and the source changed | conflict E15 (distinct message: both changed) |
+| `B ≢ F` but `B ≡ G` | special case (checked before cases 2 and 3) | the block was edited to exactly the new output | no conflict; the fingerprint is simply updated |
 
-- **Reconciling a manual modification** is only ever an explicit choice, made one block
-  at a time:
-  1. **Discard manual change**: shows the diff first, then regenerates the block from
-     the source.
-  2. **Apply to source**: shows the diff first, then copies the block's Mermaid into the
-     authoritative source; the block is then regenerated from it.
+A conflict is never overwritten automatically and is never refreshed by `index` or
+Feature Designer.
 
-  Each is one undoable step and is never applied to a document with unsaved changes
-  without the user's click.
-- **Markers without a fingerprint** (existing blocks): today's T-96 behaviour. Any
-  difference from the source is reported as stale, and `index` rewrites the block only
-  when the file has no structural problem. The first refresh adds the fingerprint.
+**Normalisation (diagram-type-aware and conservative).**
+
+- **Always:** only line-ending differences (CRLF and LF) are ignored.
+- **Additionally, only for diagram types on an allow-list** whose indentation and blank
+  lines are demonstrably insignificant: differences in leading whitespace, and in blank
+  lines or `%%` blank lines, are ignored outside multi-line quoted text.
+- **The allow-list** starts with the types used today: `flowchart`/`graph`,
+  `sequenceDiagram` and `erDiagram`. A type is added only with evidence: a test that
+  renders the indented and unindented variants with the project's pinned Mermaid and
+  shows identical output.
+- **Indentation-sensitive or unlisted types** (for example `mindmap`, `kanban`,
+  `timeline`, `block`, or an unknown type) are compared exactly, after line-ending
+  normalisation only.
+- **When uncertain, a difference is meaningful:** it is a conflict, never silently
+  discarded.
+- Consequence: in feature documents, Mark Sharp's reformatting of a block whose diagram
+  type is not on the allow-list is reported as a conflict (E15). For allow-listed types,
+  that reformatting is "formatting only" and the block counts as untouched.
+
+**Reconciliation (cases 2 and 3).** There are two actions. Both show a diff and require
+explicit confirmation; neither is applied to a document with unsaved changes without
+the user's click; each is one undoable step.
+
+1. **Discard manual change.** Shows the diff of what will be lost, then regenerates the
+   block from the source.
+2. **Apply to source.** Previews the diff to the source. Before writing, it verifies
+   that the source has not changed since the preview (by comparing its hash); if it
+   changed, it stops and the preview must be made again. It then regenerates the block.
+   - **Architecture (document-owned) sources** change only through technical-lead's
+     documentation workflow. Feature Designer does not write them; it prepares the
+     proposed change for that workflow.
+   - **Feature-owned sources** follow ownership and the existing editing safeguards:
+     the guarded edit with base hash, the unsaved-edit rules, and only the owner's
+     file.
+
+**Markers without a fingerprint** (existing blocks): today's T-96 behaviour. Any
+difference from the source is reported as stale, and `index` rewrites the block only
+when the file has no structural problem. The first refresh adds the fingerprint.
 
 ### 6.6 Rendering in Markdown
 
@@ -369,25 +406,24 @@ without a fingerprint" below.
 |---|---|
 | Feature documents, `mermaid-md` | Caption (title linked to the source, ID, "generated copy; edit the source") plus the Mermaid copy, with the T-96 `%%` blank-line rule; byte-identical to T-96 output |
 | Feature documents, `drawio-svg` | Caption plus `![<title>](<relative path>)`; stale only when the title or path changes, never when content changes |
-| Architecture documents (after stage M1) | The Mermaid copy only, with an HTML comment naming the ID and source, so the rendered page is unchanged (U3). Written verbatim (U14, proposed) |
+| Architecture documents (during and after stage M1) | The Mermaid copy only, with an HTML comment naming the ID and source, so the rendered page is unchanged (U3). Written verbatim (U14) |
 
-- **Feature documents** keep the T-96 rule that blank source lines are written as `%%`,
-  so the block stays contiguous for Mark Sharp.
-- **Architecture documents (U14, proposed, awaiting approval).** Generated copies in
-  `docs/architecture/` are written **verbatim**: byte-identical to the source's Mermaid
-  lines, blank lines kept, without the `%%` rule. Reason: 7 of the 14 architecture
-  diagrams contain blank lines, and the `%%` rule exists only because Mark Sharp, used
-  for `designs/`, truncates a block at a blank line; architecture documents are not
-  edited with Mark Sharp. This adjusts approved T-96 decision 3 for architecture
-  documents only. Until U14 is approved, the `%%` rule applies everywhere.
+- **Feature documents** keep the T-96 rule that blank source lines are written as `%%`
+  where needed, so the block stays contiguous for Mark Sharp.
+- **Architecture documents (U14).** U14 supersedes T-96 decision 3 for architecture
+  documents. During and after M1, generated copies in `docs/architecture/` documents
+  are byte-for-byte the source's Mermaid lines: blank lines are **not** replaced by
+  `%%`. Reason: 7 of the 14 architecture diagrams contain blank lines, and the `%%`
+  rule exists only because Mark Sharp, used for `designs/`, truncates a block at a
+  blank line; architecture documents are not edited with Mark Sharp.
 
 ### 6.7 Rendering in Feature Designer
 
 - Every diagram block renders **from its resolved source**, not from the Markdown copy.
 - Every diagram block carries an **Edit Diagram** button in its upper-right corner.
 - If the Markdown copy differs from the source, a small "copy out of date" badge is
-  shown. With U13, a block with a manual modification is marked as a conflict and
-  offers Discard manual change and Apply to source (section 6.5).
+  shown. A block with a manual modification (case 2 or 3) is marked as a conflict and
+  offers Discard manual change and Apply to source (U13, section 6.5).
 - Visual images are shown through webview URIs with `?v=<mtime>`; `designs/` is added
   to the webview's local resource roots (read-only). The content security policy is
   unchanged, and SVG is shown only through `<img>`.
@@ -452,8 +488,9 @@ sources and `registry.yml`.
 - For Mermaid copies, the refresh after a save is automatic in documents without
   unsaved changes: only the generated lines are rewritten, and every refreshed document
   is listed in a notification (U5). Documents with unsaved changes get a banner and a
-  Refresh button. Blocks with a manual modification are reported as conflicts (E15,
-  U13) and left unchanged.
+  Refresh button. Only untouched blocks (case 1 of section 6.5) are refreshed; blocks
+  with a manual modification (cases 2 and 3) are reported as conflicts (E15, U13) and
+  left unchanged.
 - `index` covers everything, including closed documents; `check` reports any stale
   copy.
 - Feature Designer never writes a diagram source.
@@ -533,13 +570,17 @@ steps 4 and 5 can leave an unregistered file, which `check` reports with
   does not discard them: it reports that the file changed on disk when the user saves.
   Feature Designer's Refresh button is the recommended path for open documents; the
   README asks users to save open documents before running `index`.
-- **Manual modifications are never overwritten silently.** With U13, a generated block
-  that was changed by hand is a conflict (E15); only the user's explicit Discard manual
-  change or Apply to source resolves it (section 6.5).
-- **Diagram sources are never written by Feature Designer, `index` or `refresh`.**
-  draw.io writes `.drawio.svg`; the user writes `mermaid-md`; only `new diagram` creates
-  sources, and only exclusively. The one exception is U13's Apply to source, which
-  writes a Mermaid source only after the user has seen the diff and chosen it.
+- **Manual modifications are never overwritten silently.** A generated block that was
+  changed by hand is a conflict (E15, U13); only the user's explicit, confirmed Discard
+  manual change or Apply to source resolves it (section 6.5).
+- **Diagram sources are never written by `index` or `refresh`, and Feature Designer
+  never writes a document-owned source.** draw.io writes `.drawio.svg`; the user writes
+  `mermaid-md`; only `new diagram` creates sources, and only exclusively. The one
+  exception is U13's Apply to source for a **feature-owned** Mermaid source: confirmed
+  after a diff preview, refused if the source's hash changed since the preview, and
+  applied as a guarded edit to the owner's file only. For a document-owned source,
+  Apply to source only prepares the proposed change for technical-lead's documentation
+  workflow.
 
 ## 9. Error catalogue
 
@@ -564,10 +605,11 @@ unchanged from T-97 Phase 1 (decision 4 in [DECISIONS.md](../../designs/DECISION
 | E12 | Lock held, or registry changed during a command | `another diagram command is running` / `the registry changed while creating …; nothing was written` |
 | E13 | Hand-written image link to a `.drawio.svg` outside a diagram block | `…md line 40 links …x.drawio.svg directly: use a diagram block (FD-0001-D3) so the reference survives moves` |
 | E14 | A generated path in a block no longer matches the registry | `stale image path in the FD-0001-D3 block of …md: expected …; run index or Refresh` |
-| E15 | Generated content changed by hand: the block differs from its marker's fingerprint (U13, proposed) | `…md line 52: the AD-0013 block was modified by hand (n lines changed: …); not refreshed. Choose Discard manual change or Apply to source` |
+| E15 | Generated content changed by hand (U13): case 2, the block differs from its fingerprint and the source is unchanged; or case 3, the block and the source have both changed | Case 2: `…md line 52: the AD-0013 block was edited by hand (n lines changed: …); the source is unchanged; not refreshed. Choose Discard manual change or Apply to source` / Case 3: `…md line 52: the AD-0013 block was edited by hand and its source has also changed since the block was generated; not refreshed. Review both diffs, then choose Discard manual change or Apply to source` |
 
-E15 exists only if U13 is approved; without it, a hand-edited block is reported as a
-stale copy, as T-96 does today.
+A block whose marker has no fingerprint yet cannot be classified; a hand edit there is
+reported as a stale copy, as T-96 does today, until its first refresh adds the
+fingerprint.
 
 ## 10. Visual editor rules (draw.io)
 
@@ -663,10 +705,21 @@ diagram:
    Mermaid copy (with the HTML comment of U3).
 
 The migration is designed to be lossless: the source holds the original lines
-unchanged; the generated copy is byte-identical to the original embedded lines, blank
-lines included (U14, proposed); the rendering is identical; and the ID and alias are
-unchanged. If U14 is not approved, the generated copy differs from the original only by
-the T-96 `%%` blank-line rule. The verification steps are on the T-97 card.
+unchanged; the generated copy is byte-for-byte the original embedded lines, blank lines
+included, never `%%` (U14); the rendering is identical; and the ID and alias are
+unchanged. M1 verification includes tests that all 14 architecture diagrams keep their
+exact original Mermaid content (byte comparison against the pre-migration lines) and
+their rendering (output of the pinned Mermaid compared before and after). The full
+verification steps are on the T-97 card.
+
+**Deferred to M1 (not decided now).**
+
+1. Any change to the restrictions on writing into `docs/architecture/` (T-94 Phase 2
+   decision 2, and the T-82 docs lint) waits until M1 is separately authorised.
+2. Applying changes to architecture (document-owned) sources always goes through
+   technical-lead's documentation workflow.
+3. Legend placement and lint rules are coordinated with T-82 as part of M1, without
+   weakening those checks to fit the marker.
 
 **Uniqueness by registry identity (U9).** Today's architecture-document scan
 (`documents()` in `tools/design/architecture.py`) reads every Markdown file under
@@ -725,11 +778,11 @@ To be confirmed before M0.
   draw.io root IDs, and learns `AD-` IDs. Existing fixtures allocate the same IDs.
 - **T-96**: markers keep working with catalog IDs (now aliases) and accept new IDs.
   Mermaid copies in feature documents stay byte-identical to today until a source
-  changes. Two proposed decisions would adjust approved T-96 decisions and need
-  approval first: U13 (an optional fingerprint in the start marker; changes decision 2,
-  whole-block comparison without a fingerprint) and U14 (verbatim copies in
-  architecture documents; adjusts decision 3, the `%%` blank-line rule). Markers without
-  a fingerprint keep today's behaviour.
+  changes. U13 supersedes T-96 decision 2 (whole-block comparison, not a fingerprint):
+  start markers carry a fingerprint inside their HTML comment, and markers without one
+  keep today's behaviour until their first refresh. U14 supersedes T-96 decision 3 for
+  architecture documents only (verbatim copies, no `%%`); feature documents keep the
+  `%%` rule.
 - **T-94**: the architecture catalog and index become registry-backed after M0; until
   M1 they still read the embedded blocks. The architecture-document scan excludes
   `docs/architecture/diagrams/` and never counts generated blocks (U9). Existing
@@ -745,15 +798,14 @@ To be confirmed before M0.
 - **Change impact (T-83)**: `designs/diagrams/**`, `.gitattributes` and the draw.io
   toolchain script are to be registered in `registry/components.yml` and `impact.yml`.
 
-## 14. Decisions U1–U12 (approved 2026-11-22)
+## 14. Decisions U1–U14 (approved 2026-11-22)
 
-U1–U12 were approved by the user on 2026-11-22, with the clarifications written into
-sections 6.4, 5.3, 12.1 and 12.2. U13 and U14 are proposed and await approval
-(section 14.2). Decisions are recorded in
+U1–U14 were approved by the user on 2026-11-22, with the clarifications written into
+sections 5.3, 6.4, 6.5, 6.6, 12.1 and 12.2. Decisions are recorded in
 [designs/DECISIONS.md](../../designs/DECISIONS.md). The design as a whole remains
 PROPOSED: approved, not implemented.
 
-### 14.1 Approved
+### 14.1 Approved (2026-11-22)
 
 | # | Question | Decision |
 |---|---|---|
@@ -769,10 +821,12 @@ PROPOSED: approved, not implemented.
 | U10 | In-file identity for document-owned diagrams | `mermaid-md` front matter `diagram_id`, `title` and `owner_document` (repository path); `.drawio.svg` root-cell properties `fd_diagram_id` and `fd_owner_document`; feature-owned diagrams keep `feature_id` / `fd_feature_id`. The owner is recorded independently of the file name; reuse never changes the owner (a reference is not ownership) |
 | U11 | Heading renamed before M1 (transitional `mermaid-embedded` entries are found by owner document + heading anchor + ordinal) | `check` reports the broken reference (E7) with the candidate block it can see; the entry is re-pointed only by an explicit `registry relink`; nothing is guessed; the former catalog ID stays an alias; keeping the M0 → M1 interval short limits exposure |
 | U12 | Move limits for document-owned sources | Sources stay in their approved directories: document-owned in `docs/architecture/diagrams/` (`relink` refuses other locations), feature-owned in a `diagrams/` folder under `designs/features/`; reuse across documents only through stable IDs |
+| U13 | How manual modifications to generated content are detected and reconciled | Generated-content fingerprints (section 6.5): the start marker stores, inside its HTML comment, a fingerprint of the content last generated (backward compatible). Three-way classification of fingerprint, block and newly generated content: current; case 1 (source changed, copy untouched, including a relink), the only case refreshed automatically and only in documents without unsaved changes; case 2 (manual edit) and case 3 (both changed), conflicts E15 with distinct messages; a block edited to exactly the new output only updates the fingerprint. Conservative, diagram-type-aware normalisation: line endings always; leading whitespace and blank lines only for allow-listed types (`flowchart`/`graph`, `sequenceDiagram`, `erDiagram` to start; additions only with rendering evidence from the pinned Mermaid); everything else compared exactly; when uncertain, a conflict. Reconciliation by Discard manual change or Apply to source, each with a diff, explicit confirmation and one undoable step; Apply to source checks the source's hash before writing; document-owned sources only through technical-lead's documentation workflow; feature-owned sources only through the guarded edit of the owner's file |
+| U14 | How generated copies preserve Mermaid content in architecture documents | During and after M1, generated copies in `docs/architecture/` documents are byte-for-byte the source's Mermaid lines; blank lines are not replaced by `%%`. Feature documents keep the `%%` rule where needed for Mark Sharp (section 6.6). M1 verification includes tests that all 14 architecture diagrams keep their exact original Mermaid content (byte comparison) and rendering (pinned Mermaid output before and after) |
 
-### 14.2 Proposed: U13 and U14 (awaiting approval)
+### 14.2 Superseded decisions
 
-| # | Question | Proposed decision | Why it needs approval |
-|---|---|---|---|
-| U13 | How manual modifications to generated content are detected and reconciled | An optional fingerprint in the start marker (`sha256:<first 16 hex digits>` of the normalised content last generated); states current / stale / manual modification; E15 for manual modifications, never overwritten or refreshed automatically; reconciled only by Discard manual change or Apply to source, each after showing the diff, one undoable step; markers without a fingerprint behave as today and gain one on their first refresh (section 6.5) | Changes approved T-96 decision 2 ("check compares the whole block … not a fingerprint") |
-| U14 | How generated copies preserve Mermaid content in architecture documents | Copies in `docs/architecture/` are written verbatim, byte-identical to the source's Mermaid lines (blank lines kept); feature documents keep the `%%` rule (section 6.6). Reason: 7 of the 14 architecture diagrams contain blank lines, and the `%%` rule exists only because Mark Sharp, used for `designs/`, truncates a block at a blank line; architecture documents are not edited with Mark Sharp | Adjusts approved T-96 decision 3 (blank source lines written as `%%`) |
+- **U13 supersedes T-96 decision 2** ("check compares the whole block … not a
+  fingerprint").
+- **U14 supersedes T-96 decision 3 for architecture documents** (blank source lines
+  written as `%%`); feature documents keep that rule.
