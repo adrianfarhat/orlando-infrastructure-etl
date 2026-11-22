@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import posixpath
 import re
+import tempfile
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -106,9 +108,10 @@ class CreatedDiagram:
     path: str
     diagram_id: str
     owner: str
+    category: str = "other"
 
 
-def _validate_title(title: str) -> str:
+def validate_title(title: str) -> str:
     if not isinstance(title, str):
         raise DesignError("the diagram title must be text")
     clean = " ".join(title.split())
@@ -121,15 +124,38 @@ def _validate_title(title: str) -> str:
     return clean
 
 
-def new_diagram(root: Path, owner: str, title: str) -> CreatedDiagram:
-    """Create a diagram file owned by `owner` in the `diagrams/` folder next to the owner's
-    specification, with the next diagram ID that was never used (working tree and history)."""
+_validate_title = validate_title                       # the Phase 1 name
+
+
+def owner_slug(spec: str) -> str:
+    """The owner part of a diagram file name: the feature's file name without .md, or its
+    folder name for a parent feature's README.md (diagram library 5.1)."""
+    name = posixpath.basename(spec)
+    if name.lower() == "readme.md":
+        return posixpath.basename(posixpath.dirname(spec))
+    return name[:-3] if name.lower().endswith(".md") else name
+
+
+def source_name(spec: str, category: str, title: str) -> str:
+    """`<owner-slug>_<category>_<diagram-name>.md` (names are made once and never parsed)."""
+    return f"{owner_slug(spec)}_{category}_{slugify(title)}.md"
+
+
+def new_diagram(root: Path, owner: str, title: str, category: str = "other") -> CreatedDiagram:
+    """Create a standalone Mermaid diagram owned by `owner` in the `diagrams/` folder next to
+    the owner's specification, with the next diagram ID that was never used, and register it.
+    All or nothing (diagram library 8.1): under the registry lock, the file is created
+    exclusively and the registry replaced by compare-and-swap; on any failure the new file is
+    removed and the registry is left as it was."""
+    from . import registry
     from .ids import committed_ids, next_diagram_id
     root = Path(root).resolve()
-    title = _validate_title(title)
+    title = validate_title(title)
     owner = (owner or "").strip().upper()
     if not FEATURE_ID.match(owner):
         raise DesignError(f"--feature must be a feature ID such as FD-0001, not {owner!r}")
+    if category not in registry.CATEGORIES:
+        raise DesignError(f"--category must be one of {', '.join(registry.CATEGORIES)}, not {category!r}")
     features, _ = discover(root)
     dupes = duplicate_ids(features)
     if dupes:
@@ -139,24 +165,87 @@ def new_diagram(root: Path, owner: str, title: str) -> CreatedDiagram:
         raise DesignError(f"no feature has the ID {owner}")
     spec = matches[0].path
     folder = posixpath.join(posixpath.dirname(spec), "diagrams")
-    target = root / folder / f"{slugify(title)}.md"
-    rel = posixpath.join(folder, target.name)
+    rel = posixpath.join(folder, source_name(spec, category, title))
+    target = root / rel
     if target.exists():
-        raise DesignError(f"{rel} already exists; nothing was overwritten (choose another title)")
+        raise DesignError(f"{rel} already exists; nothing was overwritten (choose another title or category)")
     try:
         template = (root / DIAGRAM_TEMPLATE).read_bytes().decode("utf-8").replace("\r\n", "\n")
     except (OSError, UnicodeDecodeError) as exc:
         raise DesignError(f"cannot read the template {DIAGRAM_TEMPLATE} ({type(exc).__name__})") from None
-    in_tree = [_text(r.diagram_id) for r in diagram_records(root)]
-    diagram_id = next_diagram_id(owner, in_tree, committed_ids(root))   # stops here without full history
-    text = _render(template, diagram_id, owner, title, posixpath.relpath(spec, folder))
+    with registry.lock(root):
+        reg = registry.load(root)
+        doc = registry._writable(reg)
+        in_tree = registry.all_ids(root, reg) + [_text(r.diagram_id) for r in diagram_records(root)]
+        diagram_id = next_diagram_id(owner, in_tree, committed_ids(root))   # stops here without full history
+        text = _render(template, diagram_id, owner, title, posixpath.relpath(spec, folder))
+        create_exclusively(target, text, rel)
+        try:
+            doc["diagrams"].append(registry.entry_map(diagram_id, title, "feature", owner, "mermaid-md", category, rel))
+            registry.save(root, doc, reg.sha)
+        except BaseException as exc:                    # roll back: only the file this command created
+            try:
+                target.unlink()
+            except OSError:
+                pass
+            if isinstance(exc, DesignError):
+                raise DesignError(f"{exc}; {rel} was not kept") from None
+            raise
+    registry.write_diagram_index(root)                  # generated from the registry, like the feature index
+    return CreatedDiagram(rel, diagram_id, owner, category)
+
+
+def create_exclusively(target: Path, text: str, rel: str) -> None:
+    """Write `text` to a temporary file in the same folder, then link it to `target` with an
+    operation that fails if the name exists: the file appears whole or not at all."""
     target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".diagram.", suffix=".tmp")
     try:
-        with open(target, "x", encoding="utf-8", newline="\n") as handle:     # never overwrites
-            handle.write(text)
-    except FileExistsError:
-        raise DesignError(f"{rel} already exists; nothing was overwritten") from None
-    return CreatedDiagram(rel, diagram_id, owner)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(text.encode("utf-8"))
+        try:
+            os.link(tmp, target)
+        except FileExistsError:
+            raise DesignError(f"{rel} already exists; nothing was overwritten") from None
+        except OSError:                                  # a file system without hard links
+            try:
+                with open(target, "x", encoding="utf-8", newline="\n") as handle:
+                    handle.write(text)
+            except FileExistsError:
+                raise DesignError(f"{rel} already exists; nothing was overwritten") from None
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def retitled(root: Path, rel: str, title: str) -> str:
+    """The source text with its front matter `title:` line changed (used by
+    `registry relink --title`); refuses when there is not exactly one title line."""
+    text = (Path(root) / rel).read_bytes().decode("utf-8")
+    front, _ = split_front_matter(text)
+    if front is None:
+        raise DesignError(f"{rel} has no front matter")
+    lines = text.split("\n")
+    end = next(i for i in range(1, len(lines)) if lines[i].rstrip("\r") == "---")
+    hits = [i for i in range(1, end) if re.match(r"title\s*:", lines[i])]
+    if len(hits) != 1:
+        raise DesignError(f"{rel} needs exactly one `title:` line in its front matter")
+    i = hits[0]
+    newline = "\r" if lines[i].endswith("\r") else ""
+    comment = re.search(r"\s+#.*$", lines[i].rstrip("\r"))
+    lines[i] = f"title: {json.dumps(title, ensure_ascii=False)}" + (comment.group(0) if comment else "") + newline
+    return "\n".join(lines)
+
+
+def write_atomically(path: Path, text: str) -> None:
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".diagram.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(text.encode("utf-8"))
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 def _render(template: str, diagram_id: str, owner: str, title: str, spec_link: str) -> str:

@@ -26,7 +26,8 @@ class Workspace:
     With architecture=True (the default since M3), it also holds copies of this repository's
     docs/architecture/, the designs/ guides and the committed architecture index, so the
     links in generated specifications resolve as they do here. M1 tests that build their
-    own docs/architecture/ pass architecture=False."""
+    own docs/architecture/ pass architecture=False. It also copies the diagram registry and
+    the diagram index (T-97 PR A: the architecture diagrams are registered in place, M0)."""
 
     def __init__(self, real_git: bool = False, folder_name: str = "repo", architecture: bool = True):
         self._tmp = tempfile.TemporaryDirectory(prefix="design-test-")
@@ -35,7 +36,8 @@ class Workspace:
         shutil.copytree(REPO_ROOT / "designs" / "templates", self.root / "designs" / "templates")
         if architecture:
             shutil.copytree(REPO_ROOT / "docs" / "architecture", self.root / "docs" / "architecture")
-            for name in ("README.md", "DECISIONS.md", "IMPLEMENTATION_BRIEF.md", "index/architecture-index.md"):
+            for name in ("README.md", "DECISIONS.md", "IMPLEMENTATION_BRIEF.md", "index/architecture-index.md",
+                         "diagrams/registry.yml", "index/diagram-index.md"):
                 (self.root / "designs" / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(REPO_ROOT / "designs" / name, self.root / "designs" / name)
         # Always a real (empty) Git repository: New Feature reads the committed history to never

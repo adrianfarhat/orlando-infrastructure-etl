@@ -31,8 +31,11 @@ from .workspace import DesignError
 
 FEATURE_ID = re.compile(r"FD-(\d{4})\Z")
 DIAGRAM_ID = re.compile(r"(FD-\d{4})-D([1-9]\d{0,3})\Z")
-# A metadata line added or removed in a commit: "+feature_id: FD-0003", '-diagram_id: "FD-0003-D2"  # ...'
-_HISTORY_LINE = re.compile(r"""^[+-]\s*(?:feature_id|diagram_id)\s*:\s*["']?(FD-\d{4}(?:-D[1-9]\d{0,3})?)["']?\s*(?:#.*)?$""")
+DOCUMENT_DIAGRAM_ID = re.compile(r"AD-(\d{4})\Z")      # diagrams owned by a document (diagram library U1)
+# A metadata line added or removed in a commit: "+feature_id: FD-0003", '-diagram_id: "FD-0003-D2"  # ...',
+# or a registry entry written as a YAML list item: "+  - diagram_id: AD-0013" (designs/diagrams/registry.yml).
+_HISTORY_LINE = re.compile(r"""^[+-]\s*(?:-\s+)?(?:feature_id|diagram_id)\s*:\s*["']?"""
+                           r"""(FD-\d{4}(?:-D[1-9]\d{0,3})?|AD-\d{4})["']?\s*(?:#.*)?$""")
 _GIT_TIMEOUT = 120
 # Environment variables that would point `git -C <root>` at another repository or index are
 # dropped; GIT_NO_LAZY_FETCH stops a partial clone from fetching missing objects over the
@@ -117,3 +120,13 @@ def next_diagram_id(owner: str, in_tree: list[str], committed: set[str]) -> str:
     if following > 9999:
         raise DesignError(f"no diagram IDs left for {owner}")
     return f"{owner}-D{following}"
+
+
+def next_document_diagram_id(in_tree: list[str], committed: set[str]) -> str:
+    """AD- and one higher than every document-owned diagram number in the working tree and
+    in the history (an AD ID is never reused, including after retirement)."""
+    numbers = [int(m.group(1)) for m in (DOCUMENT_DIAGRAM_ID.match(x) for x in [*in_tree, *committed]) if m]
+    following = max(numbers, default=0) + 1
+    if following > 9999:
+        raise DesignError("no document diagram IDs left (AD-9999 is in use)")
+    return f"AD-{following:04d}"

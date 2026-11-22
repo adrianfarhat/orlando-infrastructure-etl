@@ -53,13 +53,16 @@ class ArchitectureDocument:
 
 def documents(root: Path) -> list[ArchitectureDocument]:
     """Every Markdown file under docs/architecture/ (any depth), in path order. Hidden
-    files and folders and symbolic links are skipped."""
+    files and folders and symbolic links are skipped, and so is docs/architecture/diagrams/:
+    standalone diagram sources are listed under their owning document by the registry, never
+    read as documents, so no diagram is counted twice (diagram library U9)."""
     base = root / ARCHITECTURE
     found = []
     if not base.is_dir():
         return found
     for folder, dirs, files in os.walk(base):
-        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not os.path.islink(os.path.join(folder, d)))
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not os.path.islink(os.path.join(folder, d))
+                         and not (Path(folder) == base and d == "diagrams"))
         for name in sorted(files):
             path = Path(folder) / name
             if not name.lower().endswith(".md") or name.startswith(".") or path.is_symlink():
@@ -110,9 +113,29 @@ def _label(heading: markdown.Heading) -> str:
     return _cell(heading.text) or "(empty heading)"
 
 
+def _registry_ids(root: Path, diagrams: list[CatalogDiagram]) -> dict[str, str]:
+    """Catalog ID -> registry ID for the architecture diagrams registered in place (stage M0)."""
+    from . import registry                         # imports this module lazily
+    reg = registry.load(root)
+    position: dict[tuple, int] = {}
+    by_position = {}
+    for d in diagrams:
+        key = registry.catalog_key(d)
+        position[key] = position.get(key, 0) + 1
+        by_position[(key[0], key[1], position[key])] = d.diagram_id
+    out = {}
+    for e in reg.entries:
+        if e.format == "mermaid-embedded" and e.status == "active":
+            did = by_position.get((e.path, None if e.anchor in ("", "top") else e.anchor, e.ordinal))
+            if did is not None:
+                out[did] = e.diagram_id
+    return out
+
+
 def render_architecture_index(root: Path) -> str:
     docs = documents(root)
     diagrams = catalog(docs)
+    registered = _registry_ids(root, diagrams)
     readable = [d for d in docs if d.parsed is not None]
     heading_count = sum(len(d.parsed.headings) for d in readable)
     types: dict[str, int] = {}
@@ -130,14 +153,18 @@ def render_architecture_index(root: Path) -> str:
     lines += ["## Diagrams", ""]
     if diagrams:
         lines += ["A diagram ID is the document and the anchor of the heading above the diagram. It changes when",
-                  "that heading is renamed. The type is the diagram's `%% diagram-type:` marker",
+                  "that heading is renamed. The registry ID is the diagram's stable ID in the",
+                  "[diagram registry](../diagrams/registry.yml) (see [diagram-index.md](diagram-index.md)); the diagram ID",
+                  "stays valid as its alias. The type is the diagram's `%% diagram-type:` marker",
                   "([conventions.md section 2](../../docs/architecture/conventions.md#2-diagram-types)).", "",
-                  "| Diagram ID | Type | Document | Under the heading |", "|---|---|---|---|"]
+                  "| Diagram ID | Registry ID | Type | Document | Under the heading |", "|---|---|---|---|---|"]
         for d in diagrams:
             name = d.document[len(ARCHITECTURE) + 1:]
             under = (f"[{_label(d.heading)}]({_target(d.document, d.heading.anchor)})"
                      if d.heading is not None and d.heading.anchor else "(before the first heading)")
-            lines.append(f"| `{d.diagram_id}` | {_cell(d.diagram_type) if d.diagram_type else '*' + NO_TYPE + '*'} | "
+            reg_id = f"`{registered[d.diagram_id]}`" if d.diagram_id in registered else "not registered"
+            lines.append(f"| `{d.diagram_id}` | {reg_id} | "
+                         f"{_cell(d.diagram_type) if d.diagram_type else '*' + NO_TYPE + '*'} | "
                          f"[{_cell(name)}]({_target(d.document)}) | {under} |")
     else:
         lines.append("No Mermaid diagrams.")

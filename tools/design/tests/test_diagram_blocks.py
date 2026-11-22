@@ -4,7 +4,9 @@ import shutil
 import unittest
 from pathlib import Path
 
-from tools.design import architecture, diagrams, links, markdown, workspace
+import re
+
+from tools.design import architecture, diagrams, links, markdown, registry, workspace
 from tools.design.tests.marksharp_port import transform
 from tools.design.tests.test_design import REPO_ROOT, Workspace, cmd
 from tools.design.workspace import SECTIONS, new_feature
@@ -32,11 +34,22 @@ def problems(ws):
 
 
 def outside(text):
-    """The text with every diagram block's generated lines removed (what people wrote)."""
+    """The text with every diagram block's generated lines removed (what people wrote); a
+    start marker's fingerprint (U13) is generated too, so it is removed as well."""
     lines = text.replace("\r\n", "\n").split("\n")
     for start, end in reversed(diagrams.spans(text)):
         del lines[start + 1:end]
+        lines[start] = re.sub(r" sha256:[0-9a-f]{16}(?= -->)", "", lines[start])
     return "\n".join(lines)
+
+
+def start_line(lines, diagram_id):
+    """Index of the start marker for `diagram_id` (with or without a fingerprint)."""
+    for i, line in enumerate(lines):
+        m = diagrams.START.match(line.strip())
+        if m and m.group("id") == diagram_id:
+            return i
+    raise ValueError(diagram_id)
 
 
 class Placement(unittest.TestCase):
@@ -76,7 +89,8 @@ class Generation(unittest.TestCase):
             lines = ws.text(f.path).split("\n")
             known = diagrams.sources(ws.root)
             for diagram_id in (BIG, ETL):
-                i = lines.index(START.format(diagram_id))
+                i = start_line(lines, diagram_id)
+                self.assertRegex(lines[i], r" sha256:[0-9a-f]{16} -->$")                 # U13 fingerprint
                 caption, fence = lines[i + 1], lines[i + 2]
                 src = known[diagram_id]
                 end = lines.index(END, i)
@@ -189,9 +203,12 @@ class Validation(unittest.TestCase):
         self.generated(ETL)
         doc = self.ws.root / "docs/architecture/etl-workflow.md"
         doc.write_bytes(doc.read_bytes().replace("### Streets → `road_segments`".encode(), "### Streets loader".encode()))
-        self.expect("unknown diagram ID 'etl-workflow/streets--road_segments' (did you mean etl-workflow/streets-loader?)")
+        # registered in place (M0): the reference is reported as broken and needs an explicit relink (U11)
+        self.expect("diagram ID 'etl-workflow/streets--road_segments' cannot be found: no Mermaid diagram 1 under "
+                    "#streets--road_segments in docs/architecture/etl-workflow.md (E7)")
+        self.assertIn("registry relink AD-0006 --heading", "\n".join(problems(self.ws)))
         doc.unlink()
-        self.expect("unknown diagram ID 'etl-workflow/streets--road_segments'")
+        self.expect("diagram ID 'etl-workflow/streets--road_segments' cannot be found")
 
     def test_missing_unmatched_nested_and_malformed_markers(self):
         cases = {
@@ -208,21 +225,52 @@ class Validation(unittest.TestCase):
                 self.write(original.replace("## 3. Logic\n", "## 3. Logic\n\n" + text))
                 self.expect(fragment)
 
+    def conflict(self, fragment):
+        """U13: a conflict is reported (E15) and never overwritten by index."""
+        found = problems(self.ws)
+        self.assertTrue(any(fragment in p and "(E15)" in p for p in found), found)
+        before = self.path.read_bytes()
+        code, _, err = cmd(self.ws.root, "index")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.path.read_bytes(), before)                                # never overwritten
+        self.assertIn("(E15)", err)
+        self.assertEqual(cmd(self.ws.root, "check")[0], 1)
+
     def test_stale_and_hand_edited_content(self):
         text = self.generated(ETL)
-        self.write(text.replace("S1 --> S2", "S1 --> S2X"))                             # Mermaid edited by hand
-        self.expect(f"the diagram block for {ETL} differs from the authoritative Mermaid source", rewritten=True)
-        doc = self.ws.root / "docs/architecture/etl-workflow.md"                      # source changed: stale
+        doc = self.ws.root / "docs/architecture/etl-workflow.md"                      # case 1: source changed only
         doc.write_bytes(doc.read_bytes().replace(b"S1 --> S2", b"S1 --> S2b"))
         architecture.write_architecture_index(self.ws.root)
-        self.expect("differs from the authoritative Mermaid source in docs/architecture/etl-workflow.md#streets--road_segments",
+        self.expect(f"the diagram block for {ETL} is out of date with its source docs/architecture/etl-workflow.md",
                     rewritten=True)
-        self.assertIn("S1 --> S2b", self.path.read_text(encoding="utf-8"))            # index brought it up to date
+        fresh = self.path.read_text(encoding="utf-8")
+        self.assertIn("S1 --> S2b", fresh)                                             # index brought it up to date
+        self.write(fresh.replace("S1 --> S2b", "S1 --> S2X"))                          # case 2: edited by hand
+        self.conflict(f"the diagram block for {ETL} was edited by hand")
+        doc.write_bytes(doc.read_bytes().replace(b"S1 --> S2b", b"S1 --> S2c"))        # case 3: both changed
+        architecture.write_architecture_index(self.ws.root)
+        self.conflict(f"the diagram block for {ETL} and its source docs/architecture/etl-workflow.md have both changed")
+        line = start_line(self.path.read_text(encoding="utf-8").split("\n"), ETL) + 1
+        plan = diagrams.plan_reconcile(self.ws.root, self.f.path, line, "discard")      # explicit reconciliation
+        self.assertIn("-  S1 --> S2X", plan.diff.replace("\r", ""))
+        self.assertEqual(cmd(self.ws.root, "reconcile", "--file", self.f.path, "--line", str(line), "--discard",
+                             "--confirm", plan.token)[0], 0)
+        self.assertIn("S1 --> S2c", self.path.read_text(encoding="utf-8"))
+        self.assertEqual(problems(self.ws), [])
+
+    def test_an_old_marker_without_a_fingerprint_keeps_the_t96_behaviour(self):
+        put(self.ws, self.f.path, "## 3. Logic\n", block(ETL))
+        cmd(self.ws.root, "index")
+        text = self.path.read_text(encoding="utf-8")
+        old = re.sub(r" sha256:[0-9a-f]{16} -->", " -->", text)                       # a block made before U13
+        self.write(old.replace("S1 --> S2", "S1 --> S2X"))
+        self.expect(f"the diagram block for {ETL} differs from the authoritative Mermaid source", rewritten=True)
+        self.assertEqual(self.path.read_text(encoding="utf-8"), text)                   # the first refresh adds one
 
     def test_edited_caption_or_source_link(self):
         text = self.generated(ETL)
         self.write(text.replace("etl-workflow.md#streets--road_segments)", "etl-workflow.md#elsewhere)"))
-        self.expect("has a caption or source link that differs from the generated one", rewritten=True)
+        self.conflict(f"the diagram block for {ETL} was edited by hand")                 # U13: a caption edit too
 
     def test_an_unclosed_fence_is_reported_not_swallowed(self):
         text = self.generated(ETL)
@@ -271,8 +319,12 @@ class Validation(unittest.TestCase):
                 after = path.read_bytes().decode("utf-8")
                 self.assertEqual(outside(after), outside(before))
                 self.assertEqual(problems(ws), [])
-                path.write_bytes(after.replace("S1 --> S2", "S1 --> S2x").encode("utf-8"))   # stale block
+                path.write_bytes(after.replace("S1 --> S2", "S1 --> S2x").encode("utf-8"))   # a hand edit
                 cmd(ws.root, "index")
+                self.assertIn("S1 --> S2x", path.read_bytes().decode("utf-8"))           # a conflict: not overwritten
+                line = start_line(path.read_bytes().decode("utf-8").split("\n"), ETL) + 1
+                plan = diagrams.plan_reconcile(ws.root, f.path, line, "discard")
+                cmd(ws.root, "reconcile", "--file", f.path, "--line", str(line), "--discard", "--confirm", plan.token)
                 self.assertEqual(path.read_bytes().decode("utf-8"), after)              # restored exactly
                 self.assertEqual(problems(ws), [])
 
@@ -315,7 +367,7 @@ class ProposedDiagrams(unittest.TestCase):
     """Milestone 2: proposed diagrams in `diagrams/` files are sources too."""
 
     def proposed(self, ws, rel, diagram_id, mermaid="flowchart LR\n  A[\"Step (planned)\"] --> B\n\n  B --> C",
-                 title="Overlap model", extra=""):
+                 title="Overlap model", extra="", register=True):
         text = (REPO_ROOT / "designs/templates/diagram.md").read_bytes().decode("utf-8").replace("\r\n", "\n")
         owner = diagram_id.split("-D")[0] if diagram_id.startswith("FD-") else ""
         text = (text.replace('diagram_id: ""', f'diagram_id: "{diagram_id}"').replace('title: ""', f'title: "{title}"')
@@ -325,6 +377,8 @@ class ProposedDiagrams(unittest.TestCase):
         path = ws.root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(text.encode("utf-8"))
+        if register:                                                    # the registry is authoritative (PR A)
+            registry.adopt(ws.root, rel, "process")
         return path
 
     def test_a_proposed_diagram_is_embedded_with_its_own_label_and_link(self):
@@ -349,48 +403,62 @@ class ProposedDiagrams(unittest.TestCase):
             put(ws, f.path, "## 3. Logic\n", block("FD-0001-D1"))
             cmd(ws.root, "index")
             src.write_bytes(src.read_bytes().replace(b"B --> C", b"B --> D"))           # the source changed
-            self.assertIn("differs from the authoritative Mermaid source in designs/features/diagrams/overlap.md",
+            self.assertIn("is out of date with its source designs/features/diagrams/overlap.md",
                           "\n".join(problems(ws)))
             cmd(ws.root, "index")
             self.assertIn("B --> D", ws.text(f.path))
             self.assertEqual(problems(ws), [])
-            src.write_bytes(src.read_bytes().replace(b'"FD-0001-D1"', b'"FD-0001-D2"'))  # the ID was renamed
-            self.assertIn("unknown diagram ID 'FD-0001-D1' (did you mean FD-0001-D2?)", "\n".join(problems(ws)))
+            src.write_bytes(src.read_bytes().replace(b'"FD-0001-D1"', b'"FD-0001-D2"'))  # the in-file ID was changed
+            self.assertIn("holds FD-0001-D2 but the registry maps FD-0001-D1 to it (E3)", "\n".join(problems(ws)))
             src.write_bytes(src.read_bytes().replace(b'"FD-0001-D2"', b'"FD-0001-D1"'))
-            self.proposed(ws, "designs/features/diagrams/overlap.md", "FD-0001-D1",
+            self.proposed(ws, "designs/features/diagrams/overlap.md", "FD-0001-D1", register=False,
                           extra="\n```mermaid\nflowchart LR\n  X --> Y\n```\n")             # two Mermaid blocks
             self.assertIn("must hold exactly one Mermaid block (found 2)", "\n".join(problems(ws)))
             before = (ws.root / f.path).read_bytes()
             cmd(ws.root, "index")
             self.assertEqual((ws.root / f.path).read_bytes(), before)                     # not rewritten
             src.unlink()                                                                   # the file is gone
-            self.assertIn("unknown diagram ID 'FD-0001-D1'", "\n".join(problems(ws)))
+            found = "\n".join(problems(ws))
+            self.assertIn("FD-0001-D1's source designs/features/diagrams/overlap.md does not exist (E7)", found)
+            self.assertIn("diagram ID 'FD-0001-D1' cannot be read", found)
 
-    def test_ambiguous_ids_are_reported_not_guessed(self):
+    def test_copies_and_catalog_like_ids_are_reported_not_guessed(self):
+        """The registry decides: a second file with a registered ID is a copy (E4), a file with a
+        catalog-like ID is not a valid diagram ID (E5), and each block resolves to one source."""
         with Workspace() as ws:
             f = new_feature(ws.root, "A")
             self.proposed(ws, "designs/features/diagrams/one.md", "FD-0001-D1")
-            self.proposed(ws, "designs/features/grp/diagrams/two.md", "FD-0001-D1")
-            self.proposed(ws, "designs/features/diagrams/clash.md", ETL)                 # same as a catalog ID
+            self.proposed(ws, "designs/features/grp/diagrams/two.md", "FD-0001-D1", register=False)
+            self.proposed(ws, "designs/features/diagrams/clash.md", ETL, register=False)  # same as a catalog ID
             put(ws, f.path, "## 3. Logic\n", block("FD-0001-D1") + block(ETL))
             found = "\n".join(problems(ws))
-            self.assertIn("diagram ID 'FD-0001-D1' is used by more than one diagram", found)
-            self.assertIn(f"diagram ID '{ETL}' is used by more than one diagram", found)
+            self.assertIn("is a copy of FD-0001-D1 (designs/features/diagrams/one.md): create diagrams with "
+                          "`python -m tools.design new diagram` (E4)", found)
+            self.assertIn(f"diagram_id '{ETL}' is not a valid diagram ID", found)
+            self.assertNotIn("is used by more than one diagram", found)
+            cmd(ws.root, "index")
+            text = ws.text(f.path)
+            self.assertIn("**🔷 Proposed: [Overlap model](diagrams/one.md)**", text)           # the registered one
+            self.assertIn("**✅ Current architecture:", text)                                   # the catalog one
 
     def test_an_id_with_whitespace_is_reported(self):
         """QA N7: no marker can name it, so the file says so."""
         with Workspace() as ws:
             f = new_feature(ws.root, "A")
-            self.proposed(ws, "designs/features/diagrams/spaced.md", "FD 0001 D1")
+            self.proposed(ws, "designs/features/diagrams/spaced.md", "FD 0001 D1", register=False)
             put(ws, f.path, "## 3. Logic\n", block("FD"))
             found = "\n".join(problems(ws))
             self.assertIn("unknown diagram ID 'FD'", found)
-            self.assertIn("diagram_id 'FD 0001 D1' contains whitespace, so no diagram marker can name it", found)
+            self.assertIn("diagram_id 'FD 0001 D1' is not a valid diagram ID, so it cannot be registered or named by a "
+                          "diagram block", found)
 
     def test_the_existing_proposed_diagram_workflow_still_passes(self):
         with Workspace() as ws:
             new_feature(ws.root, "A")
-            path = self.proposed(ws, "designs/features/diagrams/copy.md", "FD-0001-D1")
+            path = self.proposed(ws, "designs/features/diagrams/copy.md", "FD-0001-D1", register=False)
+            self.assertIn("FD-0001-D1 is not registered: run `python -m tools.design registry adopt "
+                          "designs/features/diagrams/copy.md --category <category>` (E5)", "\n".join(problems(ws)))
+            registry.adopt(ws.root, "designs/features/diagrams/copy.md", "process")
             path.write_bytes(path.read_bytes().replace(b'source_diagram: ""', f"source_diagram: {ETL}".encode())
                              .replace(b'source_document: ""', b"source_document: docs/architecture/etl-workflow.md")
                              .replace(b'source_heading: ""', b"source_heading: streets--road_segments"))

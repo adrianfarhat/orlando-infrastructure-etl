@@ -799,8 +799,12 @@ def check(root: Path) -> list[Problem]:
     problems += diagrams.problems(root, features)
     from . import ownership                       # T-97: feature-owned diagram files
     problems += ownership.problems(root, features)
+    from . import registry                        # T-97 PR A: the diagram registry
+    problems += registry.problems(root, features)
     if not index_is_fresh(root):
         problems.append(Problem(INDEX, "out of date or missing: run `python -m tools.design index`"))
+    if not registry.diagram_index_is_fresh(root):
+        problems.append(Problem(registry.DIAGRAM_INDEX, "out of date or missing: run `python -m tools.design index`"))
     from .architecture import ARCHITECTURE_INDEX, architecture_index_is_fresh   # imports this module
     if not architecture_index_is_fresh(root):
         problems.append(Problem(ARCHITECTURE_INDEX, f"out of date with {ARCHITECTURE}/ or missing: "
