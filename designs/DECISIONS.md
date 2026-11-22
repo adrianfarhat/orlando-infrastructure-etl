@@ -469,3 +469,24 @@ implemented). Scope, order and acceptance tests are on the T-97 card; evidence i
    fingerprint, and "Edit source" also finds a diagram by an alias.
 8. **The registry lock** `designs/diagrams/.registry.lock` is listed in `.gitignore`; it exists only
    while a command runs.
+
+## 2026-11-22: T-97 PR A — safeguards requested before merge (for review)
+
+1. **Blocks without a fingerprint are never overwritten** unless that is lossless. A marker made
+   before U13 gives no record of what was generated, so a hand edit cannot be told from a stale
+   copy. Such a block is migrated only when it is exactly what its source generates now (only
+   the start marker gains the fingerprint); any other content is preserved and reported as a
+   conflict (E15) for explicit reconciliation. This replaces item 5 of the PR A implementation
+   choices ("keep the T-96 comparison until the first refresh") and the corresponding sentence of
+   the diagram library design.
+2. **Stale-lock recovery is verified, never automatic.** While a command runs it holds an
+   operating-system lock on `designs/diagrams/.registry.lock` (released by the system when the
+   process ends, however it ends); the file records the process ID and the computer.
+   `registry unlock` removes the lock only after taking that operating-system lock itself (so no
+   process holds it) on the same computer, and only with `--confirm`. A held, foreign or unreadable
+   lock is always kept. No network or process-control module is used (the T-94 purity rule holds).
+3. **One write guard for architecture sources.** Every file the diagram commands write passes
+   a guard that refuses anything under `docs/architecture/`, including `docs/architecture/diagrams/`.
+   `registry relink --title` on a document-owned standalone source updates the registry only when
+   the source already has that title (technical-lead changes the file first); for an embedded
+   architecture diagram it changes the registry only. Reconciliation never writes there either.

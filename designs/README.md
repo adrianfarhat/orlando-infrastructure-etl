@@ -349,7 +349,28 @@ python -m tools.design reconcile --file designs/features/test1.md --line 52 --ap
 Mermaid into its feature-owned source (refused if the source changed since the preview) and then
 regenerates the block; architecture diagrams change only through technical-lead's documentation
 workflow. Mark Sharp's reformatting of a generated block is a conflict too; `--discard` restores
-it. Blocks made before fingerprints keep the earlier behaviour until `index` next refreshes them.
+it.
+
+**Blocks made before fingerprints** carry no record of what was generated, so a hand edit cannot be
+told from a stale copy. `index` migrates such a block only when that loses nothing: if it is
+exactly what its source generates now, only its start marker gains the fingerprint. Any other
+content is preserved and reported as a conflict (E15, "generated before fingerprints"); resolve
+it with `reconcile` as above.
+
+**A stale registry lock.** Diagram commands hold `designs/diagrams/.registry.lock` while they run;
+a command that was killed can leave it behind, and every diagram command then refuses (E12). To
+recover, run `python -m tools.design registry unlock`. It removes nothing on its own: it reports
+whether the lock is still held. The running command holds an operating-system lock on the file,
+which the system releases when that process ends, so the check cannot be fooled by a reused
+process ID. Only when no process holds it (on this computer) does `--confirm` remove it. A lock
+that is still held, was taken on another computer, or cannot be read is always kept; delete such
+a file by hand only when you are sure no diagram command is running anywhere.
+
+**Architecture sources are never written by these commands.** Every file the diagram commands
+write passes one guard that refuses anything under `docs/architecture/` (including
+`docs/architecture/diagrams/`): those files change only through technical-lead's documentation
+workflow. `registry relink --title` on a document-owned diagram updates the registry only after
+its source already has the new title.
 
 ## Editing in a formatted view (Mark Sharp)
 
