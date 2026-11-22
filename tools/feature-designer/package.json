@@ -1,0 +1,57 @@
+{
+  "name": "feature-designer",
+  "displayName": "Feature Designer",
+  "description": "Formatted view of the Orlando feature specifications (designs/features) with a hover \"+\" to insert existing diagrams. Markdown stays the only storage; edits go through VS Code's document API.",
+  "version": "0.2.0",
+  "publisher": "orlando-infrastructure",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./src/extension.js",
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Feature Designer runs the repository's design tooling (Python), so it needs a trusted workspace."
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "featureDesigner.editor",
+        "displayName": "Feature Designer",
+        "selector": [{ "filenamePattern": "**/designs/features/**/*.md" }],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      { "command": "featureDesigner.selectPython", "title": "Feature Designer: Select Python Interpreter" },
+      { "command": "featureDesigner.showLog", "title": "Feature Designer: Show Log" }
+    ],
+    "configuration": {
+      "title": "Feature Designer",
+      "properties": {
+        "featureDesigner.pythonPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Python interpreter that runs `python -m tools.design` (machine-level only; a workspace or folder setting is ignored, so a repository cannot choose the program that runs). When empty, Feature Designer offers the repository's `.venv` interpreter and saves it only after you confirm."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test:unit": "node --test test/unit",
+    "test:gui": "node test/gui/e2e.js"
+  },
+  "dependencies": {
+    "dompurify": "3.4.17",
+    "markdown-it": "14.3.3",
+    "mermaid": "12.3.0"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "3.1.0",
+    "playwright-core": "1.65.0"
+  }
+}

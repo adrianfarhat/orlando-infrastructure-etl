@@ -253,6 +253,29 @@ class Requests(unittest.TestCase):
                     self.assertEqual(out, designer_api.dumps(response) + "\n")                 # canonical bytes
             self.assertEqual(snapshot(ws.root), before)
 
+    def test_serve_answers_one_line_per_request_until_end_of_input(self):
+        """T-97 Phase 2: the extension keeps one process; responses echo request_id."""
+        with Workspace() as ws:
+            f = new_feature(ws.root, "A")
+            text = (ws.root / f.path).read_text(encoding="utf-8")
+            at = after(text.split("\n"), "- **Desired outcome:**")
+            lines = [json.dumps({"version": 1, "op": "library", "request_id": 1}), "",
+                     "{broken", json.dumps({"version": 1, "op": "insert", "path": f.path, "text": text, "at": at,
+                                            "diagram_id": ETL, "request_id": "two"}),
+                     json.dumps({"version": 1, "op": "insert", "path": f.path, "text": text, "at": 0,
+                                 "diagram_id": ETL, "request_id": 3})]
+            before = snapshot(ws.root)
+            with mock.patch("sys.stdin", io.StringIO("\n".join(lines) + "\n")):
+                code, out, err = cmd(ws.root, "designer", "--serve")
+            self.assertEqual((code, err), (0, ""))
+            responses = [json.loads(l) for l in out.splitlines()]
+            self.assertEqual([(r.get("request_id"), r["ok"]) for r in responses],
+                             [(1, True), (None, False), ("two", True), (3, False)])
+            self.assertEqual(responses[1]["error"]["code"], "bad-request")
+            self.assertEqual(responses[2]["edits"], request(ws, op="insert", path=f.path, text=text, at=at,
+                                                            diagram_id=ETL)[0]["edits"])
+            self.assertEqual(snapshot(ws.root), before)                                   # serve writes nothing
+
     def test_unexpected_input_still_answers_in_json(self):
         """QA D2: a lone surrogate from an editor buffer, or absurdly deep JSON, never gives a traceback."""
         with Workspace() as ws:

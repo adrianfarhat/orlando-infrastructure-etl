@@ -13,3 +13,10 @@ data/raw/
 data/processed/
 # Local reports from the change-impact tool (tools/impact, T-83); never committed.
 .local/
+# Feature Designer (T-97): isolated toolchain, installed dependencies, the VS Code test build,
+# GUI test output and packages; all re-created by tools/feature-designer/toolchain/bootstrap.py.
+tools/feature-designer/node_modules/
+tools/feature-designer/.toolchain/
+tools/feature-designer/.vscode-test/
+tools/feature-designer/test/gui/.run/
+tools/feature-designer/*.vsix
