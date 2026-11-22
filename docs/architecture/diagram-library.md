@@ -227,6 +227,11 @@ docs/architecture/
   `designs/features/`. `registry relink` refuses any other location.
 - Document-owned sources in `docs/architecture/diagrams/` are owned and edited by
   technical-lead, like the documents themselves.
+- **One write guard for architecture files.** Every file the diagram commands write
+  passes one guard that refuses anything under `docs/architecture/`, including
+  `docs/architecture/diagrams/`. Changes there are made only through technical-lead's
+  documentation workflow; any change to this restriction is deferred to M1
+  (section 12.2).
 
 ### 5.3 Reuse by several features
 
@@ -291,8 +296,9 @@ and fields are only added.
 2. Every block for that ID is now stale, because its generated content differs from
    what `resolve` produces. The registry fields that shape a block (title, path) count
    as part of the source, so an untouched block after a relink is case 1 of
-   section 6.5 (source changed, copy untouched). Blocks whose marker has no fingerprint
-   yet are detected by the whole-block comparison T-96 uses today.
+   section 6.5 (source changed, copy untouched). A block whose marker has no
+   fingerprint yet is refreshed only when that is lossless (section 6.5, "Markers
+   without a fingerprint").
 3. Refreshing:
    - **open documents without unsaved changes**: Feature Designer applies a guarded
      refresh edit (base SHA-256, line count and document version must match) that
@@ -387,14 +393,24 @@ the user's click; each is one undoable step.
    changed, it stops and the preview must be made again. It then regenerates the block.
    - **Architecture (document-owned) sources** change only through technical-lead's
      documentation workflow. Feature Designer does not write them; it prepares the
-     proposed change for that workflow.
+     proposed change for that workflow. Reconciliation never writes under
+     `docs/architecture/`: the write guard of section 5.2 refuses it.
    - **Feature-owned sources** follow ownership and the existing editing safeguards:
      the guarded edit with base hash, the unsaved-edit rules, and only the owner's
      file.
 
-**Markers without a fingerprint** (existing blocks): today's T-96 behaviour. Any
-difference from the source is reported as stale, and `index` rewrites the block only
-when the file has no structural problem. The first refresh adds the fingerprint.
+**Markers without a fingerprint** (blocks generated before U13). Such a marker gives no
+record of what was generated, so a hand edit cannot be told from a stale copy. The
+block is therefore:
+
+- **migrated only when that is lossless**: when the block is exactly what its source
+  generates now, only the start marker gains its fingerprint and the content is
+  unchanged;
+- otherwise **preserved and reported as E15** ("generated before fingerprints"); it
+  changes only through explicit reconciliation (Discard manual change or Apply to
+  source, above).
+
+Nothing is overwritten on the assumption that it is a stale copy.
 
 ### 6.6 Rendering in Markdown
 
@@ -502,7 +518,12 @@ sources and `registry.yml`.
   registered path to the unregistered file with the same in-file ID and report it as
   moved, with the exact `registry relink` command (E6).
 - **Title only**: `registry relink --title` updates the registry title (and the
-  `mermaid-md` front matter); captions are refreshed as above.
+  `mermaid-md` front matter of a feature-owned source); captions are refreshed as
+  above. For document-owned diagrams the write guard of section 5.2 applies:
+  - a **standalone source** in `docs/architecture/diagrams/`: the registry is updated
+    only when the source already has that title (technical-lead changes the file
+    first);
+  - an **embedded diagram** (`mermaid-embedded`): only the registry changes.
 - The owner never changes on a move. `relink` accepts only the approved directory of
   the owner kind: `docs/architecture/diagrams/` for document-owned sources, a
   `diagrams/` folder under `designs/features/` for feature-owned sources (U12).
@@ -533,10 +554,16 @@ exist (T-97 Q4), `check` reports embedded diagrams in features as advisory.
 
 `new diagram` runs these steps, in order, under a registry lock:
 
-1. **Take the lock.** Create `designs/diagrams/.registry.lock` exclusively (with process
-   ID and time; git-ignored). If it exists, refuse with "another diagram command is
-   running". A stale lock older than 10 minutes is reported, never broken
-   automatically.
+1. **Take the lock.** Create `designs/diagrams/.registry.lock` (git-ignored). The
+   running command holds an operating-system lock on that file, which the system
+   releases when the process ends, however it ends; the file records the process ID
+   and the computer. If another command holds the lock, refuse with "another diagram
+   command is running".
+   - **A lock is never broken automatically.** `python -m tools.design registry unlock`
+     removes a leftover lock file only after verifying, by taking that operating-system
+     lock itself, that no process holds it, only on the same computer, and only with
+     `--confirm`.
+   - A held, foreign (other computer) or unreadable lock is always kept.
 2. **Read and validate the registry and remember its SHA-256.** Refuse if the registry
    has problems.
 3. **Allocate the ID** with the never-reuse allocator, now also counting registry IDs,
@@ -598,14 +625,16 @@ unchanged from T-97 Phase 1 (decision 4 in [DECISIONS.md](../../designs/DECISION
 | E9 | Owner does not exist, or the ID prefix does not match the owner kind | `FD-0002-D1 is owned by FD-0001 in the registry: the ID prefix must be the owner's` / `AD-0003 is owned by a feature: AD- IDs belong to document owners` |
 | E10 | Visual file has more than one page, no decodable graph, or a transparent background | a specific message for each |
 | E11 | Reference to a retired diagram | `FD-0001-D3 was retired on …` |
-| E12 | Lock held, or registry changed during a command | `another diagram command is running` / `the registry changed while creating …; nothing was written` |
+| E12 | Lock held, or registry changed during a command | `another diagram command is running` / `the registry changed while creating …; nothing was written` (a leftover lock is removed only with `registry unlock --confirm`, section 8.1) |
 | E13 | Hand-written image link to a `.drawio.svg` outside a diagram block | `…md line 40 links …x.drawio.svg directly: use a diagram block (FD-0001-D3) so the reference survives moves` |
 | E14 | A generated path in a block no longer matches the registry | `stale image path in the FD-0001-D3 block of …md: expected …; run index or Refresh` |
-| E15 | Generated content changed by hand (U13): case 2, the block differs from its fingerprint and the source is unchanged; or case 3, the block and the source have both changed | Case 2: `…md line 52: the AD-0013 block was edited by hand (n lines changed: …); the source is unchanged; not refreshed. Choose Discard manual change or Apply to source` / Case 3: `…md line 52: the AD-0013 block was edited by hand and its source has also changed since the block was generated; not refreshed. Review both diffs, then choose Discard manual change or Apply to source` |
+| E15 | Generated content changed by hand (U13): case 2, the block differs from its fingerprint and the source is unchanged; or case 3, the block and the source have both changed; or a block without a fingerprint that differs from what its source generates now ("generated before fingerprints") | Case 2: `…md line 52: the AD-0013 block was edited by hand (n lines changed: …); the source is unchanged; not refreshed. Choose Discard manual change or Apply to source` / Case 3: `…md line 52: the AD-0013 block was edited by hand and its source has also changed since the block was generated; not refreshed. Review both diffs, then choose Discard manual change or Apply to source` |
 
-A block whose marker has no fingerprint yet cannot be classified; a hand edit there is
-reported as a stale copy, as T-96 does today, until its first refresh adds the
-fingerprint.
+E15 also covers a block whose marker has no fingerprint yet and whose content differs
+from what its source generates now ("generated before fingerprints"): a hand edit
+cannot be told from a stale copy, so the block is preserved and changes only through
+explicit reconciliation (section 6.5). A block that matches its source exactly is
+migrated losslessly instead (only the marker gains its fingerprint).
 
 ## 10. Visual editor rules (draw.io)
 
@@ -775,8 +804,9 @@ To be confirmed before M0.
 - **T-96**: markers keep working with catalog IDs (now aliases) and accept new IDs.
   Mermaid copies in feature documents stay byte-identical to today until a source
   changes. U13 supersedes T-96 decision 2 (whole-block comparison, not a fingerprint):
-  start markers carry a fingerprint inside their HTML comment, and markers without one
-  keep today's behaviour until their first refresh. U14 supersedes T-96 decision 3 for
+  start markers carry a fingerprint inside their HTML comment. Markers without one keep
+  resolving; their blocks are migrated only when lossless and are otherwise preserved
+  and reported (E15). U14 supersedes T-96 decision 3 for
   architecture documents only (verbatim copies, no `%%`); feature documents keep the
   `%%` rule.
 - **T-94**: the architecture catalog and index become registry-backed after M0; until
