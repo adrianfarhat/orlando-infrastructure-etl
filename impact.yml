@@ -12,13 +12,15 @@ ignore:
 # Order matters: data-contracts.md is a "contract" before it is a "doc", and
 # database/test_connection.py is a script ("code"), so no test_*.py pattern is used.
 purposes:
-  - {purpose: test,         paths: ["tools/impact/tests/**", "tools/design/tests/**", "**/*.test.ts", "**/*.test.tsx"]}
+  - {purpose: test,         paths: ["tools/impact/tests/**", "tools/design/tests/**", "tools/feature-designer/test/**",
+                                    "**/*.test.ts", "**/*.test.tsx"]}
   - {purpose: generated,    paths: ["docs/architecture/generated/**", "designs/index/**"]}
   - {purpose: experimental, paths: ["database/experiments/**"]}
   - {purpose: ci,           paths: [".github/workflows/**"]}
   - {purpose: contract,     paths: ["docs/architecture/data-contracts.md"]}
   - {purpose: doc,          paths: ["docs/**", "**/*.md"]}
-  - {purpose: dependency,   paths: ["requirements.txt", "web/package.json", "web/package-lock.json"]}
+  - {purpose: dependency,   paths: ["requirements.txt", "web/package.json", "web/package-lock.json",
+                                    "tools/feature-designer/package.json", "tools/feature-designer/package-lock.json"]}
   - {purpose: config,       paths: ["impact.yml", "registry/**", ".gitignore", "web/.gitignore", ".claude/**",
                                     "web/next.config.ts", "web/tsconfig.json", "web/eslint.config.mjs"]}
   - {purpose: data,         paths: ["data/**"]}

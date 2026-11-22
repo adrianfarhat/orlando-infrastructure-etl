@@ -126,6 +126,11 @@ components:
     docs: [designs/README.md]
     note: designs/README.md is the user guide for the New Feature, index and check commands.
 
+  - id: feature-designer
+    paths: ["tools/feature-designer/**"]
+    docs: [tools/feature-designer/README.md]
+    note: The Feature Designer VS Code extension (T-97); its README covers setup, development mode and tests.
+
 content_triggers:
 
   - id: credential-boundary                           # doc-map entry 8

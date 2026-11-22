@@ -190,12 +190,14 @@ class RealRegistryTests(unittest.TestCase):
 
     def test_registry_is_complete_for_current_files(self):
         tracked = [f["path"] for f in json.loads((FIXTURES / "tracked_565706f.json").read_text("utf-8"))["files"]]
-        # Files added after the frozen fixture: the impact tool (T-83) and the Feature
-        # Design Workspace (T-94: designs/, tools/design/ and the shared VS Code tasks).
-        added_trees = (PACKAGE, REPO_ROOT / "designs", REPO_ROOT / "tools" / "design")
+        # Files added after the frozen fixture: the impact tool (T-83), the Feature Design
+        # Workspace (T-94: designs/, tools/design/ and the shared VS Code tasks) and the
+        # Feature Designer (T-97: tools/feature-designer/, without its Git-ignored folders).
+        added_trees = (PACKAGE, REPO_ROOT / "designs", REPO_ROOT / "tools" / "design", REPO_ROOT / "tools" / "feature-designer")
+        ignored = {"__pycache__", "node_modules", ".toolchain", ".vscode-test", ".run"}
         new = ["impact.yml", "registry/components.yml", ".vscode/tasks.json"] + [
             p.relative_to(REPO_ROOT).as_posix() for tree in added_trees for p in tree.rglob("*")
-            if p.is_file() and "__pycache__" not in p.parts]
+            if p.is_file() and not ignored.intersection(p.parts) and not p.name.endswith((".vsix", ".txt"))]
         files = tracked + new
         problems = check_files(self.config, self.registry, "registry/components.yml", files)
         problems += ambiguities(self.config, self.registry, "registry/components.yml", files)

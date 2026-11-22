@@ -251,3 +251,35 @@ on GitHub Project #1.
 5. Test workspaces are real (empty) Git repositories, since New Feature now reads the
    history; the T-94 "the package runs no program" test now allows exactly the read-only
    Git commands in `ids.py`.
+
+## 2026-11-21: T-97 Phase 2 — Feature Designer MVP (approved by the user)
+
+1. **Where and how it runs.** `tools/feature-designer/` (owned by the main conversation,
+   registered for T-83), a VS Code custom *text* editor in development mode (P2-B): nothing
+   installed. Isolated, pinned toolchain (P2-C): Node.js 26.13.0 downloaded and checked
+   against nodejs.org's SHA-256, `npm ci --ignore-scripts`, VS Code 1.146.0 test build; all
+   in Git-ignored folders.
+2. **One model, one generator.** The Markdown document is the only model; the webview
+   renders VS Code's current buffer. Edits come from `tools.design` (`designer --serve`, one
+   long-running process speaking the Phase 1 JSON) and are applied as one `WorkspaceEdit`
+   only to the exact text they were computed from (SHA-256 and line count, and the document
+   version); otherwise they are refused as stale.
+3. **Menu:** only "Insert Existing Diagram" until the other options ship (Q7).
+4. **Feature index:** when a feature open in Feature Designer is saved, the index is updated
+   from the saved files through the editor (and saved), unless it has unsaved changes (the
+   user is told when it cannot be updated). Generated diagram blocks that
+   no longer match their sources are reported in a banner, never repaired automatically
+   (refresh is Phase 4).
+5. **Interpreter (Q9, P2-A):** only the machine-level `featureDesigner.pythonPath` counts;
+   workspace values are ignored and announced. When empty, the repository's `.venv`
+   interpreter is suggested and saved only after the user confirms.
+6. **Workspace trust:** VS Code does not apply the manifest's `untrustedWorkspaces` rule to
+   development-mode extensions, so Feature Designer checks trust itself: in Restricted Mode it
+   shows a static notice and runs no scripts and no Python.
+7. **Interoperability (tested with the real Mark Sharp 1.13.0):** all editors share VS
+   Code's document. Inserting while the file is open in Mark Sharp asks first; a later change
+   that removes the inserted block raises a warning (Undo/Redo excluded). Mark Sharp can
+   reformat generated blocks when it writes the file; authored text is unaffected, `check`
+   reports the blocks and `index` restores them. Not guaranteed: text still being typed in
+   Mark Sharp and not yet written to the shared document at the moment of an insertion
+   (the race was tested once without loss, but Mark Sharp's internal timing is not observable).

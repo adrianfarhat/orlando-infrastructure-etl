@@ -26,6 +26,7 @@ API routes and shows it on a MapLibre map with an operations dashboard.
 | `.claude/agents/` | Project subagent definitions |
 | `designs/` | Feature Design Workspace (T-94): proposed feature specifications, templates, generated feature and architecture indexes |
 | `tools/design/` | New Feature, index and check commands for `designs/` |
+| `tools/feature-designer/` | Feature Designer (T-97): VS Code extension for editing feature specifications in a formatted view, run in development mode |
 
 ## How work is coordinated
 
@@ -66,8 +67,9 @@ with the user's approval: `CLAUDE.md`, `.claude/**`, `.gitignore`,
 
 The Feature Design Workspace (T-94) is also maintained by the main conversation with
 the user's approval: `designs/**` (proposed designs; never the current-state docs in
-`docs/architecture/`) and `tools/design/**` (its commands). `designs/IMPLEMENTATION_BRIEF.md`
-is kept exactly as written; later decisions go in `designs/DECISIONS.md`.
+`docs/architecture/`), `tools/design/**` (its commands) and `tools/feature-designer/**`
+(the Feature Designer extension, T-97). `designs/IMPLEMENTATION_BRIEF.md` is kept exactly as
+written; later decisions go in `designs/DECISIONS.md`.
 
 ## Shared rules (all agents)
 
@@ -129,7 +131,9 @@ database itself will not block writes. The read-only session is the safeguard.
 
 Run these from the repository root unless noted. Node/npm is not on the PATH of
 Claude Code's shell on this machine yet (see the task board). Until that is
-fixed, Node commands may have to be run by the user.
+fixed, Node commands for `web/` may have to be run by the user. The Feature Designer uses
+its own pinned, isolated Node.js under `tools/feature-designer/.toolchain/` (set up by its
+bootstrap script; nothing global is installed).
 
 | Purpose | Command |
 |---|---|
@@ -141,3 +145,6 @@ fixed, Node commands may have to be run by the user.
 | ETL loaders (**write to Neon; need approval**) | `.venv\Scripts\python extractors\load_orlando_*.py` |
 | New feature design (creates uncommitted files only) | `.venv\Scripts\python -m tools.design new feature`, or the VS Code task "New Feature" |
 | Design workspace check | `.venv\Scripts\python -m tools.design check` |
+| Feature Designer toolchain (downloads pinned Node.js and the VS Code test build into ignored folders) | `.venv\Scripts\python tools\feature-designer\toolchain\bootstrap.py --vscode-test` |
+| Feature Designer in development mode (nothing installed) | `.venv\Scripts\python tools\feature-designer\toolchain\dev.py` |
+| Feature Designer tests (unit; GUI in the isolated VS Code test build) | `tools\feature-designer\.toolchain\node-v26.13.0-win-x64\node --test tools\feature-designer\test\unit` and `... node tools\feature-designer\test\gui\e2e.js` |

@@ -1,0 +1,12 @@
+{
+  "name": "feature-designer-test-helper",
+  "displayName": "Feature Designer test helper (tests only)",
+  "description": "Loaded only by tools/feature-designer/test/gui: lets the GUI test drive VS Code's API through command files.",
+  "version": "0.0.1",
+  "publisher": "orlando-infrastructure-tests",
+  "private": true,
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "capabilities": { "untrustedWorkspaces": { "supported": true } }
+}

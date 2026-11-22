@@ -375,8 +375,8 @@ class RealRepositoryConfigTests(unittest.TestCase):
         loaded = load(REPO_ROOT)
         self.assertEqual(loaded.problems, (), "\n".join(map(str, loaded.problems)))
         ids = [c.id for c in loaded.registry.components]
-        self.assertEqual(len(ids), 16)          # 14 from T-83, plus design-workspace and design-tool (T-94)
-        self.assertEqual(ids[-2:], ["design-workspace", "design-tool"])
+        self.assertEqual(len(ids), 17)          # 14 from T-83, design-workspace and design-tool (T-94), feature-designer (T-97)
+        self.assertEqual(ids[-3:], ["design-workspace", "design-tool", "feature-designer"])
         self.assertEqual(len(loaded.registry.triggers), 1)
 
     def test_real_dependencies_are_labelled(self):

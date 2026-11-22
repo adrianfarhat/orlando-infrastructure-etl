@@ -5,6 +5,7 @@
   python -m tools.design index [--check] [--root DIR]
   python -m tools.design check [--root DIR]
   python -m tools.design designer [--root DIR]  < request.json   (the Feature Designer interface, T-97)
+  python -m tools.design designer --serve [--root DIR]   (one JSON request per line until end of input)
 
 Exit codes: 0 success; 1 problems found (check, index --check) or a refused designer request;
 2 a usage or file error, including a refused name or destination, or a malformed designer
@@ -53,6 +54,9 @@ def build_parser() -> argparse.ArgumentParser:
     diagram.add_argument("--title", help="the diagram's readable name (asked for when missing)")
     designer = sub.add_parser("designer", help="answer one Feature Designer request (JSON on stdin, JSON on "
                                                "stdout); writes nothing")
+    designer.add_argument("--serve", action="store_true",
+                          help="keep running: read one JSON request per line and write one JSON response per line "
+                               "until the input ends (used by the Feature Designer extension)")
     index = sub.add_parser("index", help="refresh each feature's generated summary table and Related features rows, "
                                          "then regenerate designs/index/feature-index.md and "
                                          "designs/index/architecture-index.md")
@@ -78,7 +82,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 print(designer_api.dumps({"version": designer_api.VERSION, "ok": False,
                                           "error": {"code": "workspace", "message": str(exc)}}), file=out)
                 return designer_api.EXIT_BAD
-            return _designer(root, out)
+            return _serve(root, out) if args.serve else _designer(root, out)
         root = workspace.find_root(args.root if args.root is not None else Path.cwd())
         if args.command == "new":
             if interactive is None:                 # a closed stdin (None) is not interactive
@@ -153,6 +157,32 @@ def _designer(root: Path, out: TextIO) -> int:
         response, code = designer_api.handle(root, request)
     print(designer_api.dumps(response), file=out)
     return code
+
+
+def _serve(root: Path, out: TextIO) -> int:
+    """One JSON request per input line, one JSON response per output line, until end of input.
+    A request may carry "request_id", which the response echoes, so a client can match them."""
+    source = sys.stdin.buffer if sys.stdin is not None and hasattr(sys.stdin, "buffer") else sys.stdin
+    for raw in iter(source.readline, b"" if source is not sys.stdin else ""):
+        line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+        if not line.strip():
+            continue
+        request_id = None
+        try:
+            request = json.loads(line)
+        except (ValueError, RecursionError) as exc:
+            response = {"version": designer_api.VERSION, "ok": False,
+                        "error": {"code": "bad-request",
+                                  "message": f"the request is not valid JSON: {type(exc).__name__}: {exc}"[:500]}}
+        else:
+            if isinstance(request, dict):
+                request_id = request.pop("request_id", None)
+            response, _code = designer_api.handle(root, request)
+        if request_id is not None:
+            response = {**response, "request_id": request_id}
+        out.write(designer_api.dumps(response) + "\n")
+        out.flush()
+    return EXIT_OK
 
 
 def _new_diagram(args, root: Path, out: TextIO, ask: Callable[[str], str], interactive: bool) -> int:

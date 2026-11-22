@@ -312,7 +312,12 @@ VS Code extension **Mark Sharp** (`jonathan-yeung.mark-sharp`; the free tier is 
   `mark-sharp.formatting.tableAlignment`, default `alignColumns`: cells are padded to the
   column width). The first save of a file therefore re-pads its hand-written tables; later
   saves keep them as they are. The checks compare table columns, not padding, so this never
-  breaks `check`. The generated summary and Related features blocks are kept as they are.
+  breaks `check`. Generated blocks are a different matter: a T-97 test with the real Mark
+  Sharp 1.13.0 found that when Mark Sharp writes a file whose generated blocks changed while
+  it was open (for example a diagram block inserted by the Feature Designer), it can
+  reformat them — blank lines and Mermaid indentation inside diagram blocks, table padding
+  in the Related features block. Your own text is not affected; `check` reports those
+  blocks and `index` regenerates them exactly.
   Keep the default: `condensed` (no spaces at all) changes only slightly fewer lines and is
   much harder to read.
 - **See diagrams** in VS Code's Markdown preview (`Ctrl+K V`, side by side), which renders
@@ -328,6 +333,24 @@ VS Code extension **Mark Sharp** (`jonathan-yeung.mark-sharp`; the free tier is 
 - **Before committing:** run `python -m tools.design index` (refreshes the generated blocks
   and indexes) and `python -m tools.design check`, then review `git diff`. Expect the
   one-time table re-alignment; anything else you did not intend should be undone.
+
+## Feature Designer (T-97, development mode)
+
+A formatted view with a **"+"** beside each block to insert an existing diagram from a
+searchable library (architecture diagrams by document; feature-owned diagrams by owner),
+without typing markers. It edits VS Code's shared document, so it works alongside the text
+editor and Mark Sharp on the same file (Mark Sharp for prose, Feature Designer for
+diagrams). Set it up and open it as described in `tools/feature-designer/README.md`:
+
+```
+.venv\Scripts\python tools\feature-designer\toolchain\bootstrap.py
+.venv\Scripts\python tools\feature-designer\toolchain\dev.py
+```
+
+then right-click a feature → **Open With…** → **Feature Designer**. Saving a feature open in
+Feature Designer also updates `designs/index/feature-index.md`, as `index` would. When the
+file is also open in Mark Sharp, pause typing there before inserting (Feature Designer asks
+first), and run `index` and `check` before committing (see above).
 
 ## Branches and publishing
 
