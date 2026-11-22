@@ -46,7 +46,10 @@ test("a refusal reports the tooling's own message; a timeout says nothing is kno
                        (e) => e.message === "no feature has the ID FD-0009" && e.refused === true);
   const slow = fake([Object.assign(new Error("timeout"), { killed: true, signal: "SIGTERM" }), "", ""]);
   await assert.rejects(run({ python: "p", root: "r", args: [], timeoutMs: 5000, execFileImpl: slow.impl }),
-                       /did not finish within 5 s; nothing is known to have been created/);
+                       /did not finish within 5 s and was stopped; it may or may not have created the diagram: run python -m tools.design check/);
+  const big = fake([Object.assign(new Error("maxBuffer"), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", killed: true }), "", ""]);
+  await assert.rejects(run({ python: "p", root: "r", args: [], execFileImpl: big.impl }),
+                       (e) => /printed more output than expected/.test(e.message) && !/did not finish/.test(e.message) && e.refused === false);
 });
 
 test("an unexpected or non-JSON answer is rejected", async () => {

@@ -561,6 +561,7 @@ async function prB1Steps() {
                                                                   return t && t.label === want ? t.label : ""; }, 10000)) ||
                                      ((await app.host("tabs")).find((x) => x.active && x.kind === "text" && x.group === 2) || {}).label;
     await open("FD-0001-D1"); const own = await activeIs(path.basename(OWN_SRC));
+    await designerKey("Home"); await sleep(500);                       // focus back in the view, as a person would click
     await open(OWNED); const other = await activeIs(path.basename(otherSrc));
     await designerKey("Home");                                        // as a click on the pencil would: the view has the focus
     await f.evaluate((id) => window.FD_HOST.api.postMessage({ type: "editDiagram", id }), CRED_ALIAS); const byAlias = await activeIs("system-architecture.md");

@@ -77,6 +77,7 @@
     else if (m.type === "pythonChanged") { if (libraryView) libraryView.retry(); }
     else if (m.type === "library") { state.library = m.data; if (libraryView) libraryView.fill(); if (nameView) nameView.owners(); }
     else if (m.type === "blocks") {
+      if (state.blocks && m.version < state.blocks.version) return;     // a late reply for an older version
       state.blocks = { version: m.version, list: m.blocks, error: m.error || "" };
       if (!menuState && !dialogOpen) updateDiagrams(); else render.pending = true;
     }
@@ -337,7 +338,8 @@
       clearTimeout(timer); named = null; create.disabled = true;
       if (!name.value.trim()) { file.textContent = "Enter a name."; file.className = "dg-file"; return; }
       file.textContent = "Checking the name…"; file.className = "dg-file";
-      timer = setTimeout(() => post({ type: "previewName", seq: ++nameSeq, owner, title: name.value, category: category.value }), 200);
+      const seq = ++nameSeq;                                   // any reply for an earlier name is now ignored
+      timer = setTimeout(() => post({ type: "previewName", seq, owner, title: name.value, category: category.value }), 200);
     };
     const d = dialog("Make New Diagram", h("div", { class: "make-new" },
         h("label", {}, "Name", name), h("label", {}, "Category", category),

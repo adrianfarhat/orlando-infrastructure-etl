@@ -34,11 +34,14 @@ function run({ python, root, args, timeoutMs = TIMEOUT_MS, execFileImpl = execFi
     execFileImpl(python, argv, options, (err, stdout, stderr) => {
       if (err) {
         const said = String(stderr || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() || "";
-        const message = err.killed || err.signal ? `the design tooling did not finish within ${Math.round(timeoutMs / 1000)} s; ` +
-                                                   "nothing is known to have been created (see python -m tools.design check)"
+        const overflow = err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+        const stopped = !overflow && (err.killed || err.signal);
+        const unsure = "it may or may not have created the diagram: run python -m tools.design check";
+        const message = overflow ? `the design tooling printed more output than expected and was stopped; ${unsure}`
+          : stopped ? `the design tooling did not finish within ${Math.round(timeoutMs / 1000)} s and was stopped; ${unsure}`
           : said.replace(/^design: error: /, "") || `the design tooling failed (${err.code ?? err.message})`;
         const e = new Error(message);
-        e.refused = !(err.killed || err.signal);
+        e.refused = !(overflow || stopped);
         reject(e);
         return;
       }
