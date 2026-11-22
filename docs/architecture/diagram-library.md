@@ -348,7 +348,7 @@ content last generated for that block, for example:
 - `G`: the content the source would generate now. The "source" includes the registry
   fields that shape the block (title, path), so a relink changes `G`.
 
-`≡` means "equal after normalisation" (below).
+`≡` means "equal content, ignoring only line endings" (below).
 
 | Condition | Case | Meaning | What happens |
 |---|---|---|---|
@@ -361,24 +361,20 @@ content last generated for that block, for example:
 A conflict is never overwritten automatically and is never refreshed by `index` or
 Feature Designer.
 
-**Normalisation (diagram-type-aware and conservative).**
+**Exact comparison** (clarified 2026-11-22, item 25 of the
+[diagram library decisions](../../designs/DECISIONS.md#2026-11-22-t-97-diagram-library--visual-and-code-first-diagrams-approved-by-the-user)).
 
-- **Always:** only line-ending differences (CRLF and LF) are ignored.
-- **Additionally, only for diagram types on an allow-list** whose indentation and blank
-  lines are demonstrably insignificant: differences in leading whitespace, and in blank
-  lines or `%%` blank lines, are ignored outside multi-line quoted text.
-- **The allow-list** starts with the types used today: `flowchart`/`graph`,
-  `sequenceDiagram` and `erDiagram`. A type is added only with evidence: a test that
-  renders the indented and unindented variants with the project's pinned Mermaid and
-  shows identical output.
-- **Indentation-sensitive or unlisted types** (for example `mindmap`, `kanban`,
-  `timeline`, `block`, or an unknown type) are compared exactly, after line-ending
-  normalisation only.
-- **When uncertain, a difference is meaningful:** it is a conflict, never silently
-  discarded.
-- Consequence: in feature documents, Mark Sharp's reformatting of a block whose diagram
-  type is not on the allow-list is reported as a conflict (E15). For allow-listed types,
-  that reformatting is "formatting only" and the block counts as untouched.
+- **Content is compared exactly.** The only normalisation is line endings (CRLF and
+  LF), for every diagram type.
+- **Indentation and blank lines are never ignored**, even where the diagram would
+  render the same: they matter for readability, maintainability and future Mermaid
+  versions. There is no diagram-type allow-list.
+- **Mark Sharp.** Its known reformatting of generated blocks in feature documents is
+  reported as a conflict (E15) and reconciled explicitly; Discard manual change restores
+  the generated content.
+- **A more permissive rule** for Mark Sharp compatibility may be adopted only after
+  tests demonstrate the exact need, and only with the user's explicit approval. No such
+  rule is part of this design.
 
 **Reconciliation (cases 2 and 3).** There are two actions. Both show a diff and require
 explicit confirmation; neither is applied to a document with unsaved changes without
@@ -821,7 +817,7 @@ PROPOSED: approved, not implemented.
 | U10 | In-file identity for document-owned diagrams | `mermaid-md` front matter `diagram_id`, `title` and `owner_document` (repository path); `.drawio.svg` root-cell properties `fd_diagram_id` and `fd_owner_document`; feature-owned diagrams keep `feature_id` / `fd_feature_id`. The owner is recorded independently of the file name; reuse never changes the owner (a reference is not ownership) |
 | U11 | Heading renamed before M1 (transitional `mermaid-embedded` entries are found by owner document + heading anchor + ordinal) | `check` reports the broken reference (E7) with the candidate block it can see; the entry is re-pointed only by an explicit `registry relink`; nothing is guessed; the former catalog ID stays an alias; keeping the M0 → M1 interval short limits exposure |
 | U12 | Move limits for document-owned sources | Sources stay in their approved directories: document-owned in `docs/architecture/diagrams/` (`relink` refuses other locations), feature-owned in a `diagrams/` folder under `designs/features/`; reuse across documents only through stable IDs |
-| U13 | How manual modifications to generated content are detected and reconciled | Generated-content fingerprints (section 6.5): the start marker stores, inside its HTML comment, a fingerprint of the content last generated (backward compatible). Three-way classification of fingerprint, block and newly generated content: current; case 1 (source changed, copy untouched, including a relink), the only case refreshed automatically and only in documents without unsaved changes; case 2 (manual edit) and case 3 (both changed), conflicts E15 with distinct messages; a block edited to exactly the new output only updates the fingerprint. Conservative, diagram-type-aware normalisation: line endings always; leading whitespace and blank lines only for allow-listed types (`flowchart`/`graph`, `sequenceDiagram`, `erDiagram` to start; additions only with rendering evidence from the pinned Mermaid); everything else compared exactly; when uncertain, a conflict. Reconciliation by Discard manual change or Apply to source, each with a diff, explicit confirmation and one undoable step; Apply to source checks the source's hash before writing; document-owned sources only through technical-lead's documentation workflow; feature-owned sources only through the guarded edit of the owner's file |
+| U13 | How manual modifications to generated content are detected and reconciled | Generated-content fingerprints (section 6.5): the start marker stores, inside its HTML comment, a fingerprint of the content last generated (backward compatible). Three-way classification of fingerprint, block and newly generated content: current; case 1 (source changed, copy untouched, including a relink), the only case refreshed automatically and only in documents without unsaved changes; case 2 (manual edit) and case 3 (both changed), conflicts E15 with distinct messages; a block edited to exactly the new output only updates the fingerprint. Exact content comparison (clarified 2026-11-22, DECISIONS item 25): line endings are the only normalisation; indentation and blank lines are never ignored; no diagram-type allow-list. Mark Sharp's reformatting of a generated block is a conflict (E15), reconciled explicitly; a more permissive rule only after tests show the exact need and with the user's explicit approval. Reconciliation by Discard manual change or Apply to source, each with a diff, explicit confirmation and one undoable step; Apply to source checks the source's hash before writing; document-owned sources only through technical-lead's documentation workflow; feature-owned sources only through the guarded edit of the owner's file |
 | U14 | How generated copies preserve Mermaid content in architecture documents | During and after M1, generated copies in `docs/architecture/` documents are byte-for-byte the source's Mermaid lines; blank lines are not replaced by `%%`. Feature documents keep the `%%` rule where needed for Mark Sharp (section 6.6). M1 verification includes tests that all 14 architecture diagrams keep their exact original Mermaid content (byte comparison) and rendering (pinned Mermaid output before and after) |
 
 ### 14.2 Superseded decisions
