@@ -13,7 +13,8 @@ When the history cannot be read completely, allocation stops instead of guessing
 
 Known limits (documented in designs/README.md and DECISIONS.md):
 - an ID that was created and deleted without ever being committed is not recorded
-  anywhere, so it may be allocated again (it was never published);
+  anywhere, so it may be allocated again (it was never published); the same holds for an
+  ID that existed only on a branch that was squash-merged and then deleted;
 - two branches that allocate at the same time, before either sees the other, can pick the
   same number; `python -m tools.design check` reports the duplicate when they meet.
 Existing IDs are never renumbered by any command.

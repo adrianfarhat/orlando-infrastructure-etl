@@ -103,8 +103,9 @@ designs/features/
   history with a read-only `git log` and stops, creating nothing, when the history is
   incomplete (a shallow clone: run `git fetch --unshallow`) or cannot be read. Limits: an ID
   that was created and deleted without ever being committed left no record and can be
-  allocated again, and a branch Git cannot see yet may take the same number (see the next
-  point). `design_status: deferred` is still better than deleting a feature.
+  allocated again; an ID that existed only on a branch that was squash-merged and then
+  deleted is no longer in any reachable commit, so it is not known either; and a branch Git
+  cannot see yet may take the same number (see the next point). `design_status: deferred` is still better than deleting a feature.
 - **File names** are made from the feature name: letters are lower-cased, accents are
   removed (`Résumé` → `resume`) and everything that is not an ASCII letter or digit
   becomes a hyphen, including Unicode dashes and the minus sign

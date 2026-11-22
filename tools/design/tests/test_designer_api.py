@@ -267,7 +267,11 @@ class Requests(unittest.TestCase):
                     self.assertFalse(response["ok"])
                     self.assertIn(response["error"]["code"], ("internal", "bad-request"))
             r, code = designer_api.handle(ws.root, {"version": 1, "op": "refresh", "path": f.path, "text": "\ud800"})
-            self.assertEqual((code, r["error"]["code"]), (2, "internal"))
+            self.assertEqual((code, r["error"]["code"]), (2, "bad-request"))
+            self.assertIn("lone surrogate", r["error"]["message"])
+            with mock.patch.object(designer_api, "library", side_effect=OSError("disk gone")):
+                r, code = designer_api.handle(ws.root, {"version": 1, "op": "library"})
+            self.assertEqual((code, r["error"]["code"]), (2, "internal"))           # any other error: still JSON
 
     def test_no_workspace_still_answers_in_json(self):
         import tempfile

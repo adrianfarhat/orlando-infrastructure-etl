@@ -232,7 +232,9 @@ on GitHub Project #1.
    stops, creating nothing, when the history is incomplete or unreadable (not a Git
    repository, Git missing, a shallow clone, `git log` failing); a repository without any
    commit is complete. Documented limits: an ID created and deleted without a commit can
-   be allocated again; branches Git cannot see may allocate the same number, which
+   be allocated again, and so can one that existed only on a branch that was squash-merged
+   and deleted (its commits are no longer reachable); branches Git cannot see may allocate
+   the same number, which
    `check` reports as a duplicate when they meet. Existing IDs are never renumbered.
 3. **The Feature Designer interface** (`python -m tools.design designer`,
    `tools/design/designer_api.py`): one JSON request, one deterministic JSON response

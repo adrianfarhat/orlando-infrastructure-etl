@@ -236,6 +236,10 @@ def _feature_path(root: Path, value) -> str:
 def _text(value, name: str = "text") -> str:
     if not isinstance(value, str):
         raise BadRequest(f"`{name}` must be the document text (a string)")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise BadRequest(f"`{name}` is not valid Unicode text (it contains a lone surrogate)") from None
     return value
 
 
