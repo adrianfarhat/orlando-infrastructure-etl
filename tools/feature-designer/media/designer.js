@@ -78,7 +78,7 @@
     else if (m.type === "library") { state.library = m.data; if (libraryView) libraryView.fill(); if (nameView) nameView.owners(); }
     else if (m.type === "blocks") {
       state.blocks = { version: m.version, list: m.blocks, error: m.error || "" };
-      if (!menuState && !dialogOpen) render(); else render.pending = true;
+      if (!menuState && !dialogOpen) updateDiagrams(); else render.pending = true;
     }
     else if (m.type === "name") { if (nameView && m.seq === nameSeq) nameView.named(m); }
     else if (m.type === "created") status(`Created ${m.id} (${m.path}) and placed it here; its source is open beside this view.`);
@@ -198,8 +198,30 @@
                      onclick: () => post({ type: "removeBlock", line: seg.start, id: seg.id, version: state.version }) })),
       copy("Show the copy in this document"));
     else body.push(note("warn", info.message || "This diagram cannot be shown."), copy("Show the copy in this document"));
-    return block(seg.start, seg.end, `readonly diagram dg-${st}`,
-                 h("div", { class: `gen dg dg-${st}`, "data-diagram": seg.id, "data-state": st, "aria-readonly": "true" }, head, ...body));
+    const el = block(seg.start, seg.end, `readonly diagram dg-${st}`,
+                     h("div", { class: `gen dg dg-${st}`, "data-diagram": seg.id, "data-state": st, "aria-readonly": "true" }, head, ...body));
+    el.fdKey = JSON.stringify([st, seg.id, embedded, info && info.generated, info && info.conflict, info && info.message,
+                               src && src.id, src && src.path, st === "pending" && state.blocks && state.blocks.error]);
+    return el;
+  }
+
+  /** New block states: redraw only the diagram blocks whose state changed, in place, so the rest of the
+   *  document (and the "+" or pencil under the pointer) is not replaced. Falls back to a full render
+   *  when the document's diagram blocks do not line up with what is drawn. */
+  function updateDiagrams() {
+    if (render.pending) { render(); return; }
+    render.used = new Set();
+    const segs = C.segments(state.text).filter((s) => s.kind === "diagram");
+    const els = [...$("#doc").querySelectorAll(":scope > .block.diagram")];
+    if (segs.length !== els.length || segs.some((s, i) => +els[i].dataset.start !== s.start)) { render(); return; }
+    segs.forEach((seg, i) => {
+      const old = els[i], fresh = diagramBlock(seg);
+      if (fresh.fdKey === old.fdKey) return;
+      if (old.querySelector(":scope > .plus")) fresh.prepend(plusButton(fresh));
+      fresh.querySelectorAll("a").forEach((a) => a.addEventListener("click", (ev) => ev.preventDefault()));
+      old.replaceWith(fresh);
+      drawMermaid(fresh);
+    });
   }
 
   // ------------------------------------------------------------------ a diagram created but not inserted
