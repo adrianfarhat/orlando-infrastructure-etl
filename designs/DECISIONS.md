@@ -283,3 +283,147 @@ on GitHub Project #1.
    reports the blocks and `index` restores them. Not guaranteed: text still being typed in
    Mark Sharp and not yet written to the shared document at the moment of an insertion
    (the race was tested once without loss, but Mark Sharp's internal timing is not observable).
+
+## 2026-11-22: T-97 diagram library — visual and code-first diagrams (approved by the user)
+
+The design is described in
+[docs/architecture/diagram-library.md](../docs/architecture/diagram-library.md) (PROPOSED, not
+implemented). Scope, order and acceptance tests are on the T-97 card; evidence is in
+`docs/agents/task-board.md`.
+
+1. **Direction.** Diagrams must be freely editable with a layout that stays exactly as drawn
+   wherever they are shown. Mermaid cannot store positions (a proof of concept with the Mermaid
+   NG editor confirmed that dragging a box draws a connector and nothing positional is saved),
+   so visual diagrams use draw.io files saved as `.drawio.svg`: the editable graph and an image
+   of exactly that layout in one file. A draw.io proof of concept kept positions, sizes, line
+   routes and label offsets identical through save, close and reopen, and the same file
+   rendered identically in VS Code's Markdown preview and Feature Designer's rendering path.
+   Mermaid stays for code-first diagrams. The editor is the existing VS Code draw.io extension;
+   no custom editor is built.
+2. **Every diagram is its own source document** (user requirement), shown elsewhere through a
+   reference by its stable ID. Reuse never copies; a reused diagram keeps one owner and one
+   source. The ID is the identity; file names are descriptive and may change.
+3. **V1 — code-first format.** Mermaid diagrams keep the existing `.md` diagram files (front
+   matter and one Mermaid block); no `.mmd` now, but the format table reserves it. Why: no
+   migration, and the existing template and checks keep working.
+4. **V2 — one registry,** `designs/diagrams/registry.yml`: identity, owner, format, category,
+   path, title and lifecycle, never diagram content. Why: one authoritative mapping for both
+   formats; draw.io keeps the graph compressed, so IDs need a plain-text home that Git history
+   can read.
+5. **V3 — scoped `.gitattributes`:** `*.drawio.svg diff=drawio -merge`, plus an opt-in local diff
+   helper. Why: measured in a scratch repository, two branches editing one diagram always
+   conflict (the graph is one compressed line); without `-merge` Git writes conflict markers
+   into the SVG and the file no longer opens; with it the conflict is still reported, the file
+   stays valid and the other version is one command away. Other files merge as before.
+6. **V4 — versions.** The reviewed draw.io extension version is pinned for development and
+   tests; other versions get a compatibility warning in normal use, not a permanent refusal;
+   nothing ever installs or upgrades the extension.
+7. **V5 — installation.** draw.io is installed only in the isolated Feature Designer
+   development profile until the whole workflow passes hands-on testing.
+8. **V6 — PR #13** was reviewed and merged before any dependent work (no stacked branches).
+9. **V7 — `designs/index/diagram-index.md`** is generated from the registry by the existing
+   tooling; it is never edited by hand.
+10. **V8 — ownership.** Make New Diagram defaults the owner to the open feature; another owner
+    only through an explicit, validated action. Reuse never transfers ownership.
+11. **R1 — online mode refused.** If `hediet.vscode-drawio.offline` is not `true`, the editor is
+    not opened and the exact setting is shown. Why: online mode runs editor code from
+    diagrams.net, contrary to the offline requirement.
+12. **R2 — renames in VS Code** offer to update the registry, with confirmation each time.
+13. **R3 — retire, never reuse.** Before a diagram is retired its references are listed and
+    confirmation is required; remaining references show a clear retired-diagram message.
+14. **R4 — GitHub rendering** is checked in a separate private scratch repository; nothing is
+    created or pushed remotely without separate authorization.
+15. **R5 — categories** are a controlled, schema-versioned list (changes only by a controlled
+    schema change). The initial list approved with R5 is revised by open decision U7 to fit the
+    naming convention below.
+16. **R6 — PR A** starts only after PR #13's final review and merge (done: `db59478`).
+17. **R7 — a diagram block shows** the rendered diagram, a caption with the title, the stable ID
+    and a link to the source.
+18. **Stable IDs are canonical** in documents (the T-96 marker); the image path or Mermaid copy
+    between the markers is generated from the registry and never read back to find a diagram.
+19. **Naming** (user requirement): `<owner-slug>_<category>_<diagram-name>.<ext>` in the owner's
+    diagram folder, for example `test1_system-architecture_one-map-pan.md`.
+20. **Existing diagrams** behave as if made with Make New Diagram: the 14 architecture diagrams
+    join the registry (this reverses the earlier plan to keep them outside it), first in place
+    and later, per approved document, as standalone source documents with identical content and
+    rendering. Their former catalog IDs remain valid as aliases. No Mermaid diagram is converted
+    to draw.io. Nothing is migrated before the user approves the exact scope.
+21. **U1–U12 (approved by the user, 2026-11-22),** detailed in section 14 of the architecture
+    document:
+    - **U1** Diagrams owned by a document get `AD-nnnn` IDs from the never-reuse allocator; former
+      catalog IDs stay valid as permanent aliases.
+    - **U2** The 7 planning diagrams in `docs/agents/development-status.md` stay out of the library
+      (project planning, not architecture).
+    - **U3/U5 Single authority.** After extraction the standalone source is the only authoritative,
+      editable version. Mermaid kept in an architecture page or any other document is a generated
+      representation of it, tracked by the diagram ID and refreshed when the source changes; manual
+      changes to generated content are detected and reported, never silently overwritten, and
+      reconciled only by an explicit choice; documents with unsaved changes are never edited
+      automatically. Architecture pages show the representation without a caption, so they look
+      as they do today.
+    - **U4** Existing references with catalog IDs keep resolving through the aliases; no automatic
+      rewrite.
+    - **U6** The feature template's example diagram is replaced by guidance to use Place Diagram.
+    - **U7** Categories: `system-architecture`, `data-model`, `process`, `sequence`, `state`, `ui`,
+      `legend`, `other` (replaces R5's `architecture`).
+    - **U8 / M0** Stage M0 (register the 14 architecture diagrams in place, no document changed) is
+      the first implementation migration scope; approved, not yet executed. M1 (extraction) follows
+      later, one approved change per document.
+    - **U9** Uniqueness comes from registry identity: each diagram is listed once; standalone
+      sources are not read as documents and generated representations are never counted; missing,
+      duplicate and inconsistent references are reported.
+    - **U10** `owner_document` identifies the owning document independently of the file name;
+      reuse never changes the owner.
+    - **U11** A heading renamed between M0 and M1 is reported as a broken reference and needs an
+      explicit relink; nothing is guessed.
+    - **U12** Sources stay in their approved directories (document-owned:
+      `docs/architecture/diagrams/`; feature-owned: a `diagrams/` folder under
+      `designs/features/`); reuse across documents only through stable IDs.
+22. **U13 and U14 (approved by the user, 2026-11-22).**
+    - **U13 Generated-content fingerprints.** The start marker stores, inside its HTML comment
+      (invisible and backward compatible; existing IDs and aliases keep resolving), a fingerprint of
+      the content last generated for the block. Comparing the block and what the source would
+      generate now against it gives three cases: (1) the source changed and the copy was not edited:
+      the only case refreshed automatically, and only in documents without unsaved changes; (2) the
+      copy was edited and the source did not change; (3) both changed. Cases 2 and 3 are reported as
+      conflicts and need explicit reconciliation. Normalisation is diagram-type-aware and
+      conservative: line endings always; indentation and blank lines only for diagram types on an
+      allow-list where a test with the pinned Mermaid shows they make no difference. Indentation-
+      sensitive types (for example mindmap) and unknown types are compared exactly; when uncertain,
+      a difference is treated as meaningful.
+    - **Reconciliation.** "Discard manual change" and "Apply to source" both show a diff and need
+      explicit confirmation; "Apply to source" first verifies that the source has not changed since
+      the preview. Architecture diagram sources change only through technical-lead's documentation
+      workflow; feature-owned sources respect ownership and the existing editing safeguards. No
+      reconciliation overwrites unsaved changes.
+    - **U14 Verbatim architecture copies.** In architecture documents the generated copy is
+      byte-for-byte the source's Mermaid lines (blank lines are not written as `%%`); feature
+      documents keep the `%%` rule where Mark Sharp needs it. Tests show that all 14 architecture
+      diagrams keep their exact Mermaid content and rendering through the migration.
+23. **Earlier decisions changed by the approved U decisions** (recorded so the two do not
+    conflict):
+    - T-97 Phase 2 decision 4 ("generated diagram blocks … never repaired automatically"): replaced
+      by U5. Generated blocks are refreshed automatically in documents without unsaved changes;
+      manual modifications and documents with unsaved changes are never touched.
+    - T-97 Phase 1 decision 1 ("owned by exactly one feature; `feature_id` required"): amended by
+      U1 and U10. A diagram has exactly one owner, either a feature (`feature_id`) or a document
+      (`owner_document`).
+    - R7 (a block shows a caption with title, ID and source link): applies to feature documents.
+      Architecture pages show the representation without a visible caption (U3), with the ID and
+      source in an HTML comment.
+    - The Phase 2b plan's "a saved Mermaid source writes Markdown only when the user clicks
+      Refresh" is replaced by U5.
+    - The Phase 2b plan's "diagram sources are never written by Feature Designer": one explicit
+      exception, "Apply to source" for feature-owned Mermaid sources after a confirmed diff, a
+      check that the source has not changed, and a guarded edit. Feature Designer never writes
+      document-owned sources; it prepares the change for technical-lead's workflow.
+    - T-96 decision 2 ("`check` compares the whole block with what the source produces now (not a
+      fingerprint)"): superseded by U13. The block is compared with its recorded fingerprint and
+      with the source's current output.
+    - T-96 decision 3 (blank source lines written as `%%`): superseded by U14 for architecture
+      documents only; it still applies to feature documents.
+24. **Deferred to M1** (decided when M1 is separately authorized): any change to the restriction that
+    nothing is written into `docs/architecture/` (T-94 Phase 2 decision 2, coordinated with T-82);
+    applying changes to architecture sources always through technical-lead's workflow; the legend
+    placement and lint rules, coordinated with T-82 without weakening those checks to fit the
+    marker.
