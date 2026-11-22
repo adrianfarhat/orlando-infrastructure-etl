@@ -415,9 +415,12 @@ VS Code extension **Mark Sharp** (`jonathan-yeung.mark-sharp`; the free tier is 
 
 ## Feature Designer (T-97, development mode)
 
-A formatted view with a **"+"** beside each block to insert an existing diagram from a
-searchable library (architecture diagrams by document; feature-owned diagrams by owner),
-without typing markers. It edits VS Code's shared document, so it works alongside the text
+A formatted view with a **"+"** beside each block to place a diagram without typing markers:
+**Place Diagram → Add Existing Diagram…** (a searchable library: architecture diagrams by
+document, feature-owned diagrams by owner) or **Make New Diagram…** (creates and registers one
+standalone Mermaid source with `new diagram`, then inserts its reference). Each diagram is drawn
+from its authoritative source and has an **Edit Diagram** pencil that opens that source; a copy
+that differs from its source is shown as such, never hidden. It edits VS Code's shared document, so it works alongside the text
 editor and Mark Sharp on the same file (Mark Sharp for prose, Feature Designer for
 diagrams). Set it up and open it as described in `tools/feature-designer/README.md`:
 
