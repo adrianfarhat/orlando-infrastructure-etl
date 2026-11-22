@@ -8,6 +8,18 @@ const path = require("path");
 
 const SETTING = "pythonPath";
 
+/**
+ * Why a configured interpreter path cannot be used ('' when it can). A Windows path written into
+ * settings.json with single backslashes is not valid JSON; VS Code's tolerant parser drops the
+ * invalid escapes ("C:\\Users" becomes "C:sers"), so the value must be checked, not trusted.
+ */
+function interpreterProblem(value, isFile) {
+  if (!value) return "no interpreter is configured";
+  if (!path.isAbsolute(value)) return `featureDesigner.pythonPath is not an absolute path: ${value}`;
+  if (!isFile(value)) return `featureDesigner.pythonPath does not point to an existing file: ${value}`;
+  return "";
+}
+
 /** The configured interpreter from a configuration.inspect() result, and the scopes that were ignored. */
 function configured(inspected) {
   const ignored = [];
@@ -29,7 +41,7 @@ function candidate(root, exists) {
  * Resolve the interpreter with the VS Code API (`vscode` passed in for testability).
  * Returns the path, or throws when the user declines.
  */
-async function ensurePython(vscode, root, log, fsExists, allowPrompt = true) {
+async function ensurePython(vscode, root, log, fsExists, allowPrompt = true, isFile = fsExists) {
   const cfg = vscode.workspace.getConfiguration("featureDesigner");
   const { path: chosen, ignored } = configured(cfg.inspect(SETTING));
   if (ignored.length) {
@@ -39,7 +51,15 @@ async function ensurePython(vscode, root, log, fsExists, allowPrompt = true) {
       vscode.window.showWarningMessage("Feature Designer ignores featureDesigner.pythonPath in workspace or folder settings: a repository cannot choose the interpreter. Use your user (machine) settings instead.");
     }
   }
-  if (chosen) return chosen;
+  if (chosen) {
+    const problem = interpreterProblem(chosen, isFile);
+    if (problem) {
+      const err = new Error(`${problem}. Use "Change Interpreter" (or Feature Designer: Select Python Interpreter) to fix it.`);
+      err.interpreter = true;
+      throw err;
+    }
+    return chosen;
+  }
   if (!allowPrompt) throw new Error("no Python interpreter configured yet");   // background work never prompts
   const suggestion = candidate(root, fsExists);
   const use = "Use and Save", choose = "Choose Another…";
@@ -51,7 +71,7 @@ async function ensurePython(vscode, root, log, fsExists, allowPrompt = true) {
   let picked = "";
   if (answer === use) picked = suggestion;
   else if (answer === choose) picked = await pickInterpreter(vscode);
-  if (!picked) throw new Error("no Python interpreter configured (Feature Designer: Select Python Interpreter)");
+  if (!picked) { const e = new Error("no Python interpreter configured (Feature Designer: Select Python Interpreter)"); e.interpreter = true; throw e; }
   await cfg.update(SETTING, picked, vscode.ConfigurationTarget.Global);
   log(`[python] saved featureDesigner.${SETTING} = ${picked} (user/machine settings)`);
   return picked;
@@ -65,4 +85,4 @@ async function pickInterpreter(vscode) {
   return uris && uris[0] ? uris[0].fsPath : "";
 }
 
-module.exports = { configured, candidate, ensurePython, pickInterpreter, SETTING };
+module.exports = { configured, candidate, interpreterProblem, ensurePython, pickInterpreter, SETTING };

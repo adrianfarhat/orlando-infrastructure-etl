@@ -62,3 +62,23 @@ test("a workspace override is ignored and announced; no prompt when the machine 
   assert.equal(v.calls.messages.length, 0);
   assert.equal(v.calls.warnings.length, 1);
 });
+
+const { interpreterProblem } = require("../../src/python");
+
+test("interpreter paths are validated: a JSON-mangled Windows path is reported, not spawned (hands-on review bug)", () => {
+  const good = path.resolve("/venv/Scripts/python.exe");
+  const isFile = (p) => p === good;
+  // "C:\Users\..." written into settings.json with single backslashes reaches the extension like this:
+  assert.match(interpreterProblem("C:sersarhaocuments_LocalTBEestsrlando-infrastructure-etlvenvcriptsython.exe", isFile), /not an absolute path/);
+  assert.match(interpreterProblem("python.exe", isFile), /not an absolute path/);
+  assert.match(interpreterProblem(path.resolve("/missing/python.exe"), isFile), /does not point to an existing file/);
+  assert.equal(interpreterProblem(good, isFile), "");
+});
+
+test("a configured but unusable interpreter fails with an interpreter error, without prompting or saving", async () => {
+  const v = fakeVscode({ globalValue: "C:sersarhaocumentspython.exe", answer: "Use and Save" });
+  await assert.rejects(ensurePython(v, path.resolve("/repo"), () => {}, () => true, true, () => false),
+                       (err) => err.interpreter === true && /not an absolute path/.test(err.message));
+  assert.equal(v.calls.messages.length, 0);
+  assert.deepEqual(v.calls.updates, []);
+});

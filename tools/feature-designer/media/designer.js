@@ -60,6 +60,8 @@
       banner();
       if (!menuState && !dialogOpen) render(); else render.pending = true;
     } else if (m.type === "others") { state.others = m.others || []; banner(); }
+    else if (m.type === "libraryError") { if (libraryView) libraryView.failed(m.message, m.interpreter); else status(m.message, true); }
+    else if (m.type === "pythonChanged") { if (libraryView) libraryView.retry(); }
     else if (m.type === "library") { state.library = m.data; if (libraryView) libraryView.fill(); }
     else if (m.type === "generated") {
       const el = $("#stale");
@@ -226,6 +228,14 @@
       return li;
     };
     libraryView = {
+      failed(message, interpreter) {               // never leave the dialog on "Loading…"
+        tree.replaceChildren(h("li", { class: "lib-error", role: "alert" },
+          h("div", { class: "bad", text: `The diagram library could not be loaded: ${message}` }),
+          h("div", { class: "lib-actions" },
+            h("button", { type: "button", class: "retry", text: "Retry", onclick: () => libraryView && libraryView.retry() }),
+            interpreter ? h("button", { type: "button", class: "change-python", text: "Change Interpreter…", onclick: () => post({ type: "selectPython" }) }) : null)));
+      },
+      retry() { tree.replaceChildren(h("li", { text: "Loading the diagram library…" })); search.focus(); post({ type: "library" }); },
       fill() {
         const L = state.library;
         const arch = L.architecture.map((g) => node("grp", g.title, [h("span", { class: "id", text: g.document })], g.diagrams.map((x) => item(x, `${g.title} ${g.document}`))));

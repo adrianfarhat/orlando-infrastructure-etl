@@ -43,9 +43,13 @@ class Bridge {
       for (const [id, p] of this.pending)
         if (p.proc === proc) { clearTimeout(p.timer); this.pending.delete(id); p.reject(new Error(why)); }
     };
-    proc.on("error", (err) => { this.log(`[bridge] cannot start ${this.python}: ${err.message}`); fail(`cannot start the design tooling with ${this.python}: ${err.message}`); });
+    proc.on("spawn", () => this.log(`[bridge] started ${this.python} (pid ${proc.pid})`));   // only a real start is logged
+    proc.on("error", (err) => {
+      this.log(`[bridge] cannot start ${this.python}: ${err.message}`);
+      const e = new Error(`cannot start the design tooling with ${this.python}: ${err.code || err.message}`);
+      fail(e.message);
+    });
     proc.on("exit", (code, signal) => { this.log(`[bridge] python exited (${code ?? signal})`); fail("the design tooling stopped unexpectedly"); });
-    this.log(`[bridge] started ${this.python} (pid ${proc.pid})`);
   }
 
   _onData(chunk) {

@@ -79,3 +79,35 @@ test("an insert response applies to the exact text it was computed from (real to
     assert.equal(applyReplacements(text, replacements(text, fake, "\n")), "a\nX\nb\n");
   } finally { b.dispose(); }
 });
+
+// Windows paths with spaces and special characters: a minimal copy of the test virtual environment
+// (pyvenv.cfg, the launcher and the packages the tooling imports) under such a folder.
+function venvCopyWithAwkwardPath() {
+  const venv = path.dirname(path.dirname(python));
+  if (process.platform !== "win32" || !fs.existsSync(path.join(venv, "pyvenv.cfg"))) return null;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fd venv & (x) %PATH% ^ !"));
+  fs.copyFileSync(path.join(venv, "pyvenv.cfg"), path.join(dir, "pyvenv.cfg"));
+  fs.mkdirSync(path.join(dir, "Scripts"));
+  for (const f of fs.readdirSync(path.join(venv, "Scripts"))) if (/^python.*\.exe$|\.dll$/i.test(f)) fs.copyFileSync(path.join(venv, "Scripts", f), path.join(dir, "Scripts", f));
+  const site = path.join(venv, "Lib", "site-packages");
+  for (const f of fs.readdirSync(site)) if (/^(ruamel|_ruamel)/i.test(f)) fs.cpSync(path.join(site, f), path.join(dir, "Lib", "site-packages", f), { recursive: true });
+  return { dir, exe: path.join(dir, "Scripts", "python.exe") };
+}
+
+test("an interpreter under a path with spaces, &, (), %, ^ and ! starts and answers", { skip }, async () => {
+  const copy = venvCopyWithAwkwardPath();
+  if (!copy) return;
+  const b = new Bridge({ python: copy.exe, root: REPO });
+  try {
+    const lib = await b.request("library");
+    assert.equal(lib.ok, true);
+    assert.ok(lib.architecture.length > 0);
+  } finally { b.dispose(); await new Promise((r) => setTimeout(r, 500)); fs.rmSync(copy.dir, { recursive: true, force: true }); }
+});
+
+test("a missing interpreter path with spaces is reported exactly (no mangling)", async () => {
+  const missing = path.join(os.tmpdir(), "no such dir & (x)", "python.exe");
+  const b = new Bridge({ python: missing, root: REPO, timeoutMs: 5000 });
+  try { await assert.rejects(b.request("library"), (err) => err.message.includes(missing) && /ENOENT/.test(err.message)); }
+  finally { b.dispose(); }
+});

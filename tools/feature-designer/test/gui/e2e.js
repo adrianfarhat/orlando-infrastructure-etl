@@ -137,6 +137,28 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     await app.page.keyboard.press("Escape");
   });
 
+  await step("3b unusable interpreter: error with Retry / Change Interpreter, then Retry loads", async () => {
+    // the value VS Code produced from a settings.json with single backslashes (hands-on review)
+    await app.host("setGlobal", { section: "featureDesigner", key: "pythonPath", value: "C:sersarhaocumentspython.exe" });
+    await sleep(500);
+    const b = await blockAfter("3. Logic");
+    await app.page.mouse.move(...Object.values(center(await box(blockSel(b.idx)))), { steps: 3 });
+    await f.locator(`${blockSel(b.idx)} >> .plus`).click();
+    await f.locator('.menu [role="menuitem"]').first().click();
+    const error = await waitFor(() => f.evaluate(() => { const e = document.querySelector(".tree .lib-error"); return e ? e.innerText : ""; }), 15000);
+    const buttons = await f.evaluate(() => [...document.querySelectorAll(".tree .lib-actions button")].map((x) => x.textContent));
+    const stuck = await f.evaluate(() => /Loading the diagram library/.test(document.querySelector(".tree").innerText));
+    await snap("library-error");
+    await app.host("setGlobal", { section: "featureDesigner", key: "pythonPath", value: PY });
+    await sleep(500);
+    await f.locator(".tree .lib-actions .retry").click();
+    const loaded = await waitFor(() => f.evaluate(() => document.querySelectorAll(".tree li.item").length), 20000);
+    rec("3b an unusable interpreter shows the error with Retry and Change Interpreter (not stuck on Loading); Retry then loads",
+        /not an absolute path/.test(error || "") && !stuck && JSON.stringify(buttons) === '["Retry","Change Interpreter…"]' && loaded >= 14,
+        { error: (error || "").slice(0, 120), buttons, stuck, loaded });
+    await f.locator(".dlg button", { hasText: "Cancel" }).click();
+  });
+
   let insertedText;
   await step("4 insert two diagrams at the + positions", async () => {
     const before = (await doc()).text;

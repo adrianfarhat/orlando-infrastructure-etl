@@ -39,7 +39,8 @@ async function bridgeFor(root, prompt = true) {
   if (!vscode.workspace.isTrusted) throw new Error("this workspace is not trusted, so Feature Designer does not run the design tooling");
   let b = bridges.get(root);
   if (!b) {
-    const python = await ensurePython(vscode, root, log, (p) => fs.existsSync(p), prompt);
+    const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+    const python = await ensurePython(vscode, root, log, (p) => fs.existsSync(p), prompt, isFile);
     b = new Bridge({ python, root, log });
     bridges.set(root, b);
   }
@@ -47,7 +48,14 @@ async function bridgeFor(root, prompt = true) {
 }
 
 async function ask(root, op, fields, prompt = true) {
-  const response = await (await bridgeFor(root, prompt)).request(op, fields);
+  let bridge;
+  try { bridge = await bridgeFor(root, prompt); } catch (err) { throw err; }
+  let response;
+  try { response = await bridge.request(op, fields); }
+  catch (err) {                                    // a failed start: forget this process so a retry starts afresh
+    if (/cannot start the design tooling/.test(err.message)) { bridge.dispose(); bridges.delete(root); err.interpreter = true; }
+    throw err;
+  }
   if (!response.ok) {
     const e = new Error(response.error ? response.error.message : "the design tooling refused the request");
     e.refused = true;
@@ -156,7 +164,15 @@ class DesignerEditor {
         if (panel.checkGenerated && /<!--\s*diagram:start/.test(document.getText())) panel.checkGenerated();
         return;
       case "library":
-        panel.webview.postMessage({ type: "library", data: await ask(root, "library", {}) });
+        try { panel.webview.postMessage({ type: "library", data: await ask(root, "library", {}) }); }
+        catch (err) {                              // the dialog shows the error with Retry / Change Interpreter
+          log(`[library] ${err.message}`);
+          panel.webview.postMessage({ type: "libraryError", message: String(err.message || err), interpreter: !!err.interpreter });
+        }
+        return;
+      case "selectPython":
+        await vscode.commands.executeCommand("featureDesigner.selectPython");
+        panel.webview.postMessage({ type: "pythonChanged" });
         return;
       case "undo": case "redo":
         await vscode.commands.executeCommand(msg.type);
