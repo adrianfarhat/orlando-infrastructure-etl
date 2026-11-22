@@ -24,15 +24,19 @@ HERE = Path(__file__).resolve().parents[1]                  # tools/feature-desi
 REPO = HERE.parents[1]
 
 
-def _code_cli() -> str:
+def _code_exe() -> str:
+    """Your installed VS Code (Code.exe, next to bin/code.cmd). It is started directly with an
+    argument list: no shell, so no path can be read as a command (QA D1)."""
+    candidates = []
     found = shutil.which("code") or shutil.which("code.cmd")
     if found:
-        return found
-    default = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Microsoft VS Code" / "bin" / "code.cmd"
-    if default.is_file():
-        return str(default)
-    raise SystemExit("dev: the VS Code command line (`code`) was not found; open VS Code and run "
-                     "'Shell Command: Install code command in PATH', or use --isolated")
+        candidates.append(Path(found).resolve().parent.parent / "Code.exe")
+    candidates.append(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Microsoft VS Code" / "Code.exe")
+    candidates.append(Path(os.environ.get("ProgramFiles", "C:\\Program Files")) / "Microsoft VS Code" / "Code.exe")
+    for exe in candidates:
+        if exe.is_file():
+            return str(exe)
+    raise SystemExit("dev: VS Code (Code.exe) was not found; use --isolated with the test build instead")
 
 
 def main(argv=None) -> int:
@@ -54,7 +58,8 @@ def main(argv=None) -> int:
         subprocess.Popen([str(exe), f"--user-data-dir={profile / 'user'}", f"--extensions-dir={profile / 'extensions'}",
                           "--new-window", *common], env=env, cwd=REPO)
     else:
-        subprocess.run(["cmd", "/d", "/c", "call", _code_cli(), "--new-window", *common], cwd=REPO, check=True)
+        env = {k: v for k, v in os.environ.items() if k.upper() != "ELECTRON_RUN_AS_NODE"}
+        subprocess.Popen([_code_exe(), "--new-window", *common], cwd=REPO, env=env)
     print("opened VS Code with Feature Designer loaded from tools/feature-designer (development mode, nothing installed).")
     print("Open a feature: right-click it → Open With… → Feature Designer.")
     return 0

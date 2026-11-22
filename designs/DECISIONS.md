@@ -266,7 +266,8 @@ on GitHub Project #1.
    version); otherwise they are refused as stale.
 3. **Menu:** only "Insert Existing Diagram" until the other options ship (Q7).
 4. **Feature index:** when a feature open in Feature Designer is saved, the index is updated
-   through the editor (and saved), unless it has unsaved changes. Generated diagram blocks that
+   from the saved files through the editor (and saved), unless it has unsaved changes (the
+   user is told when it cannot be updated). Generated diagram blocks that
    no longer match their sources are reported in a banner, never repaired automatically
    (refresh is Phase 4).
 5. **Interpreter (Q9, P2-A):** only the machine-level `featureDesigner.pythonPath` counts;

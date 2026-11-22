@@ -29,7 +29,7 @@ function candidate(root, exists) {
  * Resolve the interpreter with the VS Code API (`vscode` passed in for testability).
  * Returns the path, or throws when the user declines.
  */
-async function ensurePython(vscode, root, log, fsExists) {
+async function ensurePython(vscode, root, log, fsExists, allowPrompt = true) {
   const cfg = vscode.workspace.getConfiguration("featureDesigner");
   const { path: chosen, ignored } = configured(cfg.inspect(SETTING));
   if (ignored.length) {
@@ -40,6 +40,7 @@ async function ensurePython(vscode, root, log, fsExists) {
     }
   }
   if (chosen) return chosen;
+  if (!allowPrompt) throw new Error("no Python interpreter configured yet");   // background work never prompts
   const suggestion = candidate(root, fsExists);
   const use = "Use and Save", choose = "Choose Another…";
   const answer = await vscode.window.showInformationMessage(

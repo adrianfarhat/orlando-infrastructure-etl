@@ -23,7 +23,7 @@
   };
   // Document HTML is sanitised: no scripts, forms, frames, styles or inline style attributes.
   const PURIFY = { FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "iframe", "object", "embed", "link", "meta", "base", "svg", "math"],
-                   FORBID_ATTR: ["style"], ADD_ATTR: ["open"] };
+                   FORBID_ATTR: ["style", "id"], ADD_ATTR: ["open"] };
   const sanitize = (html) => window.DOMPurify.sanitize(html, PURIFY);
   const post = (msg) => api.postMessage(msg);
 
@@ -59,7 +59,8 @@
       if (m.rel) { state.rel = m.rel; toolbar(); }
       banner();
       if (!menuState && !dialogOpen) render(); else render.pending = true;
-    } else if (m.type === "library") { state.library = m.data; if (libraryView) libraryView.fill(); }
+    } else if (m.type === "others") { state.others = m.others || []; banner(); }
+    else if (m.type === "library") { state.library = m.data; if (libraryView) libraryView.fill(); }
     else if (m.type === "generated") {
       const el = $("#stale");
       const n = m.stale || 0, p = (m.blocking || []).length;

@@ -48,6 +48,13 @@ test("a suggestion is saved to machine-level settings only after confirmation", 
   assert.deepEqual(no.calls.updates, []);
 });
 
+test("background work never prompts (QA D3): no interpreter configured → quiet failure, nothing saved", async () => {
+  const v = fakeVscode({ answer: "Use and Save" });
+  await assert.rejects(ensurePython(v, path.resolve("/repo"), () => {}, () => true, false), /no Python interpreter configured yet/);
+  assert.equal(v.calls.messages.length, 0);
+  assert.deepEqual(v.calls.updates, []);
+});
+
 test("a workspace override is ignored and announced; no prompt when the machine value exists", async () => {
   const v = fakeVscode({ globalValue: "C:\\trusted\\python.exe", workspaceValue: "C:\\repo\\evil.exe" });
   ensurePython.warned = false;

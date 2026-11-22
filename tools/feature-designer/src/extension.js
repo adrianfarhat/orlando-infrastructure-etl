@@ -33,21 +33,21 @@ function rootOf(uri) {
 function relPath(root, uri) { return path.relative(root, uri.fsPath).split(path.sep).join("/"); }
 function eolOf(doc) { return doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n"; }
 
-async function bridgeFor(root) {
+async function bridgeFor(root, prompt = true) {
   // Restricted Mode: never run the repository's tooling. (The manifest also declares this, but VS Code does
   // not enforce it for extensions loaded in development mode, which is how Feature Designer runs before release.)
   if (!vscode.workspace.isTrusted) throw new Error("this workspace is not trusted, so Feature Designer does not run the design tooling");
   let b = bridges.get(root);
   if (!b) {
-    const python = await ensurePython(vscode, root, log, (p) => fs.existsSync(p));
+    const python = await ensurePython(vscode, root, log, (p) => fs.existsSync(p), prompt);
     b = new Bridge({ python, root, log });
     bridges.set(root, b);
   }
   return b;
 }
 
-async function ask(root, op, fields) {
-  const response = await (await bridgeFor(root)).request(op, fields);
+async function ask(root, op, fields, prompt = true) {
+  const response = await (await bridgeFor(root, prompt)).request(op, fields);
   if (!response.ok) {
     const e = new Error(response.error ? response.error.message : "the design tooling refused the request");
     e.refused = true;
@@ -123,7 +123,7 @@ class DesignerEditor {
     const checkGenerated = async () => {
       try {
         const root = rootOf(document.uri);
-        const r = await ask(root, "refresh", { path: relPath(root, document.uri), text: document.getText() });
+        const r = await ask(root, "refresh", { path: relPath(root, document.uri), text: document.getText() }, false);
         panel.webview.postMessage({ type: "generated", stale: r.edits.length, blocking: r.blocking });
         if (r.edits.length || r.blocking.length) log(`[generated] ${relPath(root, document.uri)}: ${r.edits.length} stale block(s), ${r.blocking.length} problem(s)`);
       } catch (err) { log(`[generated] not checked: ${err.message}`); }
@@ -134,7 +134,7 @@ class DesignerEditor {
         clearTimeout(timer); timer = setTimeout(send, 40);          // the buffer, including unsaved changes
         clearTimeout(checkTimer); checkTimer = setTimeout(checkGenerated, 1200);
       }),
-      vscode.window.tabGroups.onDidChangeTabs(() => send()),
+      vscode.window.tabGroups.onDidChangeTabs(() => panel.webview.postMessage({ type: "others", others: otherCustomEditors(document.uri) })),
     ];
     panel.onDidDispose(() => { subs.forEach((s) => s.dispose()); clearTimeout(timer); clearTimeout(checkTimer); panels.get(key).delete(panel); });
     panel.checkGenerated = checkGenerated;
@@ -190,9 +190,9 @@ class DesignerEditor {
           if (answer !== go) return;
           acknowledged.add(document.uri.toString());
         }
-        const version = document.version;
+        if (document.version !== msg.version) throw new StaleEditError("the document changed while you confirmed; nothing was inserted (try again)");
         const response = await ask(root, "insert", { path: rel, text: document.getText(), at: msg.at, diagram_id: msg.id });
-        if (document.version !== version) throw new StaleEditError("the document changed while the diagram was prepared; nothing was inserted (try again)");
+        if (document.version !== msg.version) throw new StaleEditError("the document changed while the diagram was prepared; nothing was inserted (try again)");
         await applyResponse(document, response);
         watchForOverwrite(document, `<!-- diagram:start ${msg.id} -->`);
         log(`[insert] ${rel}: ${msg.id} before line ${msg.at + 1}`);
@@ -208,14 +208,13 @@ class DesignerEditor {
 async function syncFeatureIndex(doc) {
   if (!panels.has(doc.uri.toString()) || !panels.get(doc.uri.toString()).size) return;
   const root = rootOf(doc.uri);
-  const texts = {};
-  for (const d of vscode.workspace.textDocuments) {
-    const rel = relPath(root, d.uri);
-    if (d.isDirty && rel.startsWith(FEATURES) && rel.endsWith(".md") && !/\/(diagrams|evidence)\//.test(rel.slice(FEATURES.length - 1)))
-      texts[rel] = d.getText();
+  let response;                                       // the index on disk describes the saved files only
+  try { response = await ask(root, "feature-index", { texts: {} }, false); }
+  catch (err) {
+    log(`[index] not updated: ${err.message}`);
+    vscode.window.showWarningMessage(`Feature Designer could not update ${INDEX} (${err.message}). Run python -m tools.design index.`);
+    return;
   }
-  let response;
-  try { response = await ask(root, "feature-index", { texts }); } catch (err) { log(`[index] not updated: ${err.message}`); return; }
   if (!response.changed) return;
   const indexPath = path.join(root, ...INDEX.split("/"));
   if (!fs.existsSync(indexPath)) { vscode.window.showWarningMessage(`${INDEX} is missing: run python -m tools.design index`); return; }
@@ -225,7 +224,8 @@ async function syncFeatureIndex(doc) {
     return;
   }
   if (!response.base || sha256(indexDoc.getText()) !== response.base.sha256) {
-    log(`[index] ${INDEX} changed while it was being computed; not updated`);
+    log(`[index] ${INDEX} changed while it was being computed (or has a BOM or mixed line endings); not updated`);
+    vscode.window.showWarningMessage(`Feature Designer did not update ${INDEX}: it changed while being computed. Run python -m tools.design index.`);
     return;
   }
   const eol = eolOf(indexDoc);
@@ -248,7 +248,7 @@ function html(webview, ext) {
   const nonce = crypto.randomBytes(18).toString("base64");
   const uri = (...p) => webview.asWebviewUri(vscode.Uri.joinPath(ext, ...p));
   const csp = [`default-src 'none'`, `img-src ${webview.cspSource} data:`, `style-src ${webview.cspSource} 'unsafe-inline'`,
-               `font-src ${webview.cspSource}`, `script-src 'nonce-${nonce}'`].join("; ");
+               `font-src ${webview.cspSource}`, `script-src 'nonce-${nonce}'`, `base-uri 'none'`, `form-action 'none'`].join("; ");
   const scripts = [uri("node_modules", "markdown-it", "dist", "markdown-it.min.js"), uri("node_modules", "dompurify", "dist", "purify.min.js"),
                    uri("node_modules", "mermaid", "dist", "mermaid.min.js"), uri("media", "core.js")];
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">

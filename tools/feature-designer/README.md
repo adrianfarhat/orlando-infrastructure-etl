@@ -48,9 +48,9 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
   (by name, ID, source document or owning feature), then Enter or **Insert**. The block is
   inserted below the block you hovered, as one undoable edit. Nothing is saved until you save.
 - **Save** as usual (Ctrl+S). When a feature open in Feature Designer is saved,
-  `designs/index/feature-index.md` is brought up to date (its Diagrams column), exactly as
-  `python -m tools.design index` would write it — unless that index file has unsaved changes,
-  in which case it is left alone and you are told.
+  `designs/index/feature-index.md` is brought up to date from the saved files (its Diagrams
+  column), exactly as `python -m tools.design index` would write it — unless that index file
+  has unsaved changes or cannot be computed, in which case it is left alone and you are told.
 - **Edit source** on a diagram opens its authoritative Mermaid source beside it.
 - **Restricted Mode:** in an untrusted workspace Feature Designer shows a notice only; it
   runs no scripts and no Python. (VS Code does not enforce the manifest's trust setting for
@@ -80,11 +80,16 @@ switching editors loses nothing. Tested in the GUI tests (real Mark Sharp 1.13.0
 
 ## Tests
 
+PowerShell, from the repository root:
+
 ```
-set FEATURE_DESIGNER_TEST_PYTHON=%CD%\.venv\Scripts\python.exe
+$env:FEATURE_DESIGNER_TEST_PYTHON = "$PWD\.venv\Scripts\python.exe"
 tools\feature-designer\.toolchain\node-v26.13.0-win-x64\node --test tools\feature-designer\test\unit
 tools\feature-designer\.toolchain\node-v26.13.0-win-x64\node tools\feature-designer\test\gui\e2e.js
 ```
+
+(The GUI test needs `bootstrap.py --vscode-test` once, and Mark Sharp 1.13.0 installed for its
+interoperability checks.)
 
 The unit tests cover edit application (identical to the Python side, CRLF, end of file,
 stale edits refused), the Python process (restart, timeout, no orphan process) and the
