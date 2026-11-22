@@ -1,13 +1,16 @@
 """The design workspace: discovery, feature IDs, New Feature, the feature index and checks.
 
-Everything here works on files under designs/ only. Nothing runs another program, so the
-tool cannot stage, commit, branch or push: created files are ordinary working-tree changes.
+Everything here works on files under designs/ only. The only other program run is a
+read-only `git log` when a new ID is allocated (tools/design/ids.py), so the tool cannot
+stage, commit, branch or push: created files are ordinary working-tree changes.
 
 Rules (see designs/README.md and designs/DECISIONS.md):
 - Every Markdown file under designs/features/ is a feature specification, except files in
   folders named diagrams/ or evidence/. A specification starts with YAML front matter.
 - A feature's identity is its feature_id (FD-0001, ...), never its path. New IDs are one
-  higher than the highest ID in use; duplicates are reported by `check`.
+  higher than every ID in the working tree and in the committed Git history, so a retired ID
+  is never reused (T-97 P1-A, see ids.py); duplicates are reported by `check`; no command
+  ever renumbers an existing feature.
 - A file is never overwritten. Index files are replaced atomically.
 - A feature's summary table is generated from its metadata, between the marker lines
   SUMMARY_START and SUMMARY_END. Only the lines between the two markers are ever rewritten
@@ -115,13 +118,18 @@ def _yaml() -> YAML:
     return y
 
 
-def read_feature(root: Path, path: Path) -> tuple[Feature, list[Problem]]:
+def read_feature(root: Path, path: Path, text: str | None = None) -> tuple[Feature, list[Problem]]:
+    """A feature file's metadata and problems; `text` replaces the file's content on disk
+    (an unsaved editor buffer, T-97)."""
     rel = _rel(root, path)
     problems: list[Problem] = []
     try:
-        if path.stat().st_size > MAX_FILE_BYTES:
+        if text is None and path.stat().st_size > MAX_FILE_BYTES:
             return Feature(rel, None, None, None), [Problem(rel, f"larger than {MAX_FILE_BYTES} bytes")]
-        text = path.read_bytes().decode("utf-8")
+        if text is None:
+            text = path.read_bytes().decode("utf-8")
+        elif len(text.encode("utf-8")) > MAX_FILE_BYTES:
+            return Feature(rel, None, None, None), [Problem(rel, f"larger than {MAX_FILE_BYTES} bytes")]
     except UnicodeDecodeError:
         return Feature(rel, None, None, None), [Problem(rel, "not valid UTF-8")]
     except OSError as exc:
@@ -249,8 +257,10 @@ def _outside_code(body: str) -> list[str]:
     return out
 
 
-def discover(root: Path) -> tuple[list[Feature], list[Problem]]:
-    """Every feature specification under designs/features/, in path order."""
+def discover(root: Path, texts: dict[str, str] | None = None) -> tuple[list[Feature], list[Problem]]:
+    """Every feature specification under designs/features/, in path order. `texts` maps
+    repository-relative paths of existing feature files to unsaved text used instead of the
+    file on disk (T-97); other paths in it are ignored."""
     base = root / FEATURES
     features, problems = [], []
     if not base.is_dir():
@@ -262,7 +272,7 @@ def discover(root: Path) -> tuple[list[Feature], list[Problem]]:
             path = Path(folder) / name
             if not name.lower().endswith(".md") or name.startswith(".") or path.is_symlink():
                 continue
-            feature, found = read_feature(root, path)
+            feature, found = read_feature(root, path, (texts or {}).get(_rel(root, path)))
             features.append(feature)
             problems += found
     features.sort(key=lambda f: f.path)
@@ -283,12 +293,11 @@ def duplicate_ids(features: list[Feature]) -> list[Problem]:
     return out
 
 
-def next_id(features: list[Feature]) -> str:
-    numbers = [int(ID_RE.match(f.feature_id).group(1)) for f in features if f.feature_id]
-    following = max(numbers, default=0) + 1
-    if following > 9999:
-        raise DesignError("no feature IDs left (FD-9999 is in use)")
-    return f"FD-{following:04d}"
+def next_id(features: list[Feature], committed: set[str] | frozenset[str] = frozenset()) -> str:
+    """One higher than every feature ID in `features` and in `committed` (IDs from the Git
+    history, ids.committed_ids), so a retired ID is never reused."""
+    from .ids import next_feature_id
+    return next_feature_id([f.feature_id for f in features if f.feature_id], set(committed))
 
 
 # --------------------------------------------------------------------------- names
@@ -397,7 +406,8 @@ def new_feature(root: Path, name: str, parent: str | None = None, convert_parent
     if target.exists() or (folder / slug).exists():
         raise DesignError(f"{_rel(root, target)} (or a folder {slug}/) already exists; nothing was overwritten")
 
-    feature_id = next_id(features)
+    from .ids import committed_ids
+    feature_id = next_id(features, committed_ids(root))    # stops here, creating nothing, without full history
     text = _render(template, root, target, feature_id, title)
     front, _ = split_front_matter(text)
     text, found = apply_summary(text, _yaml().load(front), _rel(root, target))
@@ -690,16 +700,19 @@ def _link(path_from_index: str) -> str:
     return quote(path_from_index, safe="/-._~")
 
 
-def render_index(root: Path) -> str:
+def render_index(root: Path, texts: dict[str, str] | None = None) -> str:
+    """The feature index; `texts` holds unsaved feature text to use instead of the files
+    on disk (T-97: the Designer computes the index before the buffers are saved)."""
     from . import dependencies, diagrams          # imports this module
-    features, problems = discover(root)
+    features, problems = discover(root, texts)
     graph = dependencies.build(features)
     by_folder = {posixpath.dirname(f.path): f for f in features if posixpath.basename(f.path) == "README.md"}
     rows = []
     for f in sorted((f for f in features if f.feature_id),
                     key=lambda f: (int(ID_RE.match(f.feature_id).group(1)), f.path)):
         depends_on, used_by = dependencies.index_cells(f, graph, posixpath.dirname(INDEX))
-        shown = diagrams.ids_in((root / f.path).read_bytes().decode("utf-8", "replace"))
+        text = (texts or {}).get(f.path)
+        shown = diagrams.ids_in(text if text is not None else (root / f.path).read_bytes().decode("utf-8", "replace"))
         rows.append(f"| {f.feature_id} | {_cell(f.title or '')} | {f.status or ''} | "
                     f"{_parent_label(f, by_folder)} | {depends_on} | {used_by} | "
                     f"{', '.join(_code_cell(d) for d in shown) or '-'} | [{_cell(f.path[len(FEATURES) + 1:])}]"
@@ -784,6 +797,8 @@ def check(root: Path) -> list[Problem]:
     problems += links.check(root, features)
     from . import diagrams                        # T-96: generated diagram blocks
     problems += diagrams.problems(root, features)
+    from . import ownership                       # T-97: feature-owned diagram files
+    problems += ownership.problems(root, features)
     if not index_is_fresh(root):
         problems.append(Problem(INDEX, "out of date or missing: run `python -m tools.design index`"))
     from .architecture import ARCHITECTURE_INDEX, architecture_index_is_fresh   # imports this module

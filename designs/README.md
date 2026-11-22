@@ -41,7 +41,12 @@ Other commands:
 |---|---|
 | `python -m tools.design index` | Refresh each feature's generated summary table and Related features rows from its metadata, then regenerate the feature index and the architecture index |
 | `python -m tools.design index --check` | Exit code 1 if either index, any summary table or any Related features rows are out of date (writes nothing) |
-| `python -m tools.design check` | Check every feature: IDs (including duplicates), metadata, the six sections, both dependency tables, `depends_on` (unknown IDs, self-dependencies, repeats, cycles), links and references (see below), and the freshness of the generated rows and both indexes |
+| `python -m tools.design check` | Check every feature: IDs (including duplicates), metadata, the six sections, both dependency tables, `depends_on` (unknown IDs, self-dependencies, repeats, cycles), links and references (see below), diagram ownership, and the freshness of the generated rows and both indexes |
+| `python -m tools.design new diagram --feature FD-0001 --title "Name"` | Create a proposed diagram owned by a feature, with the next diagram ID that was never used (see [Diagrams](#diagrams)) |
+| `python -m tools.design designer` | The Feature Designer's interface (T-97): one JSON request on stdin, one JSON response on stdout; it proposes edits and never writes a file (described in `tools/design/designer_api.py`) |
+
+Exit codes: 0 success; 1 problems found (`check`, `index --check`) or a refused Feature
+Designer request; 2 a usage, file or workspace error (nothing was created or changed).
 
 `check` also validates links and references inside `designs/`, without changing anything:
 
@@ -90,8 +95,15 @@ designs/features/
   the parent and `--convert-parent`. The feature moves from `x.md` to `x/README.md` (its ID
   does not change) and its relative links are adjusted.
 - **A parent can also be a plain folder** (a group) with no specification of its own.
-- **Identity is the feature ID**, not the path. Moving or renaming a file keeps its ID.
-  Prefer `design_status: deferred` to deleting a feature, so its ID is never reused.
+- **Identity is the feature ID**, not the path. Moving or renaming a file keeps its ID, and
+  no command ever renumbers a feature. **IDs are never reused:** New Feature takes the number
+  after every ID in the working tree *and* in the committed Git history (all branches,
+  remote-tracking branches and tags), so a deleted feature's ID stays retired. It reads the
+  history with a read-only `git log` and stops, creating nothing, when the history is
+  incomplete (a shallow clone: run `git fetch --unshallow`) or cannot be read. Limits: an ID
+  that was created and deleted without ever being committed left no record and can be
+  allocated again, and a branch Git cannot see yet may take the same number (see the next
+  point). `design_status: deferred` is still better than deleting a feature.
 - **File names** are made from the feature name: letters are lower-cased, accents are
   removed (`Résumé` → `resume`) and everything that is not an ASCII letter or digit
   becomes a hyphen, including Unicode dashes and the minus sign
@@ -103,10 +115,11 @@ designs/features/
 - **Windows line endings are fine.** A Git checkout with `core.autocrlf=true` writes
   generated files with CRLF line endings; `check` and `index` treat them as up to date.
 - **One New Feature at a time.** Two commands run at the same moment (for example in two
-  terminals) can both take the same next ID. `python -m tools.design check` reports
-  duplicate IDs, and New Feature refuses to run until they are fixed: give one of the two
-  files the next free ID by hand. The same check catches two branches that each created
-  the same ID, once they are merged.
+  terminals), or on two clones that have not fetched each other's branches, can both take
+  the same next ID. `python -m tools.design check` reports duplicate IDs, and New Feature
+  refuses to run until they are fixed: give the newer file a new ID by hand (one that was
+  never used). The same check catches two branches that each created the same ID, once
+  they are merged.
 
 ## The feature specification
 
@@ -208,9 +221,22 @@ require, so the diagram rules stay the same everywhere.
 - **Link** to an existing diagram in `docs/architecture/` by its document and heading, for
   example `../docs/architecture/system-architecture.md#1-current-state-the-big-picture`
   (adjust `../` to the file's depth).
-- **Create** a proposed diagram from [templates/diagram.md](templates/diagram.md) in a
-  `diagrams/` folder next to the feature, and link it from the feature's "Proposed
-  diagrams" section.
+- **Create** a proposed diagram with
+  `python -m tools.design new diagram --feature FD-0001 --title "Road/Pipe Intersection Logic"`:
+  it creates the file from [templates/diagram.md](templates/diagram.md) in the `diagrams/`
+  folder next to the owning feature, with its metadata filled in; link it from the
+  feature's "Proposed diagrams" section. A diagram file with a `diagram_id` is **owned by
+  one feature** (T-97):
+  - `feature_id` is required and must be an existing feature's ID (the owner);
+  - `diagram_id` is the owner's ID plus `-D` and a number (`FD-0001-D1`), unique, and
+    independent of the file's name and folder; like feature IDs, diagram numbers are
+    never reused (working tree and committed history) and never renumbered;
+  - `title` is required: it is the diagram's name in the Feature Designer library.
+
+  `check` reports a missing or unknown owner, an ID that does not start with its owner's
+  ID, a missing title and duplicate IDs; nothing is fixed automatically. A diagram file
+  without a `diagram_id` (for example a copy of the template being drafted) is not checked
+  and cannot be shown in a feature.
 - **Copy** an existing diagram into a proposed variant: paste its Mermaid source into a new
   diagram file and fill in `source_diagram` (its diagram ID), `source_document`,
   `source_heading` and `base_commit`
