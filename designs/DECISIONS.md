@@ -379,12 +379,27 @@ implemented). Scope, order and acceptance tests are on the T-97 card; evidence i
     - **U12** Sources stay in their approved directories (document-owned:
       `docs/architecture/diagrams/`; feature-owned: a `diagrams/` folder under
       `designs/features/`); reuse across documents only through stable IDs.
-22. **Proposed, awaiting approval** (they adjust approved T-96 decisions 2 and 3):
-    - **U13** Detecting manual changes needs to know what was last generated, so the start marker
-      gains an optional fingerprint of that content (backward compatible).
-    - **U14** Generated copies in architecture documents are written verbatim, blank lines
-      included, so their Mermaid content stays byte-identical; feature documents keep the `%%`
-      blank-line rule that Mark Sharp requires.
+22. **U13 and U14 (approved by the user, 2026-11-22).**
+    - **U13 Generated-content fingerprints.** The start marker stores, inside its HTML comment
+      (invisible and backward compatible; existing IDs and aliases keep resolving), a fingerprint of
+      the content last generated for the block. Comparing the block and what the source would
+      generate now against it gives three cases: (1) the source changed and the copy was not edited:
+      the only case refreshed automatically, and only in documents without unsaved changes; (2) the
+      copy was edited and the source did not change; (3) both changed. Cases 2 and 3 are reported as
+      conflicts and need explicit reconciliation. Normalisation is diagram-type-aware and
+      conservative: line endings always; indentation and blank lines only for diagram types on an
+      allow-list where a test with the pinned Mermaid shows they make no difference. Indentation-
+      sensitive types (for example mindmap) and unknown types are compared exactly; when uncertain,
+      a difference is treated as meaningful.
+    - **Reconciliation.** "Discard manual change" and "Apply to source" both show a diff and need
+      explicit confirmation; "Apply to source" first verifies that the source has not changed since
+      the preview. Architecture diagram sources change only through technical-lead's documentation
+      workflow; feature-owned sources respect ownership and the existing editing safeguards. No
+      reconciliation overwrites unsaved changes.
+    - **U14 Verbatim architecture copies.** In architecture documents the generated copy is
+      byte-for-byte the source's Mermaid lines (blank lines are not written as `%%`); feature
+      documents keep the `%%` rule where Mark Sharp needs it. Tests show that all 14 architecture
+      diagrams keep their exact Mermaid content and rendering through the migration.
 23. **Earlier decisions changed by the approved U decisions** (recorded so the two do not
     conflict):
     - T-97 Phase 2 decision 4 ("generated diagram blocks … never repaired automatically"): replaced
@@ -398,3 +413,17 @@ implemented). Scope, order and acceptance tests are on the T-97 card; evidence i
       source in an HTML comment.
     - The Phase 2b plan's "a saved Mermaid source writes Markdown only when the user clicks
       Refresh" is replaced by U5.
+    - The Phase 2b plan's "diagram sources are never written by Feature Designer": one explicit
+      exception, "Apply to source" for feature-owned Mermaid sources after a confirmed diff, a
+      check that the source has not changed, and a guarded edit. Feature Designer never writes
+      document-owned sources; it prepares the change for technical-lead's workflow.
+    - T-96 decision 2 ("`check` compares the whole block with what the source produces now (not a
+      fingerprint)"): superseded by U13. The block is compared with its recorded fingerprint and
+      with the source's current output.
+    - T-96 decision 3 (blank source lines written as `%%`): superseded by U14 for architecture
+      documents only; it still applies to feature documents.
+24. **Deferred to M1** (decided when M1 is separately authorized): any change to the restriction that
+    nothing is written into `docs/architecture/` (T-94 Phase 2 decision 2, coordinated with T-82);
+    applying changes to architecture sources always through technical-lead's workflow; the legend
+    placement and lint rules, coordinated with T-82 without weakening those checks to fit the
+    marker.
