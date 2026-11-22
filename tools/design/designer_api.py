@@ -272,3 +272,6 @@ def handle(root: Path, request) -> tuple[dict, int]:
         return {"version": VERSION, "ok": False, "error": {"code": "bad-request", "message": str(exc)}}, EXIT_BAD
     except DesignError as exc:
         return {"version": VERSION, "ok": False, "error": {"code": "workspace", "message": str(exc)}}, EXIT_BAD
+    except Exception as exc:                        # the editor always gets JSON (QA D2)
+        return {"version": VERSION, "ok": False,
+                "error": {"code": "internal", "message": f"{type(exc).__name__}: {exc}"[:500]}}, EXIT_BAD

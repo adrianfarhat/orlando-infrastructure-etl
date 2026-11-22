@@ -225,7 +225,8 @@ on GitHub Project #1.
    `diagram_id` stay unchecked, as before.
 2. **IDs are never reused (P1-A, Git history).** New feature and diagram IDs are one higher
    than every ID in the working tree and in the committed history of all branches,
-   remote-tracking branches, tags and the stash, read with a read-only `git log`
+   remote-tracking branches, tags and the stash (full history, so merged side branches
+   count), read with a read-only `git log`
    (`tools/design/ids.py`, the only place the package runs a program; a test enforces
    that only `rev-parse`, `for-each-ref` and `log` are used). No ledger file. Allocation
    stops, creating nothing, when the history is incomplete or unreadable (not a Git

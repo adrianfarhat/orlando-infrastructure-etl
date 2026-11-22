@@ -144,9 +144,10 @@ def _designer(root: Path, out: TextIO) -> int:
     try:
         raw = sys.stdin.buffer.read() if sys.stdin is not None and hasattr(sys.stdin, "buffer") else sys.stdin.read()
         request = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
-    except (ValueError, UnicodeDecodeError, AttributeError) as exc:
+    except (ValueError, UnicodeDecodeError, AttributeError, RecursionError) as exc:
         response, code = ({"version": designer_api.VERSION, "ok": False,
-                           "error": {"code": "bad-request", "message": f"the request is not valid JSON: {exc}"}},
+                           "error": {"code": "bad-request",
+                                     "message": f"the request is not valid JSON: {type(exc).__name__}: {exc}"[:500]}},
                           designer_api.EXIT_BAD)
     else:
         response, code = designer_api.handle(root, request)

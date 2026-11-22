@@ -147,6 +147,42 @@ class DiagramIds(unittest.TestCase):
         self.assertEqual(ids.next_feature_id(["FD-0001"], {"FD-0004-D2"}), "FD-0005")
 
 
+class MergedSideBranches(unittest.TestCase):
+    """QA D1: IDs that only ever existed on a merged side branch are retired too."""
+
+    def test_an_id_added_and_removed_on_a_merged_pr_branch(self):
+        with Workspace() as ws:
+            new_feature(ws.root, "A"); commit(ws, "A")
+            ws.git("checkout", "-q", "-b", "pr")
+            b = new_feature(ws.root, "B"); commit(ws, "add B")                       # FD-0002 on the branch only
+            (ws.root / b.path).unlink(); cmd(ws.root, "index"); commit(ws, "drop B")
+            ws.git("checkout", "-q", "main")
+            (ws.root / "designs/other.md").write_text("main moved on\n", encoding="utf-8"); commit(ws, "main")
+            ws.git("merge", "-q", "--no-ff", "-m", "Merge pull request", "pr"); ws.git("branch", "-D", "pr")
+            self.assertIn("FD-0002", ids.committed_ids(ws.root))
+            self.assertEqual(new_feature(ws.root, "C").feature_id, "FD-0003")
+
+    def test_an_id_on_a_branch_merged_with_strategy_ours(self):
+        with Workspace() as ws:
+            new_feature(ws.root, "A"); commit(ws, "A")
+            ws.git("checkout", "-q", "-b", "side")
+            new_feature(ws.root, "B"); commit(ws, "add B")
+            ws.git("checkout", "-q", "main")
+            ws.git("merge", "-q", "-s", "ours", "-m", "keep main", "side"); ws.git("branch", "-D", "side")
+            self.assertFalse((ws.root / "designs/features/b.md").exists())
+            self.assertIn("FD-0002", ids.committed_ids(ws.root))
+            self.assertEqual(new_feature(ws.root, "C").feature_id, "FD-0003")
+
+
+class GitEnvironment(unittest.TestCase):
+    def test_inherited_git_variables_cannot_redirect_the_scan(self):
+        with Workspace() as ws, tempfile.TemporaryDirectory() as other:
+            new_feature(ws.root, "A"); commit(ws)
+            subprocess.run(GIT + ["init", "-q", other], check=True, capture_output=True)
+            with mock.patch.dict("os.environ", {"GIT_DIR": str(Path(other) / ".git"), "GIT_WORK_TREE": other}):
+                self.assertEqual(ids.committed_ids(ws.root), {"FD-0001"})
+
+
 class HistoryParsing(unittest.TestCase):
     def test_metadata_lines_in_any_quoting_with_comments(self):
         with Workspace() as ws:

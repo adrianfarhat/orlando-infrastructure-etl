@@ -253,6 +253,22 @@ class Requests(unittest.TestCase):
                     self.assertEqual(out, designer_api.dumps(response) + "\n")                 # canonical bytes
             self.assertEqual(snapshot(ws.root), before)
 
+    def test_unexpected_input_still_answers_in_json(self):
+        """QA D2: a lone surrogate from an editor buffer, or absurdly deep JSON, never gives a traceback."""
+        with Workspace() as ws:
+            f = new_feature(ws.root, "A")
+            for stdin in ('{"version":1,"op":"refresh","path":"%s","text":"\\ud800"}' % f.path,
+                          "[" * 100000):
+                with self.subTest(stdin=stdin[:40]), mock.patch("sys.stdin", io.StringIO(stdin)):
+                    code, out, err = cmd(ws.root, "designer")
+                    self.assertEqual(code, 2)
+                    self.assertEqual(err, "")
+                    response = json.loads(out)
+                    self.assertFalse(response["ok"])
+                    self.assertIn(response["error"]["code"], ("internal", "bad-request"))
+            r, code = designer_api.handle(ws.root, {"version": 1, "op": "refresh", "path": f.path, "text": "\ud800"})
+            self.assertEqual((code, r["error"]["code"]), (2, "internal"))
+
     def test_no_workspace_still_answers_in_json(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:                                         # no .git, no template

@@ -21,6 +21,7 @@ Existing IDs are never renumbered by any command.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -32,12 +33,19 @@ DIAGRAM_ID = re.compile(r"(FD-\d{4})-D([1-9]\d{0,3})\Z")
 # A metadata line added or removed in a commit: "+feature_id: FD-0003", '-diagram_id: "FD-0003-D2"  # ...'
 _HISTORY_LINE = re.compile(r"""^[+-]\s*(?:feature_id|diagram_id)\s*:\s*["']?(FD-\d{4}(?:-D[1-9]\d{0,3})?)["']?\s*(?:#.*)?$""")
 _GIT_TIMEOUT = 120
+# Environment variables that would point `git -C <root>` at another repository or index are
+# dropped; GIT_NO_LAZY_FETCH stops a partial clone from fetching missing objects over the
+# network (the scan then fails and allocation stops, as for any incomplete history).
+_REDIRECTING = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES"}
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
     try:
+        env = {k: v for k, v in os.environ.items() if k not in _REDIRECTING}
+        env["GIT_NO_LAZY_FETCH"] = "1"
         return subprocess.run(["git", "-c", "core.quotepath=off", "-C", str(root), *args], capture_output=True,
-                              timeout=_GIT_TIMEOUT)
+                              timeout=_GIT_TIMEOUT, env=env)
     except FileNotFoundError:
         raise DesignError(_why("Git is not installed or not on PATH")) from None
     except subprocess.TimeoutExpired:
@@ -67,8 +75,11 @@ def committed_ids(root: Path) -> set[str]:
         raise DesignError(_why("Git could not list the branches"))
     if not refs.stdout.strip():
         return set()                                   # no commit yet: nothing has been retired
-    log = _git(root, "log", "--all", "--no-color", "--no-ext-diff", "--no-textconv", "--format=", "-p",
-               "--", "designs")
+    # --full-history: without it, Git skips a merged side branch whose result equals the main
+    # line for designs/ (for example an ID added and removed again on a PR branch, or an
+    # `-s ours` merge), and those IDs would be lost (T-97 Phase 1 QA D1).
+    log = _git(root, "log", "--all", "--full-history", "--no-color", "--no-ext-diff", "--no-textconv", "--format=",
+               "-p", "--", "designs")
     if log.returncode:
         raise DesignError(_why("`git log` failed: " + log.stderr.decode("utf-8", "replace").strip()[:200]))
     found = set()

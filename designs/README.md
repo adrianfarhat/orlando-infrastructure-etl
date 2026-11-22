@@ -98,7 +98,8 @@ designs/features/
 - **Identity is the feature ID**, not the path. Moving or renaming a file keeps its ID, and
   no command ever renumbers a feature. **IDs are never reused:** New Feature takes the number
   after every ID in the working tree *and* in the committed Git history (all branches,
-  remote-tracking branches and tags), so a deleted feature's ID stays retired. It reads the
+  remote-tracking branches, tags and the stash, including merged side branches), so a
+  deleted feature's ID stays retired. It reads the
   history with a read-only `git log` and stops, creating nothing, when the history is
   incomplete (a shallow clone: run `git fetch --unshallow`) or cannot be read. Limits: an ID
   that was created and deleted without ever being committed left no record and can be
