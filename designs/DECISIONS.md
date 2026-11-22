@@ -434,3 +434,38 @@ implemented). Scope, order and acceptance tests are on the T-97 card; evidence i
     item 22. A more permissive rule for Mark Sharp's reformatting of generated blocks would first
     have to be shown necessary by tests and then approved explicitly; until then such reformatting
     is reported as a conflict and reconciled explicitly.
+
+## 2026-11-22: T-97 PR A — diagram registry implementation choices (for review)
+
+1. **Scope.** The registry (`tools/design/registry.py`), stable IDs (`AD-` IDs for document-owned
+   diagrams, read from registry lines in the Git history as well), standalone Mermaid creation
+   with the `<owner>_<category>_<name>.md` naming, resolution by ID or alias, reuse by reference,
+   relink, retire, adopt, U13 fingerprints with exact comparison and explicit reconciliation, the
+   generated diagram index, and stage M0 (the 14 architecture diagrams registered in place as
+   `AD-0001` to `AD-0014`, with their catalog IDs as aliases; no document changed). Not in PR A:
+   M1 extraction and the verbatim architecture copies of U14 (used from M1), draw.io (visual
+   formats are known but refused), the Feature Designer workflow (PR B), the feature template's
+   example diagram (U6) and the hand-written `.drawio.svg` link check (E13).
+2. **Registry authority.** A standalone source with a `diagram_id` that is not registered is a
+   problem (E5) and cannot be shown, even if its front matter is valid; `registry adopt`
+   registers it. Without a registry file the registry is empty, so a project without diagrams
+   needs none.
+3. **Commands write the generated diagram index** after a successful registry change, as New
+   Feature writes the feature index.
+4. **References by alias keep their generated text.** A block that names a former catalog ID is
+   rendered exactly as before M0 (the caption shows the name the block uses), so M0 changes no
+   existing block; tests prove all 14 architecture diagrams generate byte-identical lines.
+5. **Fingerprints.** Sixteen hex digits of SHA-256 over the generated lines joined by `\n`
+   (a trailing CR removed). An emptied block is regenerated (nothing to lose); an old marker
+   without a fingerprint keeps the T-96 comparison until its first refresh adds one. A
+   conflict never blocks the refresh of other blocks in the same file.
+6. **Reconciliation on the command line** (`reconcile`): a preview prints the diff and a token
+   derived from the document, the source and the action; `--confirm <token>` applies exactly that
+   change and is refused if either file changed since. Apply to source writes only a
+   feature-owned standalone source; document-owned and embedded diagrams are refused with a
+   pointer to technical-lead's workflow. When the block uses the T-96 blank-line form, a bare
+   `%%` line becomes a blank line in the source.
+7. **Feature Designer compatibility** (no new workflow): its marker pattern accepts the
+   fingerprint, and "Edit source" also finds a diagram by an alias.
+8. **The registry lock** `designs/diagrams/.registry.lock` is listed in `.gitignore`; it exists only
+   while a command runs.

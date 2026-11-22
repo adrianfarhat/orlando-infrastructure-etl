@@ -39,10 +39,13 @@ Other commands:
 
 | Command | What it does |
 |---|---|
-| `python -m tools.design index` | Refresh each feature's generated summary table and Related features rows from its metadata, then regenerate the feature index and the architecture index |
+| `python -m tools.design index` | Refresh each feature's generated summary table and Related features rows from its metadata, then refresh diagram blocks (never a hand-edited one) and regenerate the feature index, the architecture index and the diagram index |
 | `python -m tools.design index --check` | Exit code 1 if either index, any summary table or any Related features rows are out of date (writes nothing) |
 | `python -m tools.design check` | Check every feature: IDs (including duplicates), metadata, the six sections, both dependency tables, `depends_on` (unknown IDs, self-dependencies, repeats, cycles), links and references (see below), diagram ownership, and the freshness of the generated rows and both indexes |
-| `python -m tools.design new diagram --feature FD-0001 --title "Name"` | Create a proposed diagram owned by a feature, with the next diagram ID that was never used (see [Diagrams](#diagrams)) |
+| `python -m tools.design new diagram --feature FD-0001 --title "Name" --category process` | Create and register a standalone Mermaid diagram owned by a feature, with the next diagram ID that was never used (see [Diagrams](#diagrams)) |
+| `python -m tools.design registry adopt\|adopt-architecture\|relink\|retire …` | Change the diagram registry under its lock: register a source, register the architecture diagrams in place, move or retitle a diagram, retire one (see [Diagrams](#diagrams)) |
+| `python -m tools.design resolve <ID or alias>` | Show a diagram's authoritative source (JSON); writes nothing |
+| `python -m tools.design reconcile --file F --line N --discard\|--apply-to-source` | Resolve a diagram block that was edited by hand: shows the change, applies it only with `--confirm <token>` |
 | `python -m tools.design designer` | The Feature Designer's interface (T-97): one JSON request on stdin, one JSON response on stdout; it proposes edits and never writes a file (described in `tools/design/designer_api.py`) |
 
 Exit codes: 0 success; 1 problems found (`check`, `index --check`) or a refused Feature
@@ -215,35 +218,65 @@ require, so the diagram rules stay the same everywhere.
 
 ## Diagrams
 
-- **Find** an existing diagram in the [architecture index](index/architecture-index.md#diagrams).
-  Each one has a **diagram ID**: its document and the anchor of the heading above it, for
-  example `system-architecture/1-current-state-the-big-picture` (a second diagram under the
-  same heading gets `~2`). IDs are derived, never written into `docs/architecture/`, so an
-  ID changes when its heading is renamed.
+Every diagram has **one authoritative source** and a **stable ID** in the diagram registry,
+[diagrams/registry.yml](diagrams/registry.yml) (design:
+[docs/architecture/diagram-library.md](../docs/architecture/diagram-library.md)). Documents show a
+diagram by referencing its ID; nothing is ever copied by hand. The generated
+[diagram index](index/diagram-index.md) lists every diagram, its owner, format and source, and
+the features that show it.
+
+- **Find** a diagram in the [diagram index](index/diagram-index.md) or the
+  [architecture index](index/architecture-index.md#diagrams). The 14 architecture diagrams are
+  registered in place (stage M0) with stable IDs `AD-0001` to `AD-0014`; their former catalog
+  IDs (`<document>/<heading anchor>`, for example
+  `system-architecture/1-current-state-the-big-picture`) stay valid as **aliases**, so existing
+  references keep working. Their source is still the Mermaid block in `docs/architecture/`:
+  nothing there was changed or moved.
+- **Create** a standalone Mermaid diagram owned by a feature:
+
+  ```text
+  python -m tools.design new diagram --feature FD-0001 --title "One Map Pan" --category system-architecture
+  ```
+
+  It creates `<owner>_<category>_<name>.md` (here `test1_system-architecture_one-map-pan.md`) from
+  [templates/diagram.md](templates/diagram.md) in the `diagrams/` folder next to the owning
+  feature, with the next diagram ID that was never used (`FD-0001-D1`), and registers it, all or
+  nothing: under a lock, the file is created without overwriting anything and the registry is
+  replaced only if nobody changed it meanwhile; on any failure both are left as they were.
+  Categories: `system-architecture`, `data-model`, `process`, `sequence`, `state`, `ui`,
+  `legend`, `other` (default `other`). The file name is descriptive only; the ID is the identity.
+- **Reuse** a diagram in another feature by placing a block with its ID (below). The source keeps
+  its owner, name and location; reuse never copies it and never changes its owner.
+- **Ownership** (T-97): a diagram is owned by exactly one feature (`feature_id`, ID
+  `FD-0001-D<n>`) or one document (`owner_document`, ID `AD-<nnnn>`). The registry decides; the
+  front matter must agree. Diagram numbers are never reused (working tree, registry and
+  committed history) and never renumbered.
+- **Rename or move** a source: move the file inside an approved folder (a `diagrams/` folder under
+  `designs/features/` for features), then
+  `python -m tools.design registry relink FD-0001-D1 --path <new path>`. Change a title with
+  `registry relink FD-0001-D1 --title "New title"` (registry and front matter). If an
+  architecture heading is renamed, re-point its diagram explicitly with
+  `registry relink AD-0006 --heading <anchor>`; nothing is guessed. Then run `index`.
+- **Retire** a diagram with `python -m tools.design registry retire FD-0001-D1`: it lists every
+  reference first and changes nothing; repeat with `--confirm`. Its ID is never issued again,
+  and remaining references are reported.
+- **Register** a source made outside `new diagram` (for example an interrupted command) with
+  `python -m tools.design registry adopt <path> --category <category>`.
+- **Look up** a diagram's authoritative source with `python -m tools.design resolve <ID or alias>`.
+
+`check` reports, and never fixes: unknown, duplicate or colliding IDs and aliases, owners and ID
+prefixes, missing, moved, copied or unregistered sources, front matter that disagrees with the
+registry, retired diagrams that are still shown, sources outside their approved folders, and
+architecture diagrams whose heading moved. Each message names the file and the exact command to
+fix it.
+
 - **Link** to an existing diagram in `docs/architecture/` by its document and heading, for
   example `../docs/architecture/system-architecture.md#1-current-state-the-big-picture`
   (adjust `../` to the file's depth).
-- **Create** a proposed diagram with
-  `python -m tools.design new diagram --feature FD-0001 --title "Road/Pipe Intersection Logic"`:
-  it creates the file from [templates/diagram.md](templates/diagram.md) in the `diagrams/`
-  folder next to the owning feature, with its metadata filled in; link it from the
-  feature's "Proposed diagrams" section. A diagram file with a `diagram_id` is **owned by
-  one feature** (T-97):
-  - `feature_id` is required and must be an existing feature's ID (the owner);
-  - `diagram_id` is the owner's ID plus `-D` and a number (`FD-0001-D1`), unique, and
-    independent of the file's name and folder; like feature IDs, diagram numbers are
-    never reused (working tree and committed history) and never renumbered;
-  - `title` is required: it is the diagram's name in the Feature Designer library.
-
-  `check` reports a missing or unknown owner, an ID that does not start with its owner's
-  ID, a missing title and duplicate IDs; nothing is fixed automatically. A diagram file
-  without a `diagram_id` (for example a copy of the template being drafted) is not checked
-  and cannot be shown in a feature.
-- **Copy** an existing diagram into a proposed variant: paste its Mermaid source into a new
-  diagram file and fill in `source_diagram` (its diagram ID), `source_document`,
-  `source_heading` and `base_commit`
-  (`git rev-parse --short HEAD`), so the original can always be found. Never edit the
-  original in `docs/architecture/` as part of a design.
+- **Copy** an existing diagram into a proposed variant: create a diagram with `new diagram`,
+  paste its Mermaid source and fill in `source_diagram` (its catalog ID), `source_document`,
+  `source_heading` and `base_commit` (`git rev-parse --short HEAD`), so the original can always
+  be found. Never edit the original in `docs/architecture/` as part of a design.
 
 Mermaid stays editable text. Preview it in VS Code (Markdown preview with Mermaid support)
 or on GitHub.
@@ -292,6 +325,31 @@ its "Diagrams" column.
    whose copy is out of date until you do.
 5. **Commit** the source, the refreshed feature files and `designs/index/` together, after
    `python -m tools.design check` and a look at `git diff`.
+
+
+**Fingerprints and hand edits.** When `index` (or the Feature Designer) generates a block, its
+start marker records a fingerprint of the generated lines:
+`<!-- diagram:start FD-0001-D1 sha256:0123456789abcdef -->` (invisible when rendered). With it,
+the tooling tells apart:
+
+- the source changed and the block was not edited: `index` refreshes the block;
+- the block was edited by hand, or both the block and the source changed: a **conflict** (E15).
+  It is reported and never overwritten, by `index` or anything else.
+
+Comparison is exact: only line endings are ignored, so a change of indentation or blank lines
+is a real change. Resolve a conflict explicitly; both actions show the exact change first and
+change nothing until confirmed with the token they print:
+
+```text
+python -m tools.design reconcile --file designs/features/test1.md --line 52 --discard
+python -m tools.design reconcile --file designs/features/test1.md --line 52 --apply-to-source
+```
+
+`--discard` regenerates the block from its source. `--apply-to-source` copies the block's
+Mermaid into its feature-owned source (refused if the source changed since the preview) and then
+regenerates the block; architecture diagrams change only through technical-lead's documentation
+workflow. Mark Sharp's reformatting of a generated block is a conflict too; `--discard` restores
+it. Blocks made before fingerprints keep the earlier behaviour until `index` next refreshes them.
 
 ## Editing in a formatted view (Mark Sharp)
 
