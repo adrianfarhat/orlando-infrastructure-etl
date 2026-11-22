@@ -111,8 +111,10 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     const plus = `${blockSel(b.idx)} >> .plus`;
     await app.page.mouse.move(1000, 14);
     const before = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity);
-    await app.page.mouse.move(...Object.values(center(await box(blockSel(b.idx)))), { steps: 6 }); await sleep(400);
-    const after = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity);
+    const c = center(await box(blockSel(b.idx)));
+    await app.page.mouse.move(c.x, c.y, { steps: 6 });
+    const after = await waitFor(async () => { await app.page.mouse.move(c.x + 2, c.y, { steps: 1 });   // hover is re-evaluated on movement
+                                               const o = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity); return o === "1" ? o : null; }, 3000, 200) || "0";
     await app.page.mouse.move(...Object.values(center(await box(plus))), { steps: 4 }); await sleep(200);
     const onIt = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity);
     await f.locator(plus).click();
@@ -554,12 +556,14 @@ async function prB1Steps() {
       await f.locator(`.edit-diagram[data-id="${id}"]`).first().scrollIntoViewIfNeeded();
       await f.locator(`.edit-diagram[data-id="${id}"]`).first().click();
     };
-    const active = () => waitFor(async () => { const t = (await app.host("tabs")).find((x) => x.active && x.kind === "text" && x.group === 2); return t ? t.label : ""; });
-    await open("FD-0001-D1"); await sleep(800); const own = await active();
-    await open(OWNED); await sleep(800); const other = await active();
-    await designerKey("Home");                                        // as a click on the pencil would: the view has the focus
-    await f.evaluate((id) => window.FD_HOST.api.postMessage({ type: "editDiagram", id }), CRED_ALIAS); await sleep(800); const byAlias = await active();
     const otherSrc = JSON.parse(py(["-m", "tools.design", "resolve", OWNED])).path;
+    const activeIs = async (want) => (await waitFor(async () => { const t = (await app.host("tabs")).find((x) => x.active && x.kind === "text" && x.group === 2);
+                                                                  return t && t.label === want ? t.label : ""; }, 10000)) ||
+                                     ((await app.host("tabs")).find((x) => x.active && x.kind === "text" && x.group === 2) || {}).label;
+    await open("FD-0001-D1"); const own = await activeIs(path.basename(OWN_SRC));
+    await open(OWNED); const other = await activeIs(path.basename(otherSrc));
+    await designerKey("Home");                                        // as a click on the pencil would: the view has the focus
+    await f.evaluate((id) => window.FD_HOST.api.postMessage({ type: "editDiagram", id }), CRED_ALIAS); const byAlias = await activeIs("system-architecture.md");
     rec("B6 the pencil opens the authoritative source: this feature's, another feature's (no copy), and an architecture diagram by its former catalog ID",
         own === path.basename(OWN_SRC) && other === path.basename(otherSrc) && byAlias === "system-architecture.md", { own, other, byAlias });
   });
