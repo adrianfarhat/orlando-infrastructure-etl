@@ -6,7 +6,7 @@ The current-state documents in `docs/architecture/` (the verified, implemented s
 to every heading and every Mermaid diagram. Use it to fill a feature's "Architecture references";
 proposed designs never change these documents. See [designs/README.md](../README.md).
 
-7 documents, 105 headings, 14 diagrams (4 architecture, 2 er, 1 example, 6 process, 1 sequence).
+7 documents, 109 headings, 14 diagrams (4 architecture, 2 er, 1 example, 6 process, 1 sequence).
 
 ## Diagrams
 
@@ -96,8 +96,10 @@ that heading is renamed. The type is the diagram's `%% diagram-type:` marker
   - [6.1 Canonical ID references](../../docs/architecture/diagram-library.md#61-canonical-id-references)
   - [6.2 Resolving an ID to a path](../../docs/architecture/diagram-library.md#62-resolving-an-id-to-a-path)
   - [6.3 Keeping generated paths right after moves and renames](../../docs/architecture/diagram-library.md#63-keeping-generated-paths-right-after-moves-and-renames)
-  - [6.4 Rendering in Markdown](../../docs/architecture/diagram-library.md#64-rendering-in-markdown)
-  - [6.5 Rendering in Feature Designer](../../docs/architecture/diagram-library.md#65-rendering-in-feature-designer)
+  - [6.4 Generated representations: one authority (U3, U5)](../../docs/architecture/diagram-library.md#64-generated-representations-one-authority-u3-u5)
+  - [6.5 Detecting manual modifications (U13, proposed)](../../docs/architecture/diagram-library.md#65-detecting-manual-modifications-u13-proposed)
+  - [6.6 Rendering in Markdown](../../docs/architecture/diagram-library.md#66-rendering-in-markdown)
+  - [6.7 Rendering in Feature Designer](../../docs/architecture/diagram-library.md#67-rendering-in-feature-designer)
 - [7. Workflows](../../docs/architecture/diagram-library.md#7-workflows)
   - [7.1 + → Place Diagram → Add Existing Diagram](../../docs/architecture/diagram-library.md#71---place-diagram--add-existing-diagram)
   - [7.2 + → Place Diagram → Make New Diagram](../../docs/architecture/diagram-library.md#72---place-diagram--make-new-diagram)
@@ -118,7 +120,9 @@ that heading is renamed. The type is the diagram's `%% diagram-type:` marker
   - [12.3 Proposed IDs and names](../../docs/architecture/diagram-library.md#123-proposed-ids-and-names)
   - [12.4 Other diagrams](../../docs/architecture/diagram-library.md#124-other-diagrams)
 - [13. Compatibility](../../docs/architecture/diagram-library.md#13-compatibility)
-- [14. Open decisions U1–U12](../../docs/architecture/diagram-library.md#14-open-decisions-u1u12)
+- [14. Decisions U1–U12 (approved 2026-11-22)](../../docs/architecture/diagram-library.md#14-decisions-u1u12-approved-2026-11-22)
+  - [14.1 Approved](../../docs/architecture/diagram-library.md#141-approved)
+  - [14.2 Proposed: U13 and U14 (awaiting approval)](../../docs/architecture/diagram-library.md#142-proposed-u13-and-u14-awaiting-approval)
 
 ### [etl-workflow.md](../../docs/architecture/etl-workflow.md): ETL Workflow
 

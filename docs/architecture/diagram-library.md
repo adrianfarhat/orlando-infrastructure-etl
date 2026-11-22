@@ -6,9 +6,10 @@
 > component described here is `planned`; none is `unverified` or `verified`. The built
 > current state is described in the other `docs/architecture/` documents and in
 > [designs/README.md](../../designs/README.md). Where this page states what exists
-> today (section 2), it says so explicitly. Decisions U1–U12 are **still open**
-> ([section 14](#14-open-decisions-u1u12)); the statements that depend on them are
-> marked "(decision Un)".
+> today (section 2), it says so explicitly. Decisions U1–U12 were **approved on
+> 2026-11-22**; U13 and U14 are **proposed and await approval**
+> ([section 14](#14-decisions-u1u12-approved-2026-11-22)). Statements that rest on a
+> decision cite it as "(Un)".
 
 The diagram library gives every diagram in the project (architecture diagrams and
 feature diagrams, code-first Mermaid and visual draw.io) one stable ID, one
@@ -31,7 +32,8 @@ finding, placing, editing and maintaining it.
 1. **Every diagram is its own source document**, even when it is shown inside another
    document. A feature or architecture document never holds a diagram's authoritative
    source; it holds a reference (the stable ID) and a generated copy or image for
-   portable rendering.
+   portable rendering. A generated copy is a representation of the source, not a
+   second diagram (section 6.4).
 2. **The stable ID is the identity.** File names are descriptive and may change; the ID
    never changes and is never reused.
 3. **One library, one registry, one workflow** for both formats: Mermaid (code-first)
@@ -41,8 +43,9 @@ finding, placing, editing and maintaining it.
 5. **Existing diagrams behave as if made with Make New Diagram.** Each gets a registry
    entry and, after an approved migration, its own source document. Nothing is
    converted between formats.
-6. **Unsaved edits are never overwritten.** Generated content is the only thing tools
-   rewrite, and never in a document with unsaved changes.
+6. **Unsaved edits and manual changes are never overwritten.** Generated content is the
+   only thing tools rewrite, never in a document with unsaved changes, and never
+   silently when the generated content was changed by hand (section 6.5).
 
 ## 2. What exists today
 
@@ -81,11 +84,11 @@ state, not the design.
 | Owner kind | Owner reference | Diagram ID | Allocation |
 |---|---|---|---|
 | `feature` | a feature ID, for example `FD-0001` | `FD-0001-D<n>` (T-97 Phase 1, unchanged) | Phase 1 allocator |
-| `document` | a repository document that is not a feature, for example `docs/architecture/system-architecture.md` | `AD-<nnnn>` (architecture/document diagram) (decision U1) | The same never-reuse allocator: working tree, Git history and registry |
+| `document` | a repository document that is not a feature, for example `docs/architecture/system-architecture.md` | `AD-<nnnn>` (architecture/document diagram) (U1) | The same never-reuse allocator: working tree, Git history and registry |
 
 - The ID prefix must match the owner kind.
 - **Aliases.** A registry entry may list aliases. A former catalog ID becomes a
-  permanent alias of its `AD-` ID and keeps resolving forever (decision U4).
+  permanent alias of its `AD-` ID and keeps resolving forever (U4).
 - IDs and aliases are globally unique: an alias can never be issued as a new ID, and an
   ID is never reused, including after retirement.
 
@@ -145,9 +148,9 @@ One table in the tooling drives validation, resolution, rendering and the editor
 
 | `format` | Extension | Kind | Editor | Rendering in Markdown | In-file identity |
 |---|---|---|---|---|---|
-| `mermaid-md` | `.md` | code | text editor, at the Mermaid block | Mermaid copy (T-96) | front matter (`diagram_id`, owner, `title`; owner field for documents: decision U10) |
-| `drawio-svg` | `.drawio.svg` | visual | draw.io (pinned, section 10) | image link | properties on the diagram's root cell (owner property for documents: decision U10) |
-| `mermaid-embedded` | none (a block inside a document) | code, **transitional** | text editor, at the block in the owning document | the document itself | located by owner document + heading anchor + ordinal (renamed headings: decision U11) |
+| `mermaid-md` | `.md` | code | text editor, at the Mermaid block | Mermaid copy (T-96) | front matter: `diagram_id`, `title`, and `feature_id` (feature-owned) or `owner_document` (document-owned) (U10) |
+| `drawio-svg` | `.drawio.svg` | visual | draw.io (pinned, section 10) | image link | root-cell properties: `fd_diagram_id`, and `fd_feature_id` (feature-owned) or `fd_owner_document` (document-owned) (U10) |
+| `mermaid-embedded` | none (a block inside a document) | code, **transitional** | text editor, at the block in the owning document | the document itself | located by owner document + heading anchor + ordinal (renamed headings: U11) |
 | `mermaid-mmd` | `.mmd` | code, **reserved** | not accepted yet | Mermaid copy | `%% diagram_id:` lines |
 | `dbml` | `.dbml` | code, **reserved** | not accepted yet | to be designed | to be designed |
 
@@ -155,7 +158,8 @@ One table in the tooling drives validation, resolution, rendering and the editor
   Mermaid block (today's diagram file format, unchanged).
 - **`drawio-svg`**: one diagram per file and **exactly one page**, because the saved
   image shows whichever page was active when saving. The ID is stored as a property on
-  the diagram's root cell (`<UserObject id="0" fd_diagram_id fd_feature_id>`), visible in
+  the diagram's root cell (for a feature-owned diagram
+  `<UserObject id="0" fd_diagram_id fd_feature_id>`), visible in
   draw.io's Edit Data; this was the only placement tested that survived repeated draw.io
   saves (an attribute in the SVG image part is lost on the first save; an attribute on
   `<mxfile>` survives but is undocumented and is not relied on). New files are created
@@ -166,10 +170,11 @@ One table in the tooling drives validation, resolution, rendering and the editor
   read-only to tools and disappears when the diagram is extracted (stage M1).
 - **Reserved** formats are not accepted until a later, separately approved design.
   Adding one means adding a table row and a reader, with no registry migration.
-- The owner fields of the in-file identity for `document`-owned diagrams are open
-  (decision U10). Feature-owned diagrams keep `feature_id` (front matter) and
-  `fd_feature_id` (draw.io root property). Moving architecture diagrams to draw.io is
-  not part of this design and needs a plan of its own.
+- **Owner in the file (U10).** `owner_document` (front matter) and `fd_owner_document`
+  (draw.io root property) hold the repository path of the original owning document, so
+  ownership is recorded independently of the file name. Feature-owned diagrams keep
+  `feature_id` and `fd_feature_id`. Moving architecture diagrams to draw.io is not part
+  of this design and needs a plan of its own.
 
 ## 5. Naming and directories
 
@@ -183,7 +188,7 @@ One table in the tooling drives validation, resolution, rendering and the editor
   its folder name), or the owning document's file name without `.md`
   (`system-architecture`).
 - **`category`**: from the controlled list `system-architecture`, `data-model`,
-  `process`, `sequence`, `state`, `ui`, `legend`, `other` (decision U7). Make New
+  `process`, `sequence`, `state`, `ui`, `legend`, `other` (U7). Make New
   Diagram preselects a category from the section where "+" was used and lets the user
   change it.
 - **`diagram-name`**: from the title, with the T-94 file-name rules (lower case,
@@ -216,16 +221,20 @@ docs/architecture/
 .gitattributes                         *.drawio.svg diff=drawio -merge
 ```
 
-- Whether a source may later be moved to another location is decision U12; the
-  recommendation keeps each source in the directory of its owner kind.
+- **Sources stay in their approved directories (U12):** document-owned sources in
+  `docs/architecture/diagrams/`, feature-owned sources in a `diagrams/` folder under
+  `designs/features/`. `registry relink` refuses any other location.
 - Document-owned sources in `docs/architecture/diagrams/` are owned and edited by
   technical-lead, like the documents themselves.
 
 ### 5.3 Reuse by several features
 
 - The source keeps its owner's name and location.
-- Other features insert a reference (a marker with the ID). Nothing is copied, renamed
-  or moved, and the owner is unchanged; the library shows "used by".
+- Other features and documents insert a reference (a marker with the ID). Reuse across
+  documents happens only through stable IDs (U12). Nothing is copied, renamed or moved;
+  the library shows "used by".
+- **A reference is not ownership (U10).** Reuse never changes the owner recorded in the
+  registry and in the file (`feature_id` or `owner_document`).
 - Changing a diagram's owner is a separate, explicit command, not part of this design.
 
 ## 6. References, resolution and rendering
@@ -233,7 +242,8 @@ docs/architecture/
 ### 6.1 Canonical ID references
 
 - A referencing document holds the T-96 marker pair. **The canonical reference is the
-  start marker, which holds only the ID** (or an alias):
+  start marker, which holds the ID** (or an alias) and, if U13 is approved, an optional
+  fingerprint of the content last generated (section 6.5):
 
   ```text
   <!-- diagram:start FD-0001-D3 -->
@@ -241,12 +251,13 @@ docs/architecture/
   <!-- diagram:end -->
   ```
 
-- **Everything between the markers is generated** from the registry and never read
-  back. A path inside a block exists only because ordinary Markdown viewers need one;
-  no command reads a path out of a block to find a diagram.
-- Former catalog IDs in existing markers keep resolving through aliases. `index` may
-  rewrite a marker to the new ID only when that is approved (decision U4; the
-  recommendation is no automatic rewrite).
+- **Everything between the markers is generated** from the registry and the source. It
+  is never read back to find a diagram: a path inside a block exists only because
+  ordinary Markdown viewers need one, and no command reads a path out of a block. The
+  only command that reads a block's content is the explicit "Apply to source" action of
+  U13 (section 6.5).
+- Former catalog IDs in existing markers keep resolving through aliases; markers are
+  not rewritten to the new ID automatically (U4).
 - Hand-written image links to a `*.drawio.svg` outside a diagram block (under
   `designs/`) are reported (E13), because a bare path cannot follow a move.
 
@@ -260,8 +271,10 @@ Edit Diagram, so they can never disagree:
    an error (E1, E2, E8). Nothing is guessed.
 2. Take the registry `path` and check that it exists with exact case (E6 if the file is
    found elsewhere, E7 if not). A `mermaid-embedded` entry is located by owner
-   document, heading anchor and ordinal; what happens when that heading is renamed
-   before M1 is decision U11.
+   document, heading anchor and ordinal. If that heading is renamed between M0 and M1,
+   the reference is reported as broken (E7, with the candidate block it can see) and is
+   re-pointed only by an explicit `registry relink`; nothing is guessed and the former
+   catalog ID stays an alias (U11).
 3. Check the file's in-file identity against the registry (E3 on mismatch).
 4. For a referencing document at `D`, the generated link is
    `posixpath.relpath(path, dirname(D))`, percent-encoded.
@@ -276,7 +289,7 @@ and fields are only added.
    step.
 2. Every block for that ID is now stale, because its generated content differs from
    what `resolve` produces. This is detected by the whole-block comparison T-96 already
-   uses.
+   uses (and, with U13, by the fingerprint states of section 6.5).
 3. Refreshing:
    - **open documents without unsaved changes**: Feature Designer applies a guarded
      refresh edit (base SHA-256, line count and document version must match) that
@@ -285,26 +298,96 @@ and fields are only added.
      button; nothing is written until the user clicks;
    - **closed documents**: `python -m tools.design index`, which rewrites only the lines
      between markers, in files without a structural problem (T-96 rule).
+   - A block with a manual modification is never refreshed by any of these paths
+     (section 6.5).
 4. Until refreshed, `check` reports E14, and Feature Designer still shows the right
    diagram, because it resolves by ID, not by the stale path.
 
-### 6.4 Rendering in Markdown
+### 6.4 Generated representations: one authority (U3, U5)
+
+After extraction, the standalone source is the **only authoritative, editable version**
+of a diagram. Mermaid kept inside an architecture page, or any other document, is a
+**generated representation** of that source, not a second diagram. The system:
+
+1. tracks each generated block by its stable diagram ID (the start marker);
+2. refreshes it when the source changes, automatically only in documents without
+   unsaved changes and only the lines between that ID's markers, listing every
+   refreshed document in a notification (U5);
+3. preserves the existing appearance and Mermaid content during migration
+   (sections 6.6 and 12.2);
+4. detects manual modifications to generated content (section 6.5);
+5. never silently overwrites manual or unsaved changes;
+6. reports conflicts clearly (E15) and offers a safe way to reconcile them
+   (section 6.5).
+
+Generated blocks are never counted as diagrams: the catalog lists each diagram once, by
+its registry ID (U9, section 12.2).
+
+### 6.5 Detecting manual modifications (U13, proposed)
+
+**PROPOSED, awaiting approval.** This mechanism changes approved T-96 decision 2 ("check
+compares the whole block … not a fingerprint") and therefore needs the user's approval
+before it is built. Until then, the T-96 behaviour applies as described under "Markers
+without a fingerprint" below.
+
+- **Fingerprint.** The start marker gains an optional fingerprint of the content last
+  generated between the markers, for example:
+
+  ```text
+  <!-- diagram:start AD-0013 sha256:<first 16 hex digits> -->
+  ```
+
+  Markers without a fingerprint stay valid and behave as today (backward compatible).
+- **Normalised form.** The fingerprint is computed over a normalised form of the block:
+  line endings, trailing spaces, indentation and blank lines are ignored. Editor
+  reformatting, such as Mark Sharp's known rewrite of generated blocks, is therefore
+  "formatting only" and is simply restored.
+- **States** of a block with a fingerprint:
+
+| Block vs fingerprint | Source vs block | State | What happens |
+|---|---|---|---|
+| matches | matches | current | nothing |
+| matches | source changed | stale, safe to refresh | refreshed as in section 6.3, subject to the unsaved-edits rule |
+| differs | any | **manual modification (conflict)** | reported as E15 (file, line, ID and a diff summary); never overwritten automatically; not refreshed by `index` or Feature Designer |
+
+- **Reconciling a manual modification** is only ever an explicit choice, made one block
+  at a time:
+  1. **Discard manual change**: shows the diff first, then regenerates the block from
+     the source.
+  2. **Apply to source**: shows the diff first, then copies the block's Mermaid into the
+     authoritative source; the block is then regenerated from it.
+
+  Each is one undoable step and is never applied to a document with unsaved changes
+  without the user's click.
+- **Markers without a fingerprint** (existing blocks): today's T-96 behaviour. Any
+  difference from the source is reported as stale, and `index` rewrites the block only
+  when the file has no structural problem. The first refresh adds the fingerprint.
+
+### 6.6 Rendering in Markdown
 
 | Where | Content between the markers |
 |---|---|
-| Feature documents, `mermaid-md` | Caption (title linked to the source, ID, "generated copy; edit the source") plus the Mermaid copy, byte-identical to T-96 output |
+| Feature documents, `mermaid-md` | Caption (title linked to the source, ID, "generated copy; edit the source") plus the Mermaid copy, with the T-96 `%%` blank-line rule; byte-identical to T-96 output |
 | Feature documents, `drawio-svg` | Caption plus `![<title>](<relative path>)`; stale only when the title or path changes, never when content changes |
-| Architecture documents (after stage M1) | The Mermaid copy only, with an HTML comment naming the ID and source, so the rendered page is unchanged (decision U3) |
+| Architecture documents (after stage M1) | The Mermaid copy only, with an HTML comment naming the ID and source, so the rendered page is unchanged (U3). Written verbatim (U14, proposed) |
 
-The Mermaid copy keeps the T-96 rule that blank source lines are written as `%%`, so the
-block stays contiguous.
+- **Feature documents** keep the T-96 rule that blank source lines are written as `%%`,
+  so the block stays contiguous for Mark Sharp.
+- **Architecture documents (U14, proposed, awaiting approval).** Generated copies in
+  `docs/architecture/` are written **verbatim**: byte-identical to the source's Mermaid
+  lines, blank lines kept, without the `%%` rule. Reason: 7 of the 14 architecture
+  diagrams contain blank lines, and the `%%` rule exists only because Mark Sharp, used
+  for `designs/`, truncates a block at a blank line; architecture documents are not
+  edited with Mark Sharp. This adjusts approved T-96 decision 3 for architecture
+  documents only. Until U14 is approved, the `%%` rule applies everywhere.
 
-### 6.5 Rendering in Feature Designer
+### 6.7 Rendering in Feature Designer
 
 - Every diagram block renders **from its resolved source**, not from the Markdown copy.
 - Every diagram block carries an **Edit Diagram** button in its upper-right corner.
 - If the Markdown copy differs from the source, a small "copy out of date" badge is
-  shown.
+  shown. With U13, a block with a manual modification is marked as a conflict and
+  offers Discard manual change and Apply to source (section 6.5).
 - Visual images are shown through webview URIs with `?v=<mtime>`; `designs/` is added
   to the webview's local resource roots (read-only). The content security policy is
   unchanged, and SVG is shown only through `<img>`.
@@ -362,13 +445,15 @@ sources and `registry.yml`.
 
 | Event | Feature Designer | Markdown written? |
 |---|---|---|
-| A source is saved (either format) | Every open view re-renders that diagram at once, from source | Visual: never (the image link points at the source). Mermaid: copies refreshed per decision U5, never in a document with unsaved changes |
+| A source is saved (either format) | Every open view re-renders that diagram at once, from source | Visual: never (the image link points at the source). Mermaid: copies refreshed automatically (U5), never in a document with unsaved changes and never over a manual modification |
 | Title or path changed (relink) | Marks captions and links out of date | Documents without unsaved changes only (section 6.3) |
 | Registry changed outside Feature Designer | Reloads the library and re-resolves | No |
 
-- For Mermaid copies, decision U5 chooses between refreshing automatically after the
-  save (only the generated lines, listed in a notification) and refreshing on one
-  click. Documents with unsaved changes get a banner and a Refresh button.
+- For Mermaid copies, the refresh after a save is automatic in documents without
+  unsaved changes: only the generated lines are rewritten, and every refreshed document
+  is listed in a notification (U5). Documents with unsaved changes get a banner and a
+  Refresh button. Blocks with a manual modification are reported as conflicts (E15,
+  U13) and left unchanged.
 - `index` covers everything, including closed documents; `check` reports any stale
   copy.
 - Feature Designer never writes a diagram source.
@@ -385,10 +470,11 @@ sources and `registry.yml`.
   moved, with the exact `registry relink` command (E6).
 - **Title only**: `registry relink --title` updates the registry title (and the
   `mermaid-md` front matter); captions are refreshed as above.
-- The owner never changes on a move. Which target locations `relink` accepts for each
-  owner kind is decision U12.
-- Re-pointing a transitional `mermaid-embedded` entry after its heading is renamed is
-  decision U11.
+- The owner never changes on a move. `relink` accepts only the approved directory of
+  the owner kind: `docs/architecture/diagrams/` for document-owned sources, a
+  `diagrams/` folder under `designs/features/` for feature-owned sources (U12).
+- A transitional `mermaid-embedded` entry whose heading was renamed is reported (E7)
+  and re-pointed only by an explicit `registry relink` (U11).
 
 ### 7.6 Retire
 
@@ -447,9 +533,13 @@ steps 4 and 5 can leave an unregistered file, which `check` reports with
   does not discard them: it reports that the file changed on disk when the user saves.
   Feature Designer's Refresh button is the recommended path for open documents; the
   README asks users to save open documents before running `index`.
+- **Manual modifications are never overwritten silently.** With U13, a generated block
+  that was changed by hand is a conflict (E15); only the user's explicit Discard manual
+  change or Apply to source resolves it (section 6.5).
 - **Diagram sources are never written by Feature Designer, `index` or `refresh`.**
   draw.io writes `.drawio.svg`; the user writes `mermaid-md`; only `new diagram` creates
-  sources, and only exclusively.
+  sources, and only exclusively. The one exception is U13's Apply to source, which
+  writes a Mermaid source only after the user has seen the diff and chosen it.
 
 ## 9. Error catalogue
 
@@ -466,7 +556,7 @@ unchanged from T-97 Phase 1 (decision 4 in [DECISIONS.md](../../designs/DECISION
 | E4 | Unregistered visual file whose ID belongs to another path | `…copy.drawio.svg is a copy of FD-0001-D3 (…original): create diagrams with Make New Diagram` |
 | E5 | Unregistered visual file with an unknown or no ID | `…x.drawio.svg is not registered: run registry adopt …` |
 | E6 | Registered path missing, file found elsewhere | `AD-0013 moved to …: run registry relink AD-0013 …` |
-| E7 | Registered path missing, not found (for `mermaid-embedded`: the block is not found at its owner document, heading and ordinal; decision U11) | `FD-0001-D3's source … does not exist` |
+| E7 | Registered path missing, not found (for `mermaid-embedded`: the block is not found at its owner document, heading and ordinal, for example after a heading rename; U11) | `FD-0001-D3's source … does not exist` / `AD-0013: no diagram at system-architecture.md#<anchor> (block 1); candidate: line …; run registry relink AD-0013 …` |
 | E8 | An ID and an alias collide (for example a former catalog ID issued or registered as an ID) | `… is both a registry ID and an alias of AD-0010` |
 | E9 | Owner does not exist, or the ID prefix does not match the owner kind | `FD-0002-D1 is owned by FD-0001 in the registry: the ID prefix must be the owner's` / `AD-0003 is owned by a feature: AD- IDs belong to document owners` |
 | E10 | Visual file has more than one page, no decodable graph, or a transparent background | a specific message for each |
@@ -474,6 +564,10 @@ unchanged from T-97 Phase 1 (decision 4 in [DECISIONS.md](../../designs/DECISION
 | E12 | Lock held, or registry changed during a command | `another diagram command is running` / `the registry changed while creating …; nothing was written` |
 | E13 | Hand-written image link to a `.drawio.svg` outside a diagram block | `…md line 40 links …x.drawio.svg directly: use a diagram block (FD-0001-D3) so the reference survives moves` |
 | E14 | A generated path in a block no longer matches the registry | `stale image path in the FD-0001-D3 block of …md: expected …; run index or Refresh` |
+| E15 | Generated content changed by hand: the block differs from its marker's fingerprint (U13, proposed) | `…md line 52: the AD-0013 block was modified by hand (n lines changed: …); not refreshed. Choose Discard manual change or Apply to source` |
+
+E15 exists only if U13 is approved; without it, a hand-edited block is reported as a
+stale copy, as T-96 does today.
 
 ## 10. Visual editor rules (draw.io)
 
@@ -539,16 +633,23 @@ Consequences:
 
 ## 12. Adoption and migration of existing diagrams
 
-Proposal only: nothing runs without approval, and the order is decision U8.
+The order is U8: M0 together with the registry's introduction, then M1 per document.
+Nothing runs without approval; each stage, and each M1 document, is approved
+separately.
 
 ### 12.1 Stage M0: adopt in place (no document changes)
+
+M0 is approved as the first implementation migration scope. It has not been executed.
 
 - One registry entry per architecture diagram: an `AD-nnnn` ID, the current catalog ID
   as an alias, and format `mermaid-embedded` pointing at the current block.
 - Every architecture diagram is then in the library, with a stable ID and an Edit
   Diagram target.
-- The 14 documents and their rendering are unchanged; the architecture index lists the
-  new IDs beside the aliases.
+- **M0 changes no document and no diagram.** Every existing diagram's content, its
+  rendering and every existing reference (catalog IDs in T-96 markers, now aliases)
+  are therefore preserved by construction. The only generated change is the
+  architecture index, which lists the new IDs beside the aliases.
+- From M0 on, the diagram list comes from the registry (U9).
 
 ### 12.2 Stage M1: extract per document
 
@@ -559,18 +660,31 @@ diagram:
    current Mermaid lines (byte-identical).
 2. Switch the registry entry to `mermaid-md` with the new path.
 3. Replace the embedded block in the document with the marker pair plus the generated
-   Mermaid copy (with the HTML comment of decision U3).
+   Mermaid copy (with the HTML comment of U3).
 
 The migration is designed to be lossless: the source holds the original lines
-unchanged, the generated copy differs only by the T-96 `%%` blank-line rule, the
-diagram renders the same, and the ID and alias are unchanged. The verification steps
-are on the T-97 card.
+unchanged; the generated copy is byte-identical to the original embedded lines, blank
+lines included (U14, proposed); the rendering is identical; and the ID and alias are
+unchanged. If U14 is not approved, the generated copy differs from the original only by
+the T-96 `%%` blank-line rule. The verification steps are on the T-97 card.
 
-Today's architecture-document scan (`documents()` in `tools/design/architecture.py`)
-reads every Markdown file under `docs/architecture/` at any depth. Without a change,
-extracted sources in `docs/architecture/diagrams/` would be read as architecture
-documents and their diagrams counted twice (decision U9). The transitional entries are
-also exposed to heading renames until their document is extracted (decision U11).
+**Uniqueness by registry identity (U9).** Today's architecture-document scan
+(`documents()` in `tools/design/architecture.py`) reads every Markdown file under
+`docs/architecture/` at any depth, so extracted sources would otherwise be read as
+documents and their diagrams counted twice. Under U9:
+
+- the catalog lists each diagram once, by its registry ID;
+- standalone sources in `docs/architecture/diagrams/` are not scanned as architecture
+  documents; they are listed under their owning document;
+- generated blocks (between markers) are never counted as diagrams;
+- validation reports missing (E1, E7), duplicate (E2) and inconsistent (E3, E8, E14,
+  E15) references;
+- a test proves the count stays 14 through M0 and M1.
+
+**Heading renames (U11).** Transitional `mermaid-embedded` entries depend on their
+heading until their document is extracted. A heading renamed between M0 and M1 is
+reported as a broken reference (E7) and needs an explicit `registry relink`; nothing is
+guessed. Keeping the interval between M0 and M1 short limits this exposure.
 
 ### 12.3 Proposed IDs and names
 
@@ -595,14 +709,14 @@ To be confirmed before M0.
 
 ### 12.4 Other diagrams
 
-- **`docs/agents/development-status.md`** (7 planning diagrams): decision U2; the
-  recommendation is to keep them out of the library (project planning, not
-  architecture; T-94 Phase 2 decision 1 excludes `docs/agents/`).
+- **`docs/agents/development-status.md`** (7 planning diagrams): out of the library
+  (U2): they are project planning, not architecture, and T-94 Phase 2 decision 1
+  excludes `docs/agents/`.
 - **Placeholder diagrams in feature specifications**: the template's example, not
   adopted. Real embedded diagrams in features use Extract to diagram source
   (section 7.7).
 - **The feature template's embedded example** becomes guidance to use + → Place Diagram
-  (decision U6).
+  (U6).
 
 ## 13. Compatibility
 
@@ -611,16 +725,19 @@ To be confirmed before M0.
   draw.io root IDs, and learns `AD-` IDs. Existing fixtures allocate the same IDs.
 - **T-96**: markers keep working with catalog IDs (now aliases) and accept new IDs.
   Mermaid copies in feature documents stay byte-identical to today until a source
-  changes.
+  changes. Two proposed decisions would adjust approved T-96 decisions and need
+  approval first: U13 (an optional fingerprint in the start marker; changes decision 2,
+  whole-block comparison without a fingerprint) and U14 (verbatim copies in
+  architecture documents; adjusts decision 3, the `%%` blank-line rule). Markers without
+  a fingerprint keep today's behaviour.
 - **T-94**: the architecture catalog and index become registry-backed after M0; until
-  M1 they still read the embedded blocks. How the architecture-document scan treats
-  `docs/architecture/diagrams/` is decision U9. Existing `check` output is unchanged on
-  today's repository. Exit codes are unchanged.
+  M1 they still read the embedded blocks. The architecture-document scan excludes
+  `docs/architecture/diagrams/` and never counts generated blocks (U9). Existing
+  `check` output is unchanged on today's repository. Exit codes are unchanged.
 - **T-97 Phase 2 (Feature Designer)**: the menu item "Insert Existing Diagram" becomes
   Place Diagram → Add Existing Diagram; the JSON interface keeps response version 1 and
   only adds fields and the `resolve` operation. Feature Designer's tests that count 14
-  architecture diagrams stay valid (same diagrams, same count), provided extracted
-  sources are not counted again (decision U9).
+  architecture diagrams stay valid (same diagrams, same count; U9).
 - **No format conversion.** No Mermaid diagram is converted to draw.io. Importing a
   Mermaid diagram into draw.io is only ever an explicit "new visual diagram from …"
   recorded in `created_from` (a later item, VE-3). `.mmd`, DBML and moving
@@ -628,22 +745,34 @@ To be confirmed before M0.
 - **Change impact (T-83)**: `designs/diagrams/**`, `.gitattributes` and the draw.io
   toolchain script are to be registered in `registry/components.yml` and `impact.yml`.
 
-## 14. Open decisions U1–U12
+## 14. Decisions U1–U12 (approved 2026-11-22)
 
-These decisions are **still open**. The final answers will be recorded in
-[designs/DECISIONS.md](../../designs/DECISIONS.md).
+U1–U12 were approved by the user on 2026-11-22, with the clarifications written into
+sections 6.4, 5.3, 12.1 and 12.2. U13 and U14 are proposed and await approval
+(section 14.2). Decisions are recorded in
+[designs/DECISIONS.md](../../designs/DECISIONS.md). The design as a whole remains
+PROPOSED: approved, not implemented.
 
-| # | Question | Recommendation |
+### 14.1 Approved
+
+| # | Question | Decision |
 |---|---|---|
 | U1 | ID scheme for document-owned diagrams | `AD-nnnn` via the never-reuse allocator; former catalog IDs kept as permanent aliases |
 | U2 | The 7 planning diagrams in `docs/agents/development-status.md` | Out of the library (project planning, not architecture) |
-| U3 | What architecture documents show after extraction | The Mermaid copy only, with an invisible HTML comment naming the ID and source (rendering unchanged) |
+| U3 | What architecture documents show after extraction | The Mermaid copy only, with an invisible HTML comment naming the ID and source (rendering unchanged). The standalone source is the only authoritative, editable version; the copy is a generated representation (section 6.4) |
 | U4 | Existing markers that use catalog IDs | Keep resolving via aliases; no automatic rewrite |
-| U5 | Refreshing Markdown copies after a source is saved | Automatically in documents without unsaved changes (only generated lines, listed in a notification); never in documents with unsaved changes |
+| U5 | Refreshing Markdown copies after a source is saved | Automatically in documents without unsaved changes (only generated lines, listed in a notification); never in documents with unsaved changes; never silently over manual changes (section 6.4) |
 | U6 | Feature template's embedded example diagram | Replace with guidance to use Place Diagram, together with the registry's introduction |
 | U7 | Category list (supersedes R5's `architecture`) | `system-architecture`, `data-model`, `process`, `sequence`, `state`, `ui`, `legend`, `other` |
-| U8 | Migration order | M0 together with the registry's introduction (registry only); M1 per document after the pinned-editor work and the hands-on test, each separately approved |
-| U9 | Catalog scan after extraction: `documents()` in `tools/design/architecture.py` reads every Markdown file under `docs/architecture/` at any depth, so extracted sources in `docs/architecture/diagrams/` would be read as architecture documents and their diagrams counted twice | From M0 the diagram list comes from the registry, and the architecture-document scan excludes `docs/architecture/diagrams/` (source documents are listed under their owning document, not as documents); a test proves the count stays 14 through M1 |
-| U10 | In-file identity for document-owned diagrams | `mermaid-md` front matter `diagram_id`, `title` and `owner_document` (repository path); `.drawio.svg` root-cell properties `fd_diagram_id` and `fd_owner_document`; feature-owned diagrams keep `feature_id` / `fd_feature_id` |
-| U11 | Heading renamed before M1 (transitional `mermaid-embedded` entries are found by owner document + heading anchor + ordinal) | `check` reports the entry as not found (E7) with the candidate block it can see; the entry is re-pointed only by an explicit `registry relink`; the former catalog ID stays an alias; keeping the M0 → M1 interval short limits exposure |
-| U12 | Move limits for document-owned sources | Document-owned sources stay in `docs/architecture/diagrams/` (`relink` refuses other locations); feature-owned sources stay in a `diagrams/` folder under `designs/features/` |
+| U8 | Migration order | M0 together with the registry's introduction (registry only), approved as the first implementation migration scope; M1 per document after the pinned-editor work and the hands-on test, each separately approved |
+| U9 | Catalog scan after extraction: `documents()` in `tools/design/architecture.py` reads every Markdown file under `docs/architecture/` at any depth, so extracted sources in `docs/architecture/diagrams/` would be read as architecture documents and their diagrams counted twice | Uniqueness by registry identity: from M0 the catalog lists each diagram once, by registry ID; the architecture-document scan excludes `docs/architecture/diagrams/` (sources are listed under their owning document); generated blocks are never counted; validation reports missing (E1, E7), duplicate (E2) and inconsistent (E3, E8, E14, E15) references; a test proves the count stays 14 through M0 and M1 |
+| U10 | In-file identity for document-owned diagrams | `mermaid-md` front matter `diagram_id`, `title` and `owner_document` (repository path); `.drawio.svg` root-cell properties `fd_diagram_id` and `fd_owner_document`; feature-owned diagrams keep `feature_id` / `fd_feature_id`. The owner is recorded independently of the file name; reuse never changes the owner (a reference is not ownership) |
+| U11 | Heading renamed before M1 (transitional `mermaid-embedded` entries are found by owner document + heading anchor + ordinal) | `check` reports the broken reference (E7) with the candidate block it can see; the entry is re-pointed only by an explicit `registry relink`; nothing is guessed; the former catalog ID stays an alias; keeping the M0 → M1 interval short limits exposure |
+| U12 | Move limits for document-owned sources | Sources stay in their approved directories: document-owned in `docs/architecture/diagrams/` (`relink` refuses other locations), feature-owned in a `diagrams/` folder under `designs/features/`; reuse across documents only through stable IDs |
+
+### 14.2 Proposed: U13 and U14 (awaiting approval)
+
+| # | Question | Proposed decision | Why it needs approval |
+|---|---|---|---|
+| U13 | How manual modifications to generated content are detected and reconciled | An optional fingerprint in the start marker (`sha256:<first 16 hex digits>` of the normalised content last generated); states current / stale / manual modification; E15 for manual modifications, never overwritten or refreshed automatically; reconciled only by Discard manual change or Apply to source, each after showing the diff, one undoable step; markers without a fingerprint behave as today and gain one on their first refresh (section 6.5) | Changes approved T-96 decision 2 ("check compares the whole block … not a fingerprint") |
+| U14 | How generated copies preserve Mermaid content in architecture documents | Copies in `docs/architecture/` are written verbatim, byte-identical to the source's Mermaid lines (blank lines kept); feature documents keep the `%%` rule (section 6.6). Reason: 7 of the 14 architecture diagrams contain blank lines, and the `%%` rule exists only because Mark Sharp, used for `designs/`, truncates a block at a blank line; architecture documents are not edited with Mark Sharp | Adjusts approved T-96 decision 3 (blank source lines written as `%%`) |
