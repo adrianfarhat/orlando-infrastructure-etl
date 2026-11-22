@@ -214,7 +214,8 @@ T-59 appears in the Wave 1 diagram above and is a prerequisite of T-83 and T-85
 here. T-94 (Feature Design Workspace, added 2026-11-20) builds on T-83 and is shown
 in its Wave 1 subgraph; its follow-ups T-95 (formatted feature document editing)
 and T-96 (diagram integration, which also depends on T-95), added 2026-11-21, are
-in Wave 3. Card links: [Task index](task-board.md#task-index).
+in Wave 3, as is T-97 (Feature Designer, added 2026-11-21, which depends on T-94,
+T-95 and T-96). Card links: [Task index](task-board.md#task-index).
 
 ```mermaid
 flowchart LR
@@ -243,6 +244,7 @@ flowchart LR
     T92["T-92 dataset<br/>validity"]
     T95["T-95 formatted feature<br/>document editing"]
     T96["T-96 diagram<br/>integration"]
+    T97["T-97 feature<br/>designer"]
   end
   subgraph DS4["Wave 4"]
     T93["T-93 framework<br/>reuse"]
@@ -270,6 +272,9 @@ flowchart LR
   T94 --> T95
   T94 --> T96
   T95 --> T96
+  T94 --> T97
+  T95 --> T97
+  T96 --> T97
 
   classDef decision fill:#ffffff,stroke:#374151,color:#111827
   classDef otherwave stroke-dasharray:4 3
