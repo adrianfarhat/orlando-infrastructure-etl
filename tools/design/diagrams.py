@@ -557,6 +557,20 @@ class Reconciliation:
     document_text: str        # the new document text
     source_path: str = ""     # apply-to-source: the source file and its new text
     source_text: str = ""
+    warning: str = ""         # shown with the preview (for example: the source changed too)
+
+
+def feature_document(root: Path, rel: str) -> str:
+    """`rel` as a feature specification path, or ValueError: reconciliation rewrites only
+    feature documents inside the repository (never docs/architecture/ or any other file)."""
+    norm = posixpath.normpath(str(rel).replace("\\", "/"))
+    if norm.startswith("../") or norm == ".." or norm.startswith("/") or re.match(r"[A-Za-z]:", norm):
+        raise ValueError(f"{rel} is outside the repository")
+    features, _ = discover(root)
+    if norm not in {f.path for f in features}:
+        raise ValueError(f"{rel} is not a feature specification under designs/features/: reconciliation only "
+                         "changes feature documents")
+    return norm
 
 
 def _block_at(text: str, line: int) -> Block:
@@ -584,6 +598,7 @@ def plan_reconcile(root: Path, rel: str, line: int, action: str) -> Reconciliati
     """What "Discard manual change" or "Apply to source" would do (nothing is written)."""
     from . import registry
     root = Path(root)
+    rel = feature_document(root, rel)
     path = root / rel
     text = path.read_bytes().decode("utf-8")
     known = sources(root)
@@ -611,6 +626,9 @@ def plan_reconcile(root: Path, rel: str, line: int, action: str) -> Reconciliati
         source_bytes = (root / source_path).read_bytes()
         src_text = source_bytes.decode("utf-8")
         new_body = _body_from_block(current)
+        if any(LIKE_MARKER.search(x) for x in new_body):
+            raise ValueError("the block's Mermaid contains a line with '<!-- diagram:', which would make the source "
+                             "impossible to embed; remove that line first")
         src_lines = src_text.split("\n")
         first = source.line                                   # 1-based line of the opening fence
         close = first + len(source.lines)                     # 0-based index of the closing fence
@@ -632,4 +650,8 @@ def plan_reconcile(root: Path, rel: str, line: int, action: str) -> Reconciliati
                                              source_text.replace("\r\n", "\n").splitlines(True),
                                              fromfile=source_path, tofile=source_path + " (after)"))
     token = hashlib.sha256(text.encode("utf-8") + b"\0" + source_bytes + b"\0" + action.encode()).hexdigest()[:16]
-    return Reconciliation(rel, b, action, state, diff, token, document_text, source_path, source_text)
+    warning = ""
+    if action == "apply-to-source" and state == "case3":
+        warning = ("the source has also changed since this block was generated: applying replaces those source "
+                   "changes with the block's content (see the diff)")
+    return Reconciliation(rel, b, action, state, diff, token, document_text, source_path, source_text, warning)

@@ -306,15 +306,17 @@ def _registry(args, root: Path, out: TextIO) -> int:
 
 
 def _reconcile(args, root: Path, out: TextIO) -> int:
-    rel = args.file.replace("\\", "/")
     action = "discard" if args.discard else "apply-to-source"
     try:
-        plan = diagrams.plan_reconcile(root, rel, args.line, action)
+        plan = diagrams.plan_reconcile(root, args.file, args.line, action)
     except (ValueError, OSError, UnicodeDecodeError) as exc:
         raise DesignError(str(exc)) from None
+    rel = plan.rel                                      # a feature document inside the repository
     if args.confirm is None:
         print(f"{action} for the {plan.block.diagram_id} block on line {args.line} of {rel} (state: {plan.state}).",
               file=out)
+        if plan.warning:
+            print(f"Warning: {plan.warning}.", file=out)
         print(plan.diff or "(no change)", file=out, end="" if plan.diff.endswith("\n") else "\n")
         print(f"Nothing was changed. To apply exactly this change, repeat with --confirm {plan.token}", file=out)
         return EXIT_OK

@@ -335,27 +335,8 @@ def problems(root: Path, features: list[Feature] | None = None, reg: Registry | 
     reg = reg if reg is not None else load(root)
     if features is None:
         features, _ = discover(root)
-    out = list(reg.problems)
+    out = list(reg.problems) + identity_problems(reg)
     feature_ids = {f.feature_id for f in features if f.feature_id}
-    ids: dict[str, list[Entry]] = {}
-    aliases: dict[str, list[Entry]] = {}
-    for e in reg.entries:
-        ids.setdefault(e.diagram_id, []).append(e)
-        for a in e.aliases:
-            aliases.setdefault(a, []).append(e)
-    for did, es in sorted(ids.items()):
-        if len(es) > 1:
-            out.append(Problem(REGISTRY, f"{did} is registered twice (lines "
-                                         f"{', '.join(str(e.line) for e in es)}): each diagram has one entry (E2)"))
-    for a, es in sorted(aliases.items()):
-        if len(es) > 1:
-            out.append(Problem(REGISTRY, f"{a} is an alias of more than one entry (lines "
-                                         f"{', '.join(str(e.line) for e in es)}) (E2)"))
-        if a in ids:
-            out.append(Problem(REGISTRY, f"{a} is both a registry ID and an alias of {es[0].diagram_id} (E8)"))
-        if DIAGRAM_ID.match(a) or DOCUMENT_DIAGRAM_ID.match(a):
-            out.append(Problem(REGISTRY, f"alias {a} of {es[0].diagram_id} looks like a diagram ID; aliases are "
-                                         "former catalog IDs (E8)"))
     files = {s.path: s for s in source_files(root)}
     file_ids: dict[str, list[SourceFile]] = {}
     for s in files.values():
@@ -503,7 +484,7 @@ def save(root: Path, doc, expected_sha: str | None) -> None:
     still be absent). The new file is written whole to a temporary file first (E12)."""
     path = Path(root) / REGISTRY
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = dump(doc)
+    text = dump(doc).replace("\r\n", "\n")          # one line-ending style (comments keep what they were read with)
     if not text.startswith("#"):
         text = HEADER + text
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".registry.", suffix=".tmp")
@@ -561,12 +542,40 @@ def entry_map(diagram_id: str, title: str, owner_kind: str, owner_ref: str, fmt:
     return m
 
 
+def identity_problems(reg: Registry) -> list[Problem]:
+    """Duplicate IDs and aliases (E2) and ID/alias collisions (E8): the registry cannot be
+    trusted to resolve an ID while any of these exists."""
+    out = []
+    ids: dict[str, list[Entry]] = {}
+    aliases: dict[str, list[Entry]] = {}
+    for e in reg.entries:
+        ids.setdefault(e.diagram_id, []).append(e)
+        for a in e.aliases:
+            aliases.setdefault(a, []).append(e)
+    for did, es in sorted(ids.items()):
+        if len(es) > 1:
+            out.append(Problem(REGISTRY, f"{did} is registered twice (lines "
+                                         f"{', '.join(str(e.line) for e in es)}): each diagram has one entry (E2)"))
+    for a, es in sorted(aliases.items()):
+        if len(es) > 1:
+            out.append(Problem(REGISTRY, f"{a} is an alias of more than one entry (lines "
+                                         f"{', '.join(str(e.line) for e in es)}) (E2)"))
+        if a in ids:
+            out.append(Problem(REGISTRY, f"{a} is both a registry ID and an alias of {es[0].diagram_id} (E8)"))
+        if DIAGRAM_ID.match(a) or DOCUMENT_DIAGRAM_ID.match(a):
+            out.append(Problem(REGISTRY, f"alias {a} of {es[0].diagram_id} looks like a diagram ID; aliases are "
+                                         "former catalog IDs (E8)"))
+    return out
+
+
 def _writable(reg: Registry):
     """The YAML document to append to (a new one when the file is absent); refuses a
-    registry with problems (it is never rewritten while invalid)."""
-    if reg.problems:
+    registry with problems, including duplicate or colliding IDs and aliases (it is never
+    rewritten while invalid)."""
+    bad = reg.problems + identity_problems(reg)
+    if bad:
         raise DesignError("the registry has problems; fix them first (python -m tools.design check): "
-                          + "; ".join(p.message for p in reg.problems[:3]))
+                          + "; ".join(p.message for p in bad[:3]))
     if reg.data is None:
         return _new_doc()
     if reg.data.get("diagrams") is None:

@@ -259,6 +259,18 @@ class Validation(unittest.TestCase):
         r, _ = designer_api.handle(self.ws.root, {"version": 1, "op": "resolve", "diagram_id": "FD-0001-D1"})
         self.assertEqual((r["path"], r["editor"], r["owner"]), (self.d.path, "text", {"kind": "feature", "ref": "FD-0001"}))
 
+    def test_writers_refuse_duplicate_or_colliding_ids(self):
+        """QA D2: E2/E8 problems block every writer, not only schema problems."""
+        self.edit_registry("aliases: [conventions/1-implementation-status-legend]",
+                           "aliases: [conventions/1-implementation-status-legend, FD-0001-D1]")
+        before = (self.ws.root / registry.REGISTRY).read_bytes()
+        for call in (lambda: ownership.new_diagram(self.ws.root, "FD-0001", "Two"),
+                     lambda: registry.relink(self.ws.root, "FD-0001-D1", title="Other"),
+                     lambda: registry.retire(self.ws.root, "FD-0001-D1", True)):
+            with self.assertRaisesRegex(DesignError, r"the registry has problems.*\(E8\)"):
+                call()
+        self.assertEqual((self.ws.root / registry.REGISTRY).read_bytes(), before)
+
     def test_the_registry_is_never_rewritten_while_invalid(self):
         self.edit_registry("version: 1", "version: 2")
         with self.assertRaisesRegex(DesignError, "the registry has problems"):
@@ -335,6 +347,37 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("New step (from the block)", self.ws.text(self.d.path))
         self.assertEqual(check(self.ws), [])
+
+    def test_reconcile_rewrites_only_feature_documents_inside_the_repository(self):
+        """QA D1: never docs/architecture/, never outside the repository, never a non-feature file."""
+        block = (self.ws.root / self.a.path).read_text(encoding="utf-8")
+        for rel in ("docs/architecture/evil.md", "../outside.md", "designs/notes.md"):
+            with self.subTest(rel=rel):
+                target = (self.ws.root / rel).resolve()
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(block, encoding="utf-8")
+                before = target.read_bytes()
+                line = marker_line(self.ws, self.a.path, "FD-0001-D1")
+                with self.assertRaisesRegex(ValueError, "outside the repository|not a feature specification"):
+                    diagrams.plan_reconcile(self.ws.root, rel, line, "discard")
+                code, _, err = cmd(self.ws.root, "reconcile", "--file", rel, "--line", str(line), "--discard",
+                                   "--confirm", "0123456789abcdef")
+                self.assertEqual(code, 2, err)
+                self.assertEqual(target.read_bytes(), before)
+                target.unlink()
+
+    def test_apply_to_source_refuses_marker_lines_and_warns_when_both_changed(self):
+        """QA D3 and N4."""
+        self.hand_edit("New step (planned)", "New step <!-- diagram:start AD-0010 -->")
+        line = marker_line(self.ws, self.a.path, "FD-0001-D1")
+        with self.assertRaisesRegex(ValueError, "would make the source impossible to embed"):
+            diagrams.plan_reconcile(self.ws.root, self.a.path, line, "apply-to-source")
+        self.hand_edit("New step <!-- diagram:start AD-0010 -->", "New step (mine)")
+        src = self.ws.root / self.d.path
+        src.write_text(src.read_text(encoding="utf-8").replace("Existing step", "Existing step 2"), encoding="utf-8")
+        code, out, _ = cmd(self.ws.root, "reconcile", "--file", self.a.path, "--line", str(line), "--apply-to-source")
+        self.assertEqual(code, 0)
+        self.assertIn("Warning: the source has also changed since this block was generated", out)
 
     def test_architecture_sources_change_only_through_the_documentation_workflow(self):
         self.hand_edit("S1 --> S2", "S1 --> S2X")
