@@ -1,23 +1,28 @@
 """Command line for the Feature Design Workspace.
 
   python -m tools.design new feature [--name NAME] [--parent PARENT] [--convert-parent] [--root DIR]
+  python -m tools.design new diagram --feature FD-0001 [--title TITLE] [--root DIR]
   python -m tools.design index [--check] [--root DIR]
   python -m tools.design check [--root DIR]
+  python -m tools.design designer [--root DIR]  < request.json   (the Feature Designer interface, T-97)
 
-Exit codes: 0 success; 1 problems found (check, index --check); 2 a usage or file error,
-including a refused name or destination. Nothing is ever overwritten, and no other program
-is run: new files are ordinary uncommitted changes (never staged, committed or pushed).
+Exit codes: 0 success; 1 problems found (check, index --check) or a refused designer request;
+2 a usage or file error, including a refused name or destination, or a malformed designer
+request. Nothing is ever overwritten. The only other program run is a read-only `git log`
+when a new ID is allocated (IDs are never reused, tools/design/ids.py): new files are
+ordinary uncommitted changes (never staged, committed or pushed).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import traceback
 from pathlib import Path
 from typing import Callable, TextIO
 
-from . import architecture, dependencies, diagrams, workspace
+from . import architecture, dependencies, designer_api, diagrams, ownership, workspace
 from .workspace import DesignError
 
 EXIT_OK, EXIT_PROBLEMS, EXIT_FAILURE = 0, 1, 2
@@ -42,6 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
                               "empty or omitted for a standalone feature")
     feature.add_argument("--convert-parent", action="store_true",
                          help="allow turning a standalone parent feature x.md into x/README.md")
+    diagram = kinds.add_parser("diagram", help="create a proposed diagram file owned by a feature "
+                                               "(the next diagram ID that was never used)")
+    diagram.add_argument("--feature", required=True, help="the owning feature's ID, e.g. FD-0001")
+    diagram.add_argument("--title", help="the diagram's readable name (asked for when missing)")
+    designer = sub.add_parser("designer", help="answer one Feature Designer request (JSON on stdin, JSON on "
+                                               "stdout); writes nothing")
     index = sub.add_parser("index", help="refresh each feature's generated summary table and Related features rows, "
                                          "then regenerate designs/index/feature-index.md and "
                                          "designs/index/architecture-index.md")
@@ -49,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="only report whether the indexes, summary tables and Related features rows are up to "
                             "date (writes nothing)")
     sub.add_parser("check", help="check every feature specification and both indexes")
-    for p in (feature, index, sub.choices["check"]):
+    for p in (feature, diagram, designer, index, sub.choices["check"]):
         p.add_argument("--root", type=Path, help="repository root (default: found from the current folder)")
     return parser
 
@@ -60,10 +71,20 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     err = stderr if stderr is not None else sys.stderr
     try:
         args = build_parser().parse_args(argv)
+        if args.command == "designer":              # always answers in JSON, even without a workspace
+            try:
+                root = workspace.find_root(args.root if args.root is not None else Path.cwd())
+            except DesignError as exc:
+                print(designer_api.dumps({"version": designer_api.VERSION, "ok": False,
+                                          "error": {"code": "workspace", "message": str(exc)}}), file=out)
+                return designer_api.EXIT_BAD
+            return _designer(root, out)
         root = workspace.find_root(args.root if args.root is not None else Path.cwd())
         if args.command == "new":
             if interactive is None:                 # a closed stdin (None) is not interactive
                 interactive = sys.stdin is not None and sys.stdin.isatty()
+            if args.kind == "diagram":
+                return _new_diagram(args, root, out, ask or input, interactive)
             return _new_feature(args, root, out, ask or input, interactive)
         if args.command == "index":
             if args.check:
@@ -116,6 +137,35 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         print("design: internal error; nothing more was done. Details:", file=err)
         print("\n".join(traceback.format_exc().splitlines()[-20:]), file=err)
         return EXIT_FAILURE
+
+
+def _designer(root: Path, out: TextIO) -> int:
+    """One JSON request from stdin, one JSON response on stdout (designer_api)."""
+    try:
+        raw = sys.stdin.buffer.read() if sys.stdin is not None and hasattr(sys.stdin, "buffer") else sys.stdin.read()
+        request = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+    except (ValueError, UnicodeDecodeError, AttributeError, RecursionError) as exc:
+        response, code = ({"version": designer_api.VERSION, "ok": False,
+                           "error": {"code": "bad-request",
+                                     "message": f"the request is not valid JSON: {type(exc).__name__}: {exc}"[:500]}},
+                          designer_api.EXIT_BAD)
+    else:
+        response, code = designer_api.handle(root, request)
+    print(designer_api.dumps(response), file=out)
+    return code
+
+
+def _new_diagram(args, root: Path, out: TextIO, ask: Callable[[str], str], interactive: bool) -> int:
+    title = args.title
+    if title is None:
+        if not interactive:
+            raise DesignError("--title is required when not running interactively")
+        title = ask("Diagram title: ")
+    created = ownership.new_diagram(root, args.feature, title)
+    print(f"created {created.path} ({created.diagram_id}, owned by {created.owner})", file=out)
+    print("Attach it to a feature with a diagram block (see designs/README.md). This is an uncommitted "
+          "working-tree change: nothing was staged, committed or pushed.", file=out)
+    return EXIT_OK
 
 
 def _new_feature(args, root: Path, out: TextIO, ask: Callable[[str], str], interactive: bool) -> int:

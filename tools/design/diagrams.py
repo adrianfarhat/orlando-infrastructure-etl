@@ -82,6 +82,8 @@ class Source:
     legend: bool          # link the architecture legend (architecture-type diagrams)
     closed: bool = True
     problem: str = ""     # why this ID cannot be used (ambiguous or malformed source); '' when fine
+    line: int = 0         # 1-based line of the source's opening Mermaid fence in `path` (0: unknown)
+    owner: str = ""       # proposed diagrams: the owning feature's ID from `feature_id` ('' when not set)
 
 
 # --------------------------------------------------------------------------- sources
@@ -96,7 +98,7 @@ def sources(root: Path) -> dict[str, Source]:
         title = f"{doc_title} › {d.heading.text}" if d.heading is not None and d.heading.text else doc_title
         out[d.diagram_id] = Source(d.diagram_id, "current", title, d.document,
                                    d.heading.anchor if d.heading is not None else "", d.source,
-                                   d.diagram_type == "architecture", d.closed)
+                                   d.diagram_type == "architecture", d.closed, line=d.line)
     for did, source in list(out.items()):
         out[did] = _refuse_markers(source)
     for source in map(_refuse_markers, _proposed(root)):
@@ -105,10 +107,16 @@ def sources(root: Path) -> dict[str, Source]:
             reason = (f"is used by more than one diagram ({first.path} and {source.path})"
                       if first.problem == "" or "more than one" not in first.problem else first.problem)
             out[source.diagram_id] = Source(source.diagram_id, "ambiguous", "", source.path, "", (), False,
-                                            problem=reason)
+                                            problem=reason, line=source.line, owner=source.owner)
         else:
             out[source.diagram_id] = source
     return out
+
+
+def proposed_sources(root: Path) -> list[Source]:
+    """One source per proposed-diagram file with a `diagram_id`, in path order (duplicate IDs
+    are not merged here: each file keeps its own entry, with its owner and source line)."""
+    return [_refuse_markers(s) for s in _proposed(root)]
 
 
 def _refuse_markers(source: Source) -> Source:
@@ -117,6 +125,7 @@ def _refuse_markers(source: Source) -> Source:
     if source.problem or not any(LIKE_MARKER.search(line) for line in source.lines):
         return source
     return Source(source.diagram_id, source.kind, source.title, source.path, source.anchor, (), False,
+                  line=source.line, owner=source.owner,
                   problem=f"cannot be embedded: its Mermaid source in {source.path} contains a line with "
                           "'<!-- diagram:', which would be read as a marker; change that line in the source")
 
@@ -139,21 +148,23 @@ def _proposed(root: Path) -> list[Source]:
         if not isinstance(meta, dict) or not isinstance(meta.get("diagram_id"), str) or not meta["diagram_id"].strip():
             continue                                     # no ID (for example a copy of the template): not attachable
         did = meta["diagram_id"].strip()
+        owner = meta["feature_id"].strip() if isinstance(meta.get("feature_id"), str) else ""
+        offset = text[:len(text) - len(body)].count("\n") if text.endswith(body) else 0
         doc = markdown.parse(body)
         if re.search(r"\s", did):
-            out.append(Source(did, "proposed", did, rel, "", (), False,
+            out.append(Source(did, "proposed", did, rel, "", (), False, owner=owner,
                               problem=f"in {rel} contains whitespace, so no diagram marker can name it; "
                                       "use an ID like FD-0001-D1"))
             continue
         title = meta.get("title") if isinstance(meta.get("title"), str) and meta["title"].strip() else None
         title = title or (doc.headings[0].text if doc.headings else posixpath.basename(rel))
         if len(doc.diagrams) != 1:
-            out.append(Source(did, "proposed", title, rel, "", (), False,
+            out.append(Source(did, "proposed", title, rel, "", (), False, owner=owner,
                               problem=f"is a proposed diagram in {rel}, which must hold exactly one Mermaid block "
                                       f"(found {len(doc.diagrams)})"))
             continue
         d = doc.diagrams[0]
-        out.append(Source(did, "proposed", title, rel, "", d.source, False, d.closed))
+        out.append(Source(did, "proposed", title, rel, "", d.source, False, d.closed, line=d.line + offset, owner=owner))
     return out
 
 

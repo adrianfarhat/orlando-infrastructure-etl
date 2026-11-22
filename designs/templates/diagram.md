@@ -1,7 +1,7 @@
 ---
-diagram_id: ""          # the feature ID plus a number, for example FD-0001-D1
-title: ""
-feature_id: ""          # the feature this diagram belongs to
+diagram_id: ""          # assigned by `python -m tools.design new diagram`: the owner's ID plus -D and a number (FD-0001-D1); never reused
+title: ""               # required: the diagram's readable name
+feature_id: ""          # required: the ID of the feature that owns this diagram
 status: PROPOSED
 source_diagram: ""      # when copied: its ID in designs/index/architecture-index.md, e.g. system-architecture/1-current-state-the-big-picture
 source_document: ""     # when copied from an existing diagram, e.g. docs/architecture/system-architecture.md

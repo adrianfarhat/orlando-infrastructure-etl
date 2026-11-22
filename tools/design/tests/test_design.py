@@ -38,10 +38,9 @@ class Workspace:
             for name in ("README.md", "DECISIONS.md", "IMPLEMENTATION_BRIEF.md", "index/architecture-index.md"):
                 (self.root / "designs" / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(REPO_ROOT / "designs" / name, self.root / "designs" / name)
-        if real_git:
-            self.git("init", "-q")
-        else:
-            (self.root / ".git").mkdir()
+        # Always a real (empty) Git repository: New Feature reads the committed history to never
+        # reuse a retired ID, and refuses without one (T-97 P1-A). real_git is kept for callers.
+        self.git("init", "-q")
 
     def __enter__(self):
         return self
@@ -683,6 +682,11 @@ class Purity(unittest.TestCase):
     BANNED_IMPORTS = {"subprocess", "socket", "http", "requests", "multiprocessing", "ctypes", "importlib", "shutil"}
     BANNED_ATTRS = {"system", "popen", "startfile", "execv", "spawnv"}
 
+    # T-97 P1-A: ids.py alone may run a program, and only read-only Git commands (it reads the
+    # committed history so a retired ID is never reused). Checked by test_ids_runs_only_read_only_git.
+    RUNS_GIT = {"ids.py"}
+    READ_ONLY_GIT = {"rev-parse", "for-each-ref", "log"}
+
     def test_the_package_cannot_run_programs_or_use_the_network(self):
         for path in sorted(PACKAGE.glob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -694,12 +698,27 @@ class Purity(unittest.TestCase):
                 else:
                     names = []
                 for name in names:
+                    if path.name in self.RUNS_GIT and name == "subprocess":
+                        continue
                     with self.subTest(file=path.name, imports=name):
                         self.assertNotIn(name.split(".")[0], self.BANNED_IMPORTS)
                         self.assertNotEqual(name, "urllib.request")
                 if isinstance(node, ast.Attribute):
                     with self.subTest(file=path.name, attr=node.attr):
                         self.assertNotIn(node.attr, self.BANNED_ATTRS)
+
+    def test_ids_runs_only_read_only_git(self):
+        """Every program ids.py runs is `git` with a read-only subcommand, never a shell."""
+        tree = ast.parse((PACKAGE / "ids.py").read_text(encoding="utf-8"))
+        runs = [n for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == "run"]
+        self.assertEqual(len(runs), 1)                                    # one place runs a program: _git()
+        self.assertNotIn("shell=True", (PACKAGE / "ids.py").read_text(encoding="utf-8"))
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_git"]
+        self.assertTrue(calls)
+        for call in calls:
+            with self.subTest(line=call.lineno):
+                self.assertIsInstance(call.args[1], ast.Constant)
+                self.assertIn(call.args[1].value, self.READ_ONLY_GIT)
 
 
 class LinkRewriting(unittest.TestCase):

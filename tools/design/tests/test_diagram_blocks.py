@@ -317,7 +317,9 @@ class ProposedDiagrams(unittest.TestCase):
     def proposed(self, ws, rel, diagram_id, mermaid="flowchart LR\n  A[\"Step (planned)\"] --> B\n\n  B --> C",
                  title="Overlap model", extra=""):
         text = (REPO_ROOT / "designs/templates/diagram.md").read_bytes().decode("utf-8").replace("\r\n", "\n")
-        text = text.replace('diagram_id: ""', f'diagram_id: "{diagram_id}"').replace('title: ""', f'title: "{title}"')
+        owner = diagram_id.split("-D")[0] if diagram_id.startswith("FD-") else ""
+        text = (text.replace('diagram_id: ""', f'diagram_id: "{diagram_id}"').replace('title: ""', f'title: "{title}"')
+                .replace('feature_id: ""', f'feature_id: "{owner}"'))
         start = text.index("```mermaid\n") + len("```mermaid\n")
         text = text[:start] + mermaid + text[text.index("\n```", start):] + extra
         path = ws.root / rel

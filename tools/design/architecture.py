@@ -41,6 +41,7 @@ class CatalogDiagram:
     source: tuple[str, ...] = ()  # the Mermaid lines between the fences (T-96 embeds copy them)
     closed: bool = True
     title: str = ""               # the document's title (its first-level heading), if any
+    line: int = 0                 # 1-based line of the opening fence in the document (T-97: Edit source)
 
 
 @dataclass(frozen=True)
@@ -95,7 +96,7 @@ def catalog(docs: list[ArchitectureDocument]) -> list[CatalogDiagram]:
             base = f"{stem}/{heading.anchor if heading is not None and heading.anchor else 'top'}"
             used[base] = used.get(base, 0) + 1
             did = base if used[base] == 1 else f"{base}~{used[base]}"
-            out.append(CatalogDiagram(did, doc.path, heading, d.diagram_type, d.source, d.closed, title))
+            out.append(CatalogDiagram(did, doc.path, heading, d.diagram_type, d.source, d.closed, title, d.line))
     return out
 
 

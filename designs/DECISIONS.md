@@ -214,3 +214,40 @@ on GitHub Project #1.
    `python -m tools.design index` and commit the refreshed feature files in the same branch;
    `check` reports stale copies until then. Enforcement in CI is T-85 (its card asks for
    `python -m tools.design check` in the advisory workflow).
+
+## 2026-11-21: T-97 Phase 1 — diagram ownership, IDs and the Feature Designer interface (approved by the user)
+
+1. **Diagram ownership.** A diagram file with a `diagram_id` is owned by exactly one
+   feature: `feature_id` (required, an existing feature) is the owner; `diagram_id` is the
+   owner's ID plus `-D<n>` and unique; `title` is required. The owner comes from metadata,
+   not from the folder (several standalone features share `designs/features/diagrams/`).
+   `check` reports problems; nothing is fixed or renumbered automatically. Files without a
+   `diagram_id` stay unchecked, as before.
+2. **IDs are never reused (P1-A, Git history).** New feature and diagram IDs are one higher
+   than every ID in the working tree and in the committed history of all branches,
+   remote-tracking branches, tags and the stash (full history, so merged side branches
+   count), read with a read-only `git log`
+   (`tools/design/ids.py`, the only place the package runs a program; a test enforces
+   that only `rev-parse`, `for-each-ref` and `log` are used). No ledger file. Allocation
+   stops, creating nothing, when the history is incomplete or unreadable (not a Git
+   repository, Git missing, a shallow clone, `git log` failing); a repository without any
+   commit is complete. Documented limits: an ID created and deleted without a commit can
+   be allocated again, and so can one that existed only on a branch that was squash-merged
+   and deleted (its commits are no longer reachable); branches Git cannot see may allocate
+   the same number, which
+   `check` reports as a duplicate when they meet. Existing IDs are never renumbered.
+3. **The Feature Designer interface** (`python -m tools.design designer`,
+   `tools/design/designer_api.py`): one JSON request, one deterministic JSON response
+   (version 1, sorted keys). Operations `library`, `insert`, `refresh` and `feature-index`
+   take unsaved document text, propose edits (or the index text) and never write a file;
+   each edit response carries `base` (SHA-256 and line count of the text it was computed
+   from) so the editor rejects stale edits. `insert` validates the position in Python
+   (inside the six sections, at a block boundary, never inside a code block, table,
+   `<details>` group or generated block) and refuses an insertion that would add a
+   problem. Applying the proposed edits gives exactly what `index` writes.
+4. **Exit codes stay as they were** (0 success, 1 problems or a refused request, 2 usage,
+   file or workspace errors); `test_exit_codes.py` pins this contract before any warning
+   level is added (T-97 Q4).
+5. Test workspaces are real (empty) Git repositories, since New Feature now reads the
+   history; the T-94 "the package runs no program" test now allows exactly the read-only
+   Git commands in `ids.py`.
