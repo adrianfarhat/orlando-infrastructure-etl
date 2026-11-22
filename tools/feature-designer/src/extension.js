@@ -10,7 +10,7 @@ const fs = require("fs");
 const path = require("path");
 const { Bridge } = require("./bridge");
 const { replacements, sha256, StaleEditError } = require("./edits");
-const { ensurePython, pickInterpreter, SETTING } = require("./python");
+const { ensurePython, pickInterpreter, interpreterProblem, SETTING } = require("./python");
 
 const VIEW_TYPE = "featureDesigner.editor";
 const INDEX = "designs/index/feature-index.md";
@@ -53,7 +53,11 @@ async function ask(root, op, fields, prompt = true) {
   let response;
   try { response = await bridge.request(op, fields); }
   catch (err) {                                    // a failed start: forget this process so a retry starts afresh
-    if (/cannot start the design tooling/.test(err.message)) { bridge.dispose(); bridges.delete(root); err.interpreter = true; }
+    if (err.startup) {
+      if (bridges.get(root) === bridge) bridges.delete(root);   // never drop a replacement another request created
+      bridge.dispose();
+      err.interpreter = true;
+    }
     throw err;
   }
   if (!response.ok) {
@@ -288,6 +292,8 @@ function activate(context) {
     vscode.commands.registerCommand("featureDesigner.selectPython", async () => {
       const picked = await pickInterpreter(vscode);
       if (!picked) return;
+      const problem = interpreterProblem(picked, (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } });
+      if (problem) { vscode.window.showErrorMessage(`${problem}. Nothing was saved.`); log(`[python] not saved: ${problem}`); return; }
       await vscode.workspace.getConfiguration("featureDesigner").update(SETTING, picked, vscode.ConfigurationTarget.Global);
       for (const b of bridges.values()) b.dispose();
       bridges.clear();

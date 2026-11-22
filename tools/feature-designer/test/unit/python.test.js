@@ -19,7 +19,7 @@ test("the .venv interpreter is found when it exists", () => {
   assert.equal(candidate(root, () => false), "");
 });
 
-function fakeVscode({ answer, globalValue, workspaceValue }) {
+function fakeVscode({ answer, globalValue, workspaceValue, picked }) {
   const calls = { updates: [], messages: [], warnings: [] };
   return {
     calls,
@@ -30,7 +30,7 @@ function fakeVscode({ answer, globalValue, workspaceValue }) {
     window: {
       showInformationMessage: async (msg, opts, ...buttons) => { calls.messages.push({ msg, opts, buttons }); return answer; },
       showWarningMessage: (msg) => calls.warnings.push(msg),
-      showOpenDialog: async () => undefined,
+      showOpenDialog: async () => (picked ? [{ fsPath: picked }] : undefined),
     },
   };
 }
@@ -68,17 +68,36 @@ const { interpreterProblem } = require("../../src/python");
 test("interpreter paths are validated: a JSON-mangled Windows path is reported, not spawned (hands-on review bug)", () => {
   const good = path.resolve("/venv/Scripts/python.exe");
   const isFile = (p) => p === good;
-  // "C:\Users\..." written into settings.json with single backslashes reaches the extension like this:
-  assert.match(interpreterProblem("C:sersarhaocuments_LocalTBEestsrlando-infrastructure-etlvenvcriptsython.exe", isFile), /not an absolute path/);
+  // C:\Users\example\Documents\project\.venv\Scripts\python.exe written into settings.json with single
+  // backslashes: VS Code's tolerant JSON parser drops each invalid escape (the backslash and the character after it):
+  assert.match(interpreterProblem("C:sersxampleocumentsrojectvenvcriptsython.exe", isFile), /not an absolute path/);
   assert.match(interpreterProblem("python.exe", isFile), /not an absolute path/);
   assert.match(interpreterProblem(path.resolve("/missing/python.exe"), isFile), /does not point to an existing file/);
   assert.equal(interpreterProblem(good, isFile), "");
 });
 
 test("a configured but unusable interpreter fails with an interpreter error, without prompting or saving", async () => {
-  const v = fakeVscode({ globalValue: "C:sersarhaocumentspython.exe", answer: "Use and Save" });
+  const v = fakeVscode({ globalValue: "C:sersxampleocumentspython.exe", answer: "Use and Save" });
   await assert.rejects(ensurePython(v, path.resolve("/repo"), () => {}, () => true, true, () => false),
                        (err) => err.interpreter === true && /not an absolute path/.test(err.message));
   assert.equal(v.calls.messages.length, 0);
   assert.deepEqual(v.calls.updates, []);
+});
+
+test("only a file named like a Python interpreter is accepted; other programs are refused before they run (QA L3)", () => {
+  const isFile = () => true;
+  for (const name of ["python.exe", "python", "python3", "python3.12", "pythonw.exe", "Python.EXE", "python3.12.exe"])
+    assert.equal(interpreterProblem(path.resolve("/venv/Scripts", name), isFile), "", name);
+  for (const name of ["notepad.exe", "cmd.exe", "py.exe", "python-evil.exe", "pythonx.exe", "python.exe.bat", "node.exe"])
+    assert.match(interpreterProblem(path.resolve("/tools", name), isFile), /is not a Python interpreter/, name);
+});
+
+test("an interpreter chosen in the dialog is checked before it is saved (QA L3)", async () => {
+  const v = fakeVscode({ answer: "Choose Another…", picked: path.resolve("/Windows/notepad.exe") });
+  await assert.rejects(ensurePython(v, path.resolve("/repo"), () => {}, () => false, true, () => true),
+                       (err) => err.interpreter === true && /is not a Python interpreter/.test(err.message) && /Nothing was saved/.test(err.message));
+  assert.deepEqual(v.calls.updates, []);
+  const ok = fakeVscode({ answer: "Choose Another…", picked: path.resolve("/py/python.exe") });
+  assert.equal(await ensurePython(ok, path.resolve("/repo"), () => {}, () => false, true, () => true), path.resolve("/py/python.exe"));
+  assert.equal(ok.calls.updates.length, 1);
 });

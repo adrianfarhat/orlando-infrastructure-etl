@@ -43,7 +43,11 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
   It suggests the repository's `.venv` interpreter; choose **Use and Save** to store it in
   your user (machine-level) settings as `featureDesigner.pythonPath`. A value in workspace or
   folder settings is ignored, so a repository cannot choose the program that runs. Change it
-  later with **Feature Designer: Select Python Interpreter**.
+  later with **Feature Designer: Select Python Interpreter**. The value must be an absolute path
+  to an existing file named like a Python interpreter (`python.exe`, `python3`, `python3.12`,
+  `pythonw.exe`); anything else is refused before it runs. If the interpreter cannot start the
+  design tooling (for example it exits or never answers), the library shows the reason with
+  **Retry** and **Change Interpreter…**.
 - **Insert a diagram:** hover beside a block, click **+**, **Insert Existing Diagram**, search
   (by name, ID, source document or owning feature), then Enter or **Insert**. The block is
   inserted below the block you hovered, as one undoable edit. Nothing is saved until you save.

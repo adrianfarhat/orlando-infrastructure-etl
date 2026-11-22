@@ -7,6 +7,9 @@
 const path = require("path");
 
 const SETTING = "pythonPath";
+// The file name of a Python interpreter: python, python3, python3.12, pythonw (with .exe on Windows).
+// Anything else (for example notepad.exe) is refused before it is ever started.
+const PYTHON_NAME = /^python(?:w|\d+(?:\.\d+)*)?(?:\.exe)?$/i;
 
 /**
  * Why a configured interpreter path cannot be used ('' when it can). A Windows path written into
@@ -17,6 +20,8 @@ function interpreterProblem(value, isFile) {
   if (!value) return "no interpreter is configured";
   if (!path.isAbsolute(value)) return `featureDesigner.pythonPath is not an absolute path: ${value}`;
   if (!isFile(value)) return `featureDesigner.pythonPath does not point to an existing file: ${value}`;
+  if (!PYTHON_NAME.test(path.basename(value)))
+    return `featureDesigner.pythonPath is not a Python interpreter (expected a file named like python.exe or python3): ${value}`;
   return "";
 }
 
@@ -72,6 +77,8 @@ async function ensurePython(vscode, root, log, fsExists, allowPrompt = true, isF
   if (answer === use) picked = suggestion;
   else if (answer === choose) picked = await pickInterpreter(vscode);
   if (!picked) { const e = new Error("no Python interpreter configured (Feature Designer: Select Python Interpreter)"); e.interpreter = true; throw e; }
+  const problem = interpreterProblem(picked, isFile);                  // a chosen file is checked before it is saved
+  if (problem) { const e = new Error(`${problem}. Nothing was saved.`); e.interpreter = true; throw e; }
   await cfg.update(SETTING, picked, vscode.ConfigurationTarget.Global);
   log(`[python] saved featureDesigner.${SETTING} = ${picked} (user/machine settings)`);
   return picked;
@@ -85,4 +92,4 @@ async function pickInterpreter(vscode) {
   return uris && uris[0] ? uris[0].fsPath : "";
 }
 
-module.exports = { configured, candidate, interpreterProblem, ensurePython, pickInterpreter, SETTING };
+module.exports = { configured, candidate, interpreterProblem, ensurePython, pickInterpreter, SETTING, PYTHON_NAME };

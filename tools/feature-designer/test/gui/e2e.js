@@ -138,8 +138,8 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
   });
 
   await step("3b unusable interpreter: error with Retry / Change Interpreter, then Retry loads", async () => {
-    // the value VS Code produced from a settings.json with single backslashes (hands-on review)
-    await app.host("setGlobal", { section: "featureDesigner", key: "pythonPath", value: "C:sersarhaocumentspython.exe" });
+    // C:\Users\example\Documents\python.exe as VS Code reads it from a settings.json with single backslashes
+    await app.host("setGlobal", { section: "featureDesigner", key: "pythonPath", value: "C:sersxampleocumentspython.exe" });
     await sleep(500);
     const b = await blockAfter("3. Logic");
     await app.page.mouse.move(...Object.values(center(await box(blockSel(b.idx)))), { steps: 3 });
@@ -156,6 +156,33 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     rec("3b an unusable interpreter shows the error with Retry and Change Interpreter (not stuck on Loading); Retry then loads",
         /not an absolute path/.test(error || "") && !stuck && JSON.stringify(buttons) === '["Retry","Change Interpreter…"]' && loaded >= 14,
         { error: (error || "").slice(0, 120), buttons, stuck, loaded });
+    await f.locator(".dlg button", { hasText: "Cancel" }).click();
+  });
+
+  await step("3c a program that is not Python: refused before it runs, with Change Interpreter (QA L3)", async () => {
+    const notPython = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "notepad.exe");
+    const running = () => { try { return /notepad\.exe/i.test(execFileSync("tasklist", ["/FI", "IMAGENAME eq notepad.exe"], { encoding: "utf8" })); } catch { return false; } };
+    const before = running();
+    await app.host("setGlobal", { section: "featureDesigner", key: "pythonPath", value: notPython });
+    await sleep(500);
+    const b = await blockAfter("3. Logic");
+    await app.page.mouse.move(...Object.values(center(await box(blockSel(b.idx)))), { steps: 3 });
+    await f.locator(`${blockSel(b.idx)} >> .plus`).click();
+    const t0 = Date.now();
+    await f.locator('.menu [role="menuitem"]').first().click();
+    const error = await waitFor(() => f.evaluate(() => { const e = document.querySelector(".tree .lib-error"); return e ? e.innerText : ""; }), 15000);
+    const seconds = (Date.now() - t0) / 1000;
+    const buttons = await f.evaluate(() => [...document.querySelectorAll(".tree .lib-actions button")].map((x) => x.textContent));
+    const started = !before && running();
+    await snap("library-not-python");
+    await app.host("setGlobal", { section: "featureDesigner", key: "pythonPath", value: PY });
+    await sleep(500);
+    await f.locator(".tree .lib-actions .retry").click();
+    const loaded = await waitFor(() => f.evaluate(() => document.querySelectorAll(".tree li.item").length), 20000);
+    rec("3c notepad.exe as the interpreter: a clear 'not a Python interpreter' error within seconds, Retry and Change Interpreter offered, nothing started",
+        /is not a Python interpreter/.test(error || "") && seconds < 10 && !started &&
+        JSON.stringify(buttons) === '["Retry","Change Interpreter…"]' && loaded >= 14,
+        { error: (error || "").slice(0, 120), seconds, buttons, started, loaded });
     await f.locator(".dlg button", { hasText: "Cancel" }).click();
   });
 

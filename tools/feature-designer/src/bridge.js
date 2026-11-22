@@ -7,6 +7,9 @@ const { spawn } = require("child_process");
 
 const PROTOCOL_VERSION = 1;
 
+/** An error before the process ever answered: the interpreter itself is the likely cause (offer Change Interpreter). */
+function startupError(message) { const e = new Error(message); e.startup = true; return e; }
+
 class Bridge {
   /** @param {{python: string, root: string, log?: (s: string) => void, timeoutMs?: number}} opts */
   constructor(opts) {
@@ -34,25 +37,34 @@ class Bridge {
     const proc = spawn(this.python, args, { cwd: this.root, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], shell: false });
     this.proc = proc;
     this.buffer = "";
+    proc.fdAnswered = false;                         // set by the first valid response: until then, problems are start-up problems
+    proc.fdStderr = "";
     proc.stdout.setEncoding("utf8");
-    proc.stdout.on("data", (chunk) => this._onData(chunk));
+    proc.stdout.on("data", (chunk) => this._onData(chunk, proc));
     proc.stderr.setEncoding("utf8");
-    proc.stderr.on("data", (chunk) => this.log(`[python] ${chunk.trimEnd()}`));
-    const fail = (why) => {                         // only this process's requests: a replacement may already run
+    proc.stderr.on("data", (chunk) => { proc.fdStderr = (proc.fdStderr + chunk).slice(-2000); this.log(`[python] ${chunk.trimEnd()}`); });
+    // A write to a process that has just died fails asynchronously (EPIPE); the exit handler reports it.
+    proc.stdin.on("error", (err) => this.log(`[bridge] could not write to the design tooling: ${err.code || err.message}`));
+    const fail = (err) => {                         // only this process's requests: a replacement may already run
       if (this.proc === proc) this.proc = null;
       for (const [id, p] of this.pending)
-        if (p.proc === proc) { clearTimeout(p.timer); this.pending.delete(id); p.reject(new Error(why)); }
+        if (p.proc === proc) { clearTimeout(p.timer); this.pending.delete(id); p.reject(err); }
     };
     proc.on("spawn", () => this.log(`[bridge] started ${this.python} (pid ${proc.pid})`));   // only a real start is logged
     proc.on("error", (err) => {
       this.log(`[bridge] cannot start ${this.python}: ${err.message}`);
-      const e = new Error(`cannot start the design tooling with ${this.python}: ${err.code || err.message}`);
-      fail(e.message);
+      fail(startupError(`cannot start the design tooling with ${this.python}: ${err.code || err.message}`));
     });
-    proc.on("exit", (code, signal) => { this.log(`[bridge] python exited (${code ?? signal})`); fail("the design tooling stopped unexpectedly"); });
+    proc.on("exit", (code, signal) => {
+      this.log(`[bridge] python exited (${code ?? signal})`);
+      if (proc.fdAnswered) { fail(new Error("the design tooling stopped unexpectedly")); return; }
+      const last = proc.fdStderr.trim().split(/\r?\n/).pop() || "";
+      fail(startupError(`${this.python} stopped while starting the design tooling (exit ${code ?? signal})` +
+        (last ? `: ${last.slice(0, 300)}` : "") + ". Check that featureDesigner.pythonPath is the repository's Python interpreter"));
+    });
   }
 
-  _onData(chunk) {
+  _onData(chunk, proc) {
     this.buffer += chunk;
     let nl;
     while ((nl = this.buffer.indexOf("\n")) !== -1) {
@@ -63,6 +75,7 @@ class Bridge {
       try { msg = JSON.parse(line); } catch { this.log(`[bridge] ignored non-JSON output: ${line.slice(0, 200)}`); continue; }
       const p = this.pending.get(msg.request_id);
       if (!p) { this.log(`[bridge] response without a pending request: ${String(msg.request_id)}`); continue; }
+      if (proc) proc.fdAnswered = true;
       this.pending.delete(msg.request_id);
       clearTimeout(p.timer);
       p.resolve(msg);
@@ -77,13 +90,18 @@ class Bridge {
     }
     const id = this.nextId++;
     const line = JSON.stringify({ ...fields, version: PROTOCOL_VERSION, op, request_id: id }) + "\n";
+    const proc = this.proc;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`the design tooling did not answer within ${Math.round(this.timeoutMs / 1000)} s`));
+        const s = Math.round(this.timeoutMs / 1000);
+        reject(proc.fdAnswered
+          ? new Error(`the design tooling did not answer within ${s} s`)
+          : startupError(`${this.python} did not start the design tooling within ${s} s. ` +
+                         "Check that featureDesigner.pythonPath is the repository's Python interpreter"));
         this._kill();                                // a stuck process is replaced on the next request
       }, this.timeoutMs);
-      this.pending.set(id, { resolve, reject, timer, proc: this.proc });
+      this.pending.set(id, { resolve, reject, timer, proc });
       try { this.proc.stdin.write(line, "utf8"); } catch (err) { clearTimeout(timer); this.pending.delete(id); reject(err); }
     });
   }

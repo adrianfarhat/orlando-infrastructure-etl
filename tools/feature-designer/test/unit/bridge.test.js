@@ -42,17 +42,47 @@ test("a crashed process is restarted on the next request", { skip }, async () =>
 });
 
 test("a request that does not answer in time kills the process; the next one works", { skip }, async () => {
-  const b = new Bridge({ python, root: REPO, timeoutMs: 1 });
+  const b = new Bridge({ python, root: REPO });
   try {
-    await assert.rejects(b.request("library"), /did not answer/);
+    assert.equal((await b.request("library")).ok, true);                  // the process has answered once
+    b.timeoutMs = 1;
+    await assert.rejects(b.request("library"), (err) => /did not answer/.test(err.message) && !err.startup);
     b.timeoutMs = 30000;
     assert.equal((await b.request("library")).ok, true);
   } finally { b.dispose(); }
 });
 
+test("a process that never answers is reported as a start-up (interpreter) problem, not a bare timeout (QA L3)", { skip }, async () => {
+  const b = new Bridge({ python, root: REPO, timeoutMs: 1 });
+  try {
+    await assert.rejects(b.request("library"), (err) => err.startup === true &&
+      /did not start the design tooling/.test(err.message) && /featureDesigner\.pythonPath/.test(err.message));
+  } finally { b.dispose(); }
+});
+
+test("an interpreter that exits while starting is reported with its last error line (QA L3)", { skip }, async () => {
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), "fd-no-tooling-"));   // no tools/ package here: Python exits at once
+  const b = new Bridge({ python, root: empty, timeoutMs: 20000 });
+  try {
+    await assert.rejects(b.request("library"), (err) => err.startup === true &&
+      /stopped while starting/.test(err.message) && /No module named/.test(err.message));
+  } finally { b.dispose(); await new Promise((r) => setTimeout(r, 300)); fs.rmSync(empty, { recursive: true, force: true }); }
+});
+
+test("a write error on the process input is logged, never thrown into the extension host (QA L2)", { skip }, async () => {
+  const lines = [];
+  const b = new Bridge({ python, root: REPO, log: (s) => lines.push(s) });
+  try {
+    assert.equal((await b.request("library")).ok, true);
+    const epipe = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    assert.doesNotThrow(() => b.proc.stdin.emit("error", epipe));        // without a listener this would throw
+    assert.ok(lines.some((l) => /could not write to the design tooling: EPIPE/.test(l)));
+  } finally { b.dispose(); }
+});
+
 test("a missing interpreter is reported, not hung", async () => {
   const b = new Bridge({ python: path.join(os.tmpdir(), "no-such-python.exe"), root: REPO, timeoutMs: 5000 });
-  try { await assert.rejects(b.request("library"), /cannot start the design tooling|stopped unexpectedly/); }
+  try { await assert.rejects(b.request("library"), (err) => err.startup === true && /cannot start the design tooling|stopped while starting/.test(err.message)); }
   finally { b.dispose(); }
 });
 
