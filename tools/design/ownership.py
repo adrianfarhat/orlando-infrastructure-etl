@@ -179,7 +179,7 @@ def new_diagram(root: Path, owner: str, title: str, category: str = "other") -> 
         in_tree = registry.all_ids(root, reg) + [_text(r.diagram_id) for r in diagram_records(root)]
         diagram_id = next_diagram_id(owner, in_tree, committed_ids(root))   # stops here without full history
         text = _render(template, diagram_id, owner, title, posixpath.relpath(spec, folder))
-        create_exclusively(target, text, rel)
+        create_exclusively(target, text, rel, root)
         try:
             doc["diagrams"].append(registry.entry_map(diagram_id, title, "feature", owner, "mermaid-md", category, rel))
             registry.save(root, doc, reg.sha)
@@ -195,9 +195,24 @@ def new_diagram(root: Path, owner: str, title: str, category: str = "other") -> 
     return CreatedDiagram(rel, diagram_id, owner, category)
 
 
-def create_exclusively(target: Path, text: str, rel: str) -> None:
+def guard_write(root: Path, path: Path) -> None:
+    """Every file the diagram commands write goes through here: files under docs/architecture/
+    (including docs/architecture/diagrams/) belong to technical-lead and change only through
+    its documentation workflow, so the tooling never writes them (diagram library 5.2, 6.5)."""
+    try:
+        rel = Path(path).resolve().relative_to(Path(root).resolve()).as_posix()
+    except ValueError:
+        raise DesignError(f"{path} is outside the repository; nothing was written") from None
+    if rel == "docs/architecture" or rel.startswith("docs/architecture/"):
+        raise DesignError(f"{rel} is under docs/architecture/, which changes only through technical-lead's "
+                          "documentation workflow; nothing was written")
+
+
+def create_exclusively(target: Path, text: str, rel: str, root: Path | None = None) -> None:
     """Write `text` to a temporary file in the same folder, then link it to `target` with an
     operation that fails if the name exists: the file appears whole or not at all."""
+    if root is not None:
+        guard_write(root, target)
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".diagram.", suffix=".tmp")
     try:
@@ -237,7 +252,9 @@ def retitled(root: Path, rel: str, title: str) -> str:
     return "\n".join(lines)
 
 
-def write_atomically(path: Path, text: str) -> None:
+def write_atomically(path: Path, text: str, root: Path | None = None) -> None:
+    if root is not None:
+        guard_write(root, path)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".diagram.", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as handle:

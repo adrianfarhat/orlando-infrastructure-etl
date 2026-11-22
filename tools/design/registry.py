@@ -30,6 +30,8 @@ import json
 import os
 import posixpath
 import re
+import platform
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -445,32 +447,137 @@ def catalog_key(d) -> tuple:
 
 # --------------------------------------------------------------------------- writing (lock and compare-and-swap)
 
+_LOCK_BYTE = 1 << 30        # Windows locks a byte range: one far past the metadata, which stays readable
+
+
+def _os_lock(fd: int) -> bool:
+    """Take an exclusive operating-system lock on the open lock file, without waiting. The
+    system releases it when the process ends, however it ends."""
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            os.lseek(fd, _LOCK_BYTE, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _os_unlock(fd: int) -> None:
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            os.lseek(fd, _LOCK_BYTE, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
 @contextmanager
 def lock(root: Path):
-    """The registry lock (E12): created exclusively, removed afterwards, never broken."""
+    """The registry lock (E12): created exclusively and held, while the command runs, with an
+    operating-system lock that ends with the process; removed afterwards, never broken."""
     path = Path(root) / LOCK
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
     except FileExistsError:
         try:
             age = time.time() - path.stat().st_mtime
         except OSError:
             age = 0
-        hint = (f"; it is older than {STALE_LOCK_SECONDS // 60} minutes: if no diagram command is running, delete {LOCK}"
-                if age > STALE_LOCK_SECONDS else "")
+        hint = (f"; it is older than {STALE_LOCK_SECONDS // 60} minutes: if no diagram command is running, run "
+                "`python -m tools.design registry unlock`, which removes it only after verifying that no process "
+                "holds it" if age > STALE_LOCK_SECONDS else "")
         raise DesignError(f"another diagram command is running ({LOCK} exists){hint}; nothing was changed (E12)") from None
     try:
-        os.write(fd, json.dumps({"pid": os.getpid(), "time": time.time()}).encode("ascii"))
-    finally:
+        os.write(fd, json.dumps({"pid": os.getpid(), "host": platform.node(), "time": time.time()}).encode("utf-8"))
+        held = _os_lock(fd)
+    except BaseException:
         os.close(fd)
+        os.unlink(path)
+        raise
     try:
         yield
     finally:
+        if held:
+            _os_unlock(fd)
+        os.close(fd)
         try:
             os.unlink(path)
         except OSError:
             pass
+
+
+@dataclass(frozen=True)
+class LockState:
+    exists: bool
+    pid: int | None = None
+    host: str = ""
+    age_seconds: float = 0.0
+    removable: bool = False
+    reason: str = ""
+
+
+def unlock(root: Path, confirm: bool) -> LockState:
+    """Remove a stale registry lock only when it is verified that no process holds it: the
+    command that created it holds an operating-system lock on it while it runs, which the
+    system releases when that process ends. If that lock can be taken now, nobody owns the
+    file. A lock from another computer, an unreadable lock, or one that is still held is kept.
+    Nothing is removed without `confirm`."""
+    path = Path(root) / LOCK
+    if not path.exists():
+        return LockState(False, reason="there is no registry lock")
+    try:
+        age = time.time() - path.stat().st_mtime
+        data = json.loads(path.read_bytes().decode("utf-8") or "{}")
+    except (OSError, UnicodeDecodeError, ValueError):
+        return LockState(True, reason=f"{LOCK} cannot be read, so its owner cannot be verified; if you are sure no "
+                                      "diagram command is running on any computer, delete it by hand")
+    pid, host = data.get("pid"), data.get("host")
+    pid = pid if isinstance(pid, int) and not isinstance(pid, bool) else None
+    if pid is None or not isinstance(host, str) or not host:
+        return LockState(True, pid, str(host or ""), age,
+                         reason=f"{LOCK} does not record its process and computer, so its owner cannot be verified; "
+                                "if you are sure no diagram command is running on any computer, delete it by hand")
+    if host != platform.node():
+        return LockState(True, pid, host, age, reason=f"the lock was taken on another computer ({host}), where its "
+                                                      "process cannot be checked from here")
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except OSError:
+        return LockState(True, pid, host, age, reason="the lock file is in use: a diagram command still holds it")
+    try:
+        taken = False
+        for _ in range(10):                             # the system may release a dead process's lock a moment late
+            taken = _os_lock(fd)
+            if taken:
+                break
+            time.sleep(0.2)
+        if not taken:
+            return LockState(True, pid, host, age, reason=f"process {pid} still holds the lock: wait for the diagram "
+                                                          "command to finish")
+        try:
+            state = LockState(True, pid, host, age, removable=True,
+                              reason=f"no process holds the lock (process {pid} has ended)")
+            if confirm:
+                _os_unlock(fd)
+                os.close(fd)
+                fd = -1
+                os.unlink(path)
+            return state
+        finally:
+            if fd != -1:
+                _os_unlock(fd)
+    finally:
+        if fd != -1:
+            os.close(fd)
 
 
 def dump(doc) -> str:
@@ -731,11 +838,18 @@ def relink(root: Path, ident: str, path: str | None = None, title: str | None = 
         if title is not None:
             clean = ownership.validate_title(title)
             item["title"] = clean
-            if e.format == "mermaid-md":
+            if e.format == "mermaid-md" and e.owner_kind == "document":
+                found = {s.path: s for s in source_files(root)}.get(item["path"])
+                if found is None or found.title != clean:
+                    raise DesignError(f"{e.diagram_id} is owned by {e.owner_ref}: its source {item['path']} changes "
+                                      "only through technical-lead's documentation workflow. Change the title in that "
+                                      "file there first; then this command updates the registry to match. Nothing "
+                                      "was changed")
+            elif e.format == "mermaid-md":
                 target = item["path"]
                 source_rewrite = (root / target, ownership.retitled(root, target, clean))
         if source_rewrite is not None:                   # the source first; the registry then names it
-            ownership.write_atomically(*source_rewrite)
+            ownership.write_atomically(*source_rewrite, root=root)
         save(root, doc, reg.sha)
     write_diagram_index(root)
     return load(root).by_id()[e.diagram_id]

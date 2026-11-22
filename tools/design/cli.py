@@ -72,6 +72,9 @@ def build_parser() -> argparse.ArgumentParser:
     relink.add_argument("--title", help="the diagram's new title (also written to a Mermaid source's front matter)")
     relink.add_argument("--heading", help="mermaid-embedded: the heading anchor the diagram is now under")
     relink.add_argument("--ordinal", type=int, help="mermaid-embedded: which diagram under that heading (default 1)")
+    unlock = ops.add_parser("unlock", help="remove a stale registry lock, only after checking that the process that "
+                                           "took it has ended (shows the check; removes it only with --confirm)")
+    unlock.add_argument("--confirm", action="store_true", help="remove the lock if the check allows it")
     retire = ops.add_parser("retire", help="retire a diagram (lists its references; the ID is never reused)")
     retire.add_argument("diagram_id", help="the diagram ID or alias")
     retire.add_argument("--confirm", action="store_true", help="retire it (without this, only the references are listed)")
@@ -98,8 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="only report whether the indexes, summary tables and Related features rows are up to "
                             "date (writes nothing)")
     sub.add_parser("check", help="check every feature specification and both indexes")
-    for p in (feature, diagram, designer, index, sub.choices["check"], adopt, adopt_arch, relink, retire, resolve,
-              reconcile):
+    for p in (feature, diagram, designer, index, sub.choices["check"], adopt, adopt_arch, relink, retire, unlock,
+              resolve, reconcile):
         p.add_argument("--root", type=Path, help="repository root (default: found from the current folder)")
     return parser
 
@@ -286,6 +289,21 @@ def _registry(args, root: Path, out: TextIO) -> int:
         print(f"{len(created)} architecture diagram(s) registered; no document was changed. "
               "Run `python -m tools.design index`. " + note, file=out)
         return EXIT_OK
+    if args.action == "unlock":
+        state = registry.unlock(root, args.confirm)
+        if not state.exists:
+            print("there is no registry lock; nothing to do", file=out)
+            return EXIT_OK
+        print(f"{registry.LOCK}: process {state.pid}, computer {state.host or '(unknown)'}, "
+              f"{int(state.age_seconds // 60)} minute(s) old: {state.reason}", file=out)
+        if not state.removable:
+            print("the lock was kept", file=out)
+            return EXIT_PROBLEMS
+        if not args.confirm:
+            print("nothing was changed: repeat with --confirm to remove it", file=out)
+            return EXIT_PROBLEMS
+        print("removed the stale registry lock", file=out)
+        return EXIT_OK
     if args.action == "relink":
         e = registry.relink(root, args.diagram_id, path=args.path, title=args.title, heading=args.heading,
                             ordinal=args.ordinal)
@@ -324,8 +342,9 @@ def _reconcile(args, root: Path, out: TextIO) -> int:
         print("the document or the diagram source changed since the preview: nothing was changed; "
               "preview again (without --confirm)", file=out)
         return EXIT_PROBLEMS
+    ownership.guard_write(root, root / rel)            # never docs/architecture/ (plan_reconcile also refuses it)
     if plan.source_path:                               # the source first: a failure leaves the document as it was
-        ownership.write_atomically(root / plan.source_path, plan.source_text)
+        ownership.write_atomically(root / plan.source_path, plan.source_text, root=root)
     workspace.write_feature_text(root / rel, plan.document_text)
     print(f"{action}: updated {rel}" + (f" and {plan.source_path}" if plan.source_path else "")
           + ". Uncommitted working-tree changes: nothing was staged, committed or pushed.", file=out)

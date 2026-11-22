@@ -258,14 +258,17 @@ class Validation(unittest.TestCase):
         self.assertIn("S1 --> S2c", self.path.read_text(encoding="utf-8"))
         self.assertEqual(problems(self.ws), [])
 
-    def test_an_old_marker_without_a_fingerprint_keeps_the_t96_behaviour(self):
+    def test_an_old_marker_without_a_fingerprint_is_never_overwritten(self):
+        """Safeguard S1: without a fingerprint a hand edit cannot be told from a stale copy."""
         put(self.ws, self.f.path, "## 3. Logic\n", block(ETL))
         cmd(self.ws.root, "index")
         text = self.path.read_text(encoding="utf-8")
         old = re.sub(r" sha256:[0-9a-f]{16} -->", " -->", text)                       # a block made before U13
         self.write(old.replace("S1 --> S2", "S1 --> S2X"))
-        self.expect(f"the diagram block for {ETL} differs from the authoritative Mermaid source", rewritten=True)
-        self.assertEqual(self.path.read_text(encoding="utf-8"), text)                   # the first refresh adds one
+        self.conflict(f"the diagram block for {ETL} was generated before fingerprints")
+        self.write(old)                                                                 # exact: lossless migration
+        cmd(self.ws.root, "index")
+        self.assertEqual(self.path.read_text(encoding="utf-8"), text)
 
     def test_edited_caption_or_source_link(self):
         text = self.generated(ETL)

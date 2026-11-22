@@ -187,8 +187,11 @@ class Refresh(unittest.TestCase):
             r, code = request(ws, op="refresh", path=f.path, text=hand)
             self.assertEqual((code, r["blocking"], r["edits"]), (0, [], []))                     # U13: never overwritten
             self.assertTrue(r["conflicts"] and "(E15)" in r["conflicts"][0], r)
-            old = re.sub(r" sha256:[0-9a-f]{16} -->", " -->", fresh).replace("flowchart", "flowchart  ", 1)
-            r, code = request(ws, op="refresh", path=f.path, text=old)                       # an old marker: stale
+            old = re.sub(r" sha256:[0-9a-f]{16} -->", " -->", fresh)
+            r, code = request(ws, op="refresh", path=f.path, text=old.replace("flowchart", "flowchart  ", 1))
+            self.assertEqual((code, r["edits"]), (0, []))                                     # old marker, differs: kept
+            self.assertIn("generated before fingerprints", r["conflicts"][0])
+            r, code = request(ws, op="refresh", path=f.path, text=old)                       # old marker, exact
             self.assertEqual((code, r["blocking"], len(r["edits"])), (0, [], 1))
             self.assertEqual(apply(old, r), fresh)                                             # marker gains its fingerprint
             self.assertEqual(request(ws, op="refresh", path=f.path, text=fresh)[0]["edits"], [])   # nothing to do

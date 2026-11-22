@@ -329,11 +329,17 @@ def start_marker(name: str, lines) -> str:
 
 
 def classify(block: Block, current: list[str], expected: list[str]) -> str:
-    """current | empty | stale (old marker) | case1 | fp-only | case2 | case3 (U13)."""
+    """current | empty | case1 | fp-only | case2 | case3 | legacy (U13).
+
+    A marker without a fingerprint (made before U13) gives no record of what was generated,
+    so the tooling cannot tell a hand edit from a changed source. Such a block is migrated
+    only when that is provably lossless: it is exactly what the source generates now
+    ("fp-only": only the marker gains its fingerprint). Any other content is preserved and
+    reported ("legacy"), and changes only through explicit reconciliation."""
     if block.fp is None:
-        if current == expected:
-            return "current"
-        return "empty" if not current else "stale"
+        if not current:
+            return "empty"                              # nothing to lose
+        return "fp-only" if current == expected else "legacy"
     if not current:
         return "empty"                                  # cleared on purpose: nothing to lose
     if fingerprint(current) == block.fp:
@@ -343,8 +349,8 @@ def classify(block: Block, current: list[str], expected: list[str]) -> str:
     return "case2" if fingerprint(expected) == block.fp else "case3"
 
 
-REGENERABLE = ("empty", "stale", "case1", "fp-only")
-CONFLICTS = ("case2", "case3")
+REGENERABLE = ("empty", "case1", "fp-only")
+CONFLICTS = ("case2", "case3", "legacy")
 
 
 # --------------------------------------------------------------------------- check and refresh
@@ -408,19 +414,19 @@ def _block_states(rel: str, text: str, known: dict[str, Source], blocks) -> list
             continue
         if state == "empty":
             out.append((Problem(rel, f"{at} is empty: run `python -m tools.design index`"), "regen"))
-        elif state == "stale":
-            if current[1:] != expected[1:]:
-                what = (f"differs from the authoritative Mermaid source in {source.path}"
-                        f"{'#' + source.anchor if source.anchor else ''} (stale, or edited by hand)")
-            else:
-                what = "has a caption or source link that differs from the generated one (edited by hand?)"
-            out.append((Problem(rel, f"{at} {what}: run `python -m tools.design index`"), "regen"))
+        elif state == "legacy":
+            what = (f"differs from its source {source.path}{'#' + source.anchor if source.anchor else ''}"
+                    if current[1:] != expected[1:] else "has a caption or source link that differs from the generated one")
+            out.append((Problem(rel, f"{at} was generated before fingerprints and {what}; whether it was edited by hand "
+                                     f"cannot be established, so it is never overwritten automatically (E15): reconcile "
+                                     f"with {fix}"), "conflict"))
         elif state == "case1":
             out.append((Problem(rel, f"{at} is out of date with its source {source.path} (not edited since it was "
                                      "generated): run `python -m tools.design index`"), "regen"))
         elif state == "fp-only":
-            out.append((Problem(rel, f"{at} matches its source, but its fingerprint is out of date: run "
-                                     "`python -m tools.design index`"), "regen"))
+            out.append((Problem(rel, f"{at} matches its source, but its fingerprint is "
+                                     f"{'missing' if b.fp is None else 'out of date'}: run `python -m tools.design index` "
+                                     "(only the marker changes)"), "regen"))
         elif state == "case2":
             out.append((Problem(rel, f"{at} was edited by hand (its source {source.path} is unchanged), so it is "
                                      f"never overwritten automatically (E15): reconcile with {fix}"), "conflict"))

@@ -295,7 +295,9 @@ class Fingerprints(unittest.TestCase):
         self.assertEqual(diagrams.classify(self.b(fp), hand, new), "case3")                # both changed
         self.assertEqual(diagrams.classify(self.b(fp), new, new), "fp-only")               # edited to the new output
         self.assertEqual(diagrams.classify(self.b(fp), [], new), "empty")
-        self.assertEqual(diagrams.classify(self.b(None), hand, gen), "stale")              # an old marker (T-96)
+        self.assertEqual(diagrams.classify(self.b(None), hand, gen), "legacy")             # old marker, differs: kept
+        self.assertEqual(diagrams.classify(self.b(None), gen, gen), "fp-only")             # old marker, exact: migrated
+        self.assertEqual(diagrams.classify(self.b(None), [], gen), "empty")
 
     def test_only_line_endings_are_normalised(self):
         gen = ["cap", "```mermaid", "mindmap", "  root", "    child", "```"]
@@ -444,6 +446,151 @@ class ArchitectureM0(unittest.TestCase):
             self.assertEqual(check(ws), [])
             r, _ = designer_api.handle(ws.root, {"version": 1, "op": "resolve", "diagram_id": ETL})   # alias kept
             self.assertEqual(r["id"], "AD-0006")
+
+
+class LegacyMarkers(unittest.TestCase):
+    """Safeguard S1: a block made before fingerprints is never overwritten unless that is lossless."""
+
+    def setUp(self):
+        self.ctx = Workspace(); self.ws = self.ctx.__enter__()
+        self.f = new_feature(self.ws.root, "A")
+        insert(self.ws, self.f.path, ETL)
+        cmd(self.ws.root, "index")
+        self.path = self.ws.root / self.f.path
+        self.generated = self.path.read_text(encoding="utf-8")
+        self.legacy = re.sub(r" sha256:[0-9a-f]{16} -->", " -->", self.generated)       # as T-96 wrote it
+
+    def tearDown(self):
+        self.ctx.__exit__(None, None, None)
+
+    def test_an_exact_legacy_block_only_gains_its_fingerprint(self):
+        self.path.write_text(self.legacy, encoding="utf-8")
+        self.assertTrue(any("fingerprint is missing" in p for p in check(self.ws)))
+        cmd(self.ws.root, "index")
+        self.assertEqual(self.path.read_text(encoding="utf-8"), self.generated)         # only the marker changed
+        self.assertEqual(check(self.ws), [])
+
+    def test_a_differing_legacy_block_is_preserved_and_needs_reconciliation(self):
+        for name, text in (("hand edit", self.legacy.replace("S1 --> S2", "S1 --> S2 %% mine")),
+                           ("caption edit", self.legacy.replace("generated copy;", "copy;"))):
+            with self.subTest(name):
+                self.path.write_text(text, encoding="utf-8")
+                found = "\n".join(check(self.ws))
+                self.assertIn("was generated before fingerprints", found)
+                self.assertIn("cannot be established, so it is never overwritten automatically (E15)", found)
+                code, _, err = cmd(self.ws.root, "index")
+                self.assertEqual(self.path.read_text(encoding="utf-8"), text)           # preserved by index
+                self.assertIn("(E15)", err)
+                r, _ = designer_api.handle(self.ws.root, {"version": 1, "op": "refresh", "path": self.f.path,
+                                                          "text": text})
+                self.assertEqual(r["edits"], [])                                        # and by the Feature Designer
+                line = marker_line(self.ws, self.f.path, ETL)
+                plan = diagrams.plan_reconcile(self.ws.root, self.f.path, line, "discard")
+                self.assertEqual(plan.state, "legacy")
+                self.assertEqual(cmd(self.ws.root, "reconcile", "--file", self.f.path, "--line", str(line), "--discard",
+                                     "--confirm", plan.token)[0], 0)
+                self.assertEqual(self.path.read_text(encoding="utf-8"), self.generated)
+
+
+class LockRecovery(unittest.TestCase):
+    """Safeguard S2: a stale lock is removed only after verifying that no process holds it."""
+
+    HOLD = ("import sys, time; sys.path.insert(0, {repo!r}); from pathlib import Path; "
+            "from tools.design import registry\nwith registry.lock(Path({root!r})):\n    print('held', flush=True); "
+            "time.sleep(30)")
+
+    def holder(self, root):
+        import subprocess, sys
+        p = subprocess.Popen([sys.executable, "-c", self.HOLD.format(repo=str(REPO_ROOT), root=str(root))],
+                             stdout=subprocess.PIPE, text=True)
+        self.assertEqual(p.stdout.readline().strip(), "held")
+        return p
+
+    def test_an_active_lock_is_never_removed_and_a_dead_one_only_with_confirm(self):
+        with Workspace() as ws:
+            p = self.holder(ws.root)
+            try:
+                state = registry.unlock(ws.root, confirm=True)
+                self.assertFalse(state.removable)
+                self.assertIn("still holds the lock", state.reason)
+                self.assertTrue((ws.root / registry.LOCK).exists())
+                code, out, _ = cmd(ws.root, "registry", "unlock", "--confirm")
+                self.assertEqual(code, 1)
+                self.assertIn("the lock was kept", out)
+            finally:
+                p.kill(); p.wait(); p.stdout.close()
+            code, out, _ = cmd(ws.root, "registry", "unlock")                                # preview only
+            self.assertEqual(code, 1)
+            self.assertIn("no process holds the lock", out)
+            self.assertTrue((ws.root / registry.LOCK).exists())
+            code, out, _ = cmd(ws.root, "registry", "unlock", "--confirm")
+            self.assertEqual(code, 0, out)
+            self.assertFalse((ws.root / registry.LOCK).exists())
+            new_feature(ws.root, "A")
+            ownership.new_diagram(ws.root, "FD-0001", "After recovery")                     # the registry works again
+
+    def test_unverifiable_locks_are_kept(self):
+        with Workspace() as ws:
+            lock = ws.root / registry.LOCK
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            for content, why in (("not json", "cannot be read"), ("{}", "does not record its process"),
+                                 ('{"pid": 1, "host": "another-computer", "time": 0}', "another computer")):
+                with self.subTest(why):
+                    lock.write_text(content, encoding="utf-8")
+                    state = registry.unlock(ws.root, confirm=True)
+                    self.assertFalse(state.removable)
+                    self.assertIn(why, state.reason)
+                    self.assertTrue(lock.exists())
+
+
+class ArchitectureOwnership(unittest.TestCase):
+    """Safeguard S3: nothing the diagram commands do writes under docs/architecture/."""
+
+    def test_no_operation_writes_under_docs_architecture(self):
+        with Workspace() as ws:
+            f = new_feature(ws.root, "A")
+            folder = ws.root / "docs/architecture/diagrams"
+            folder.mkdir()
+            src = folder / "system-architecture_sequence_x.md"
+            src.write_text("---\ndiagram_id: AD-0015\ntitle: X\nowner_document: docs/architecture/system-architecture.md\n"
+                           "---\n\n```mermaid\nsequenceDiagram\n  A->>B: hi\n```\n", encoding="utf-8")
+            registry.adopt(ws.root, "docs/architecture/diagrams/system-architecture_sequence_x.md", "sequence")
+            before = {p: p.read_bytes() for p in (ws.root / "docs/architecture").rglob("*") if p.is_file()}
+            with self.assertRaisesRegex(DesignError, "technical-lead's documentation workflow"):
+                registry.relink(ws.root, "AD-0015", title="Renamed here")              # would edit its front matter
+            insert(ws, f.path, "AD-0015")
+            insert(ws, f.path, ETL, heading="## 1. Objective")
+            cmd(ws.root, "index")
+            registry.relink(ws.root, "AD-0006", title="Streets loader (registry title)")   # embedded: registry only
+            text = (ws.root / f.path).read_text(encoding="utf-8")
+            (ws.root / f.path).write_text(text.replace("A->>B: hi", "A->>B: edited"), encoding="utf-8")
+            line = marker_line(ws, f.path, "AD-0015")
+            with self.assertRaisesRegex(ValueError, "technical-lead's documentation workflow"):
+                diagrams.plan_reconcile(ws.root, f.path, line, "apply-to-source")
+            for target in ("docs/architecture/x.md", "docs/architecture/diagrams/y.md"):
+                with self.subTest(target=target):
+                    with self.assertRaisesRegex(DesignError, "under docs/architecture/"):
+                        ownership.write_atomically(ws.root / target, "x", root=ws.root)
+                    with self.assertRaisesRegex(DesignError, "under docs/architecture/"):
+                        ownership.create_exclusively(ws.root / target, "x", target, root=ws.root)
+            registry.retire(ws.root, "AD-0015", True)
+            cmd(ws.root, "index")
+            after = {p: p.read_bytes() for p in (ws.root / "docs/architecture").rglob("*") if p.is_file()}
+            self.assertEqual(after, before)                                              # byte-identical throughout
+
+    def test_a_document_owned_title_follows_the_file_changed_by_technical_lead(self):
+        with Workspace() as ws:
+            folder = ws.root / "docs/architecture/diagrams"
+            folder.mkdir()
+            src = folder / "system-architecture_sequence_x.md"
+            src.write_text("---\ndiagram_id: AD-0015\ntitle: X\nowner_document: docs/architecture/system-architecture.md\n"
+                           "---\n\n```mermaid\nsequenceDiagram\n  A->>B: hi\n```\n", encoding="utf-8")
+            registry.adopt(ws.root, "docs/architecture/diagrams/system-architecture_sequence_x.md", "sequence")
+            src.write_text(src.read_text(encoding="utf-8").replace("title: X", "title: Y"), encoding="utf-8")  # technical-lead
+            before = src.read_bytes()
+            e = registry.relink(ws.root, "AD-0015", title="Y")                        # the registry follows the file
+            self.assertEqual(e.title, "Y")
+            self.assertEqual(src.read_bytes(), before)
 
 
 class RealRepository(unittest.TestCase):
