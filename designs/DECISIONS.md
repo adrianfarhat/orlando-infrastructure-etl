@@ -427,3 +427,10 @@ implemented). Scope, order and acceptance tests are on the T-97 card; evidence i
     applying changes to architecture sources always through technical-lead's workflow; the legend
     placement and lint rules, coordinated with T-82 without weakening those checks to fit the
     marker.
+25. **U13 clarified: exact comparison (approved by the user, 2026-11-22).** Generated-content
+    fingerprints compare the exact content; the only normalisation is line endings. Indentation and
+    blank lines are not ignored because diagrams render the same: they matter for readability,
+    maintainability and future Mermaid versions. This replaces the type allow-list described in
+    item 22. A more permissive rule for Mark Sharp's reformatting of generated blocks would first
+    have to be shown necessary by tests and then approved explicitly; until then such reformatting
+    is reported as a conflict and reconciled explicitly.
