@@ -6,7 +6,7 @@ The current-state documents in `docs/architecture/` (the verified, implemented s
 to every heading and every Mermaid diagram. Use it to fill a feature's "Architecture references";
 proposed designs never change these documents. See [designs/README.md](../README.md).
 
-6 documents, 67 headings, 14 diagrams (4 architecture, 2 er, 1 example, 6 process, 1 sequence).
+7 documents, 105 headings, 14 diagrams (4 architecture, 2 er, 1 example, 6 process, 1 sequence).
 
 ## Diagrams
 
@@ -79,6 +79,46 @@ that heading is renamed. The type is the diagram's `%% diagram-type:` marker
     - [Q8. A CTE with a window function: share of pipe length by material (intermediate)](../../docs/architecture/database-schema.md#q8-a-cte-with-a-window-function-share-of-pipe-length-by-material-intermediate)
     - [Q9. Data-quality checks (intermediate)](../../docs/architecture/database-schema.md#q9-data-quality-checks-intermediate)
   - [(d) Where you could contribute SQL for real](../../docs/architecture/database-schema.md#d-where-you-could-contribute-sql-for-real)
+
+### [diagram-library.md](../../docs/architecture/diagram-library.md): Diagram Library (proposed)
+
+- [1. Principles](../../docs/architecture/diagram-library.md#1-principles)
+- [2. What exists today](../../docs/architecture/diagram-library.md#2-what-exists-today)
+- [3. Owners, IDs and the registry](../../docs/architecture/diagram-library.md#3-owners-ids-and-the-registry)
+  - [3.1 Owner kinds and IDs](../../docs/architecture/diagram-library.md#31-owner-kinds-and-ids)
+  - [3.2 Registry](../../docs/architecture/diagram-library.md#32-registry)
+- [4. Formats](../../docs/architecture/diagram-library.md#4-formats)
+- [5. Naming and directories](../../docs/architecture/diagram-library.md#5-naming-and-directories)
+  - [5.1 File names](../../docs/architecture/diagram-library.md#51-file-names)
+  - [5.2 Directories](../../docs/architecture/diagram-library.md#52-directories)
+  - [5.3 Reuse by several features](../../docs/architecture/diagram-library.md#53-reuse-by-several-features)
+- [6. References, resolution and rendering](../../docs/architecture/diagram-library.md#6-references-resolution-and-rendering)
+  - [6.1 Canonical ID references](../../docs/architecture/diagram-library.md#61-canonical-id-references)
+  - [6.2 Resolving an ID to a path](../../docs/architecture/diagram-library.md#62-resolving-an-id-to-a-path)
+  - [6.3 Keeping generated paths right after moves and renames](../../docs/architecture/diagram-library.md#63-keeping-generated-paths-right-after-moves-and-renames)
+  - [6.4 Rendering in Markdown](../../docs/architecture/diagram-library.md#64-rendering-in-markdown)
+  - [6.5 Rendering in Feature Designer](../../docs/architecture/diagram-library.md#65-rendering-in-feature-designer)
+- [7. Workflows](../../docs/architecture/diagram-library.md#7-workflows)
+  - [7.1 + → Place Diagram → Add Existing Diagram](../../docs/architecture/diagram-library.md#71---place-diagram--add-existing-diagram)
+  - [7.2 + → Place Diagram → Make New Diagram](../../docs/architecture/diagram-library.md#72---place-diagram--make-new-diagram)
+  - [7.3 Edit Diagram](../../docs/architecture/diagram-library.md#73-edit-diagram)
+  - [7.4 Saving a source (sync)](../../docs/architecture/diagram-library.md#74-saving-a-source-sync)
+  - [7.5 Rename or move (relink)](../../docs/architecture/diagram-library.md#75-rename-or-move-relink)
+  - [7.6 Retire](../../docs/architecture/diagram-library.md#76-retire)
+  - [7.7 Extract to diagram source (features)](../../docs/architecture/diagram-library.md#77-extract-to-diagram-source-features)
+- [8. Safety](../../docs/architecture/diagram-library.md#8-safety)
+  - [8.1 Safe creation](../../docs/architecture/diagram-library.md#81-safe-creation)
+  - [8.2 Never overwriting unsaved edits](../../docs/architecture/diagram-library.md#82-never-overwriting-unsaved-edits)
+- [9. Error catalogue](../../docs/architecture/diagram-library.md#9-error-catalogue)
+- [10. Visual editor rules (draw.io)](../../docs/architecture/diagram-library.md#10-visual-editor-rules-drawio)
+- [11. Diffs, merges and .gitattributes](../../docs/architecture/diagram-library.md#11-diffs-merges-and-gitattributes)
+- [12. Adoption and migration of existing diagrams](../../docs/architecture/diagram-library.md#12-adoption-and-migration-of-existing-diagrams)
+  - [12.1 Stage M0: adopt in place (no document changes)](../../docs/architecture/diagram-library.md#121-stage-m0-adopt-in-place-no-document-changes)
+  - [12.2 Stage M1: extract per document](../../docs/architecture/diagram-library.md#122-stage-m1-extract-per-document)
+  - [12.3 Proposed IDs and names](../../docs/architecture/diagram-library.md#123-proposed-ids-and-names)
+  - [12.4 Other diagrams](../../docs/architecture/diagram-library.md#124-other-diagrams)
+- [13. Compatibility](../../docs/architecture/diagram-library.md#13-compatibility)
+- [14. Open decisions U1–U12](../../docs/architecture/diagram-library.md#14-open-decisions-u1u12)
 
 ### [etl-workflow.md](../../docs/architecture/etl-workflow.md): ETL Workflow
 
