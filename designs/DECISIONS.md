@@ -283,3 +283,74 @@ on GitHub Project #1.
    reports the blocks and `index` restores them. Not guaranteed: text still being typed in
    Mark Sharp and not yet written to the shared document at the moment of an insertion
    (the race was tested once without loss, but Mark Sharp's internal timing is not observable).
+
+## 2026-11-22: T-97 diagram library — visual and code-first diagrams (approved by the user)
+
+The design is described in
+[docs/architecture/diagram-library.md](../docs/architecture/diagram-library.md) (PROPOSED, not
+implemented). Scope, order and acceptance tests are on the T-97 card; evidence is in
+`docs/agents/task-board.md`.
+
+1. **Direction.** Diagrams must be freely editable with a layout that stays exactly as drawn
+   wherever they are shown. Mermaid cannot store positions (a proof of concept with the Mermaid
+   NG editor confirmed that dragging a box draws a connector and nothing positional is saved),
+   so visual diagrams use draw.io files saved as `.drawio.svg`: the editable graph and an image
+   of exactly that layout in one file. A draw.io proof of concept kept positions, sizes, line
+   routes and label offsets identical through save, close and reopen, and the same file
+   rendered identically in VS Code's Markdown preview and Feature Designer's rendering path.
+   Mermaid stays for code-first diagrams. The editor is the existing VS Code draw.io extension;
+   no custom editor is built.
+2. **Every diagram is its own source document** (user requirement), shown elsewhere through a
+   reference by its stable ID. Reuse never copies; a reused diagram keeps one owner and one
+   source. The ID is the identity; file names are descriptive and may change.
+3. **V1 — code-first format.** Mermaid diagrams keep the existing `.md` diagram files (front
+   matter and one Mermaid block); no `.mmd` now, but the format table reserves it. Why: no
+   migration, and the existing template and checks keep working.
+4. **V2 — one registry,** `designs/diagrams/registry.yml`: identity, owner, format, category,
+   path, title and lifecycle, never diagram content. Why: one authoritative mapping for both
+   formats; draw.io keeps the graph compressed, so IDs need a plain-text home that Git history
+   can read.
+5. **V3 — scoped `.gitattributes`:** `*.drawio.svg diff=drawio -merge`, plus an opt-in local diff
+   helper. Why: measured in a scratch repository, two branches editing one diagram always
+   conflict (the graph is one compressed line); without `-merge` Git writes conflict markers
+   into the SVG and the file no longer opens; with it the conflict is still reported, the file
+   stays valid and the other version is one command away. Other files merge as before.
+6. **V4 — versions.** The reviewed draw.io extension version is pinned for development and
+   tests; other versions get a compatibility warning in normal use, not a permanent refusal;
+   nothing ever installs or upgrades the extension.
+7. **V5 — installation.** draw.io is installed only in the isolated Feature Designer
+   development profile until the whole workflow passes hands-on testing.
+8. **V6 — PR #13** was reviewed and merged before any dependent work (no stacked branches).
+9. **V7 — `designs/index/diagram-index.md`** is generated from the registry by the existing
+   tooling; it is never edited by hand.
+10. **V8 — ownership.** Make New Diagram defaults the owner to the open feature; another owner
+    only through an explicit, validated action. Reuse never transfers ownership.
+11. **R1 — online mode refused.** If `hediet.vscode-drawio.offline` is not `true`, the editor is
+    not opened and the exact setting is shown. Why: online mode runs editor code from
+    diagrams.net, contrary to the offline requirement.
+12. **R2 — renames in VS Code** offer to update the registry, with confirmation each time.
+13. **R3 — retire, never reuse.** Before a diagram is retired its references are listed and
+    confirmation is required; remaining references show a clear retired-diagram message.
+14. **R4 — GitHub rendering** is checked in a separate private scratch repository; nothing is
+    created or pushed remotely without separate authorization.
+15. **R5 — categories** are a controlled, schema-versioned list (changes only by a controlled
+    schema change). The initial list approved with R5 is revised by open decision U7 to fit the
+    naming convention below.
+16. **R6 — PR A** starts only after PR #13's final review and merge (done: `db59478`).
+17. **R7 — a diagram block shows** the rendered diagram, a caption with the title, the stable ID
+    and a link to the source.
+18. **Stable IDs are canonical** in documents (the T-96 marker); the image path or Mermaid copy
+    between the markers is generated from the registry and never read back to find a diagram.
+19. **Naming** (user requirement): `<owner-slug>_<category>_<diagram-name>.<ext>` in the owner's
+    diagram folder, for example `test1_system-architecture_one-map-pan.md`.
+20. **Existing diagrams** behave as if made with Make New Diagram: the 14 architecture diagrams
+    join the registry (this reverses the earlier plan to keep them outside it), first in place
+    and later, per approved document, as standalone source documents with identical content and
+    rendering. Their former catalog IDs remain valid as aliases. No Mermaid diagram is converted
+    to draw.io. Nothing is migrated before the user approves the exact scope.
+21. **Open before PR A:** decisions U1–U12 in the architecture document (ID scheme for
+    document-owned diagrams, the planning diagrams in `docs/agents/`, what architecture
+    documents show after extraction, existing markers, automatic refresh of copies, the feature
+    template's example diagram, the category list, the migration order, the catalog scan after
+   extraction, in-file identity of document-owned diagrams, renamed headings before extraction
+   and move limits).
