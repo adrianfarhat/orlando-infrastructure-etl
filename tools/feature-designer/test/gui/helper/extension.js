@@ -26,6 +26,14 @@ function activate(context) {
       const d = docOf(rel);
       return d ? { text: d.getText(), isDirty: d.isDirty, version: d.version } : null;
     },
+    async replace({ path: rel, find, replace, after }) {              // one WorkspaceEdit, like typing (not saved)
+      const d = docOf(rel) || await vscode.workspace.openTextDocument(uriOf(rel));
+      const t = d.getText(), from = after ? t.indexOf(after) : 0, i = from < 0 ? -1 : t.indexOf(find, from);
+      if (i < 0) return false;
+      const e = new vscode.WorkspaceEdit();
+      e.replace(d.uri, new vscode.Range(d.positionAt(i), d.positionAt(i + find.length)), replace);
+      return vscode.workspace.applyEdit(e);
+    },
     async save({ path: rel }) { const d = docOf(rel); return d ? d.save() : false; },
     async command({ id, args }) { await vscode.commands.executeCommand(id, ...(args || [])); return true; },
     async closeAll() { await vscode.commands.executeCommand("workbench.action.closeAllEditors"); return true; },

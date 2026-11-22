@@ -2,7 +2,9 @@
 // The Markdown TextDocument is the only model: the webview renders VS Code's current buffer
 // (including unsaved changes made in the text editor or Mark Sharp) and sends intents; this
 // host asks `python -m tools.design designer --serve` for the edit and applies it as one
-// WorkspaceEdit (one undo step), only to the exact text it was computed from.
+// WorkspaceEdit (one undo step), only to the exact text it was computed from. Diagram blocks are
+// rendered from their authoritative sources (T-97 PR B); the only file this extension creates is
+// a new diagram, through the design tooling's own `new diagram` command (src/commands.js).
 "use strict";
 const vscode = require("vscode");
 const crypto = require("crypto");
@@ -11,6 +13,7 @@ const path = require("path");
 const { Bridge } = require("./bridge");
 const { replacements, sha256, StaleEditError } = require("./edits");
 const { ensurePython, pickInterpreter, interpreterProblem, SETTING } = require("./python");
+const commands = require("./commands");
 
 const VIEW_TYPE = "featureDesigner.editor";
 const INDEX = "designs/index/feature-index.md";
@@ -19,6 +22,7 @@ let output;
 const bridges = new Map();                       // repository root -> Bridge
 const panels = new Map();                        // document uri -> Set<WebviewPanel>
 const acknowledged = new Set();                  // document uris whose "also open elsewhere" warning was accepted
+const testFaults = { failNextInsertion: false };  // fault injection for the automated tests only (see activate)
 
 const log = (s) => output && output.appendLine(`${new Date().toISOString()} ${s}`);
 
@@ -88,6 +92,38 @@ function otherCustomEditors(uri) {
   return [...new Set(names)];
 }
 
+/** The start of a diagram block's marker for `id`, with or without its fingerprint (diagram library U13). */
+const markerOf = (id) => `<!-- diagram:start ${id} `;
+
+/** Before changing a document that is also open in another custom editor (Mark Sharp), ask once. */
+async function confirmOtherEditors(document, action) {
+  const others = otherCustomEditors(document.uri);
+  if (!others.length || acknowledged.has(document.uri.toString())) return true;
+  const answer = await vscode.window.showWarningMessage(
+    `This file is also open in ${others.join(", ")}. Feature Designer edits VS Code's shared document, but text you are ` +
+    `still typing in ${others.join(", ")} may not have reached it yet. Pause typing there (or save) before inserting.`,
+    { modal: true }, action);
+  if (answer !== action) return false;
+  acknowledged.add(document.uri.toString());
+  return true;
+}
+
+/** Open a diagram's authoritative source at its Mermaid block (Edit Diagram). Never opens a diagram with a problem. */
+async function openSource(root, id) {
+  const r = await ask(root, "resolve", { diagram_id: id });
+  if (r.problem) { const e = new Error(`Diagram ${id} cannot be opened: it ${r.problem}`); e.refused = true; throw e; }
+  const target = path.resolve(root, ...String(r.path).split("/"));
+  if (!target.startsWith(root + path.sep)) throw new Error("the diagram source is outside the repository");
+  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(target));
+  const pos = new vscode.Position(Math.max(0, (r.line || 1) - 1), 0);
+  await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos), preview: false, viewColumn: vscode.ViewColumn.Beside });
+  if (r.editor === "architecture-docs")                  // decision B6: never written from here
+    vscode.window.showInformationMessage(`${r.id} is an architecture diagram in ${r.path}. Changes to it go through ` +
+      "technical-lead's documentation workflow; Feature Designer never writes under docs/architecture/.");
+  log(`[edit] ${id} → ${r.path}:${r.line}`);
+  return r;
+}
+
 /** After an insertion, warn if another editor rewrites the document and drops the inserted block. */
 function watchForOverwrite(doc, marker) {
   const count = (t) => t.split(marker).length - 1;
@@ -130,27 +166,37 @@ class DesignerEditor {
     let timer = null, checkTimer = null;
     const send = () => panel.webview.postMessage({ type: "doc", text: document.getText(), version: document.version,
                                                    others: otherCustomEditors(document.uri) });
-    // Generated diagram blocks that no longer match their sources (for example after another editor
-    // reformatted them) are reported, never repaired silently: `python -m tools.design index` restores them.
-    const checkGenerated = async () => {
+    // The state of every diagram block (PR B): each is rendered from its authoritative source, and a
+    // copy that differs is shown as such. Blocks that no longer match their sources are reported,
+    // never repaired silently. Read only: nothing here changes the document.
+    const updateBlocks = async () => {
+      const text = document.getText(), version = document.version;
+      if (!/<!--\s*diagram:start/.test(text)) {
+        panel.webview.postMessage({ type: "blocks", version, blocks: [] });
+        panel.webview.postMessage({ type: "generated", stale: 0, blocking: [], conflicts: [] });
+        return;
+      }
       try {
         const root = rootOf(document.uri);
-        const r = await ask(root, "refresh", { path: relPath(root, document.uri), text: document.getText() }, false);
-        const conflicts = r.conflicts || [];
-        panel.webview.postMessage({ type: "generated", stale: r.edits.length, blocking: r.blocking, conflicts });
-        if (r.edits.length || r.blocking.length || conflicts.length) log(`[generated] ${relPath(root, document.uri)}: ${r.edits.length} stale block(s), ${conflicts.length} conflict(s), ${r.blocking.length} problem(s)`);
-      } catch (err) { log(`[generated] not checked: ${err.message}`); }
+        const r = await ask(root, "blocks", { path: relPath(root, document.uri), text }, false);
+        panel.webview.postMessage({ type: "blocks", version, blocks: r.blocks });
+        panel.webview.postMessage({ type: "generated", stale: r.stale, blocking: r.blocking, conflicts: r.conflicts });
+        if (r.stale || r.blocking.length || r.conflicts.length) log(`[generated] ${relPath(root, document.uri)}: ${r.stale} stale block(s), ${r.conflicts.length} conflict(s), ${r.blocking.length} problem(s)`);
+      } catch (err) {
+        log(`[blocks] not checked: ${err.message}`);
+        panel.webview.postMessage({ type: "blocks", version, blocks: null, error: String(err.message || err) });
+      }
     };
     const subs = [
       vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.document.uri.toString() !== key) return;
         clearTimeout(timer); timer = setTimeout(send, 40);          // the buffer, including unsaved changes
-        clearTimeout(checkTimer); checkTimer = setTimeout(checkGenerated, 1200);
+        clearTimeout(checkTimer); checkTimer = setTimeout(updateBlocks, 300);
       }),
       vscode.window.tabGroups.onDidChangeTabs(() => panel.webview.postMessage({ type: "others", others: otherCustomEditors(document.uri) })),
     ];
     panel.onDidDispose(() => { subs.forEach((s) => s.dispose()); clearTimeout(timer); clearTimeout(checkTimer); panels.get(key).delete(panel); });
-    panel.checkGenerated = checkGenerated;
+    panel.updateBlocks = () => { clearTimeout(checkTimer); checkTimer = setTimeout(updateBlocks, 300); };
     panel.webview.onDidReceiveMessage((msg) => this.handle(document, panel, msg).catch((err) => {
       if (!(err instanceof StaleEditError) && !err.refused) log(`[error] ${err.stack || err}`);
       panel.webview.postMessage({ type: "error", message: String(err.message || err) });
@@ -166,7 +212,7 @@ class DesignerEditor {
       case "ready":
         panel.webview.postMessage({ type: "doc", text: document.getText(), version: document.version, rel,
                                     others: otherCustomEditors(document.uri) });
-        if (panel.checkGenerated && /<!--\s*diagram:start/.test(document.getText())) panel.checkGenerated();
+        panel.updateBlocks();
         return;
       case "library":
         try { panel.webview.postMessage({ type: "library", data: await ask(root, "library", {}) }); }
@@ -185,38 +231,69 @@ class DesignerEditor {
       case "showLog":
         output.show(true);
         return;
-      case "editSource": {
-        if (typeof msg.id !== "string") return;
-        const lib = await ask(root, "library", {});
-        const all = [...lib.architecture.flatMap((g) => g.diagrams), ...lib.features.flatMap((g) => g.diagrams), ...lib.unowned];
-        // a block may name a diagram by its stable ID or by an alias (a former catalog ID)
-        const entry = all.find((d) => d.id === msg.id || (Array.isArray(d.aliases) && d.aliases.includes(msg.id)));
-        if (!entry) throw new Error(`no source found for diagram ${msg.id}`);
-        const target = path.resolve(root, entry.path);
-        if (!target.startsWith(root + path.sep)) throw new Error("the diagram source is outside the repository");
-        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(target));
-        const pos = new vscode.Position(Math.max(0, (entry.line || 1) - 1), 0);
-        await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos), preview: false, viewColumn: vscode.ViewColumn.Beside });
+      case "editDiagram":                            // the pencil: the authoritative source, by stable ID or alias
+        if (typeof msg.id !== "string" || !msg.id) return;
+        await openSource(root, msg.id);
+        return;
+      case "previewName": {                           // Make New: the file name `new diagram` would create (read only)
+        if (!Number.isInteger(msg.seq)) return;
+        let r;
+        try { r = await ask(root, "diagram-name", { owner: msg.owner, title: msg.title, category: msg.category }); }
+        catch (err) { r = { path: "", problem: String(err.message || err) }; }
+        panel.webview.postMessage({ type: "name", seq: msg.seq, path: r.path, problem: r.problem });
+        return;
+      }
+      case "makeNew": {
+        if (!Number.isInteger(msg.at) || !Number.isInteger(msg.version)) return;
+        if (msg.version !== document.version) throw new StaleEditError("the document changed; nothing was created (try again)");
+        if (!(await confirmOtherEditors(document, "Create and Insert"))) return;
+        if (document.version !== msg.version) throw new StaleEditError("the document changed while you confirmed; nothing was created (try again)");
+        const bridge = await bridgeFor(root);
+        const made = await commands.newDiagram({ python: bridge.python, root },
+                                               { owner: msg.owner, title: msg.title, category: msg.category });
+        log(`[new] ${made.diagram_id} created and registered: ${made.path}`);
+        let failure = "";                             // from here the diagram exists: never report "nothing was created"
+        try {
+          if (testFaults.failNextInsertion) { testFaults.failNextInsertion = false; throw new StaleEditError("the document changed while the diagram was created (simulated)"); }
+          if (document.version !== msg.version) throw new StaleEditError("the document changed while the diagram was created");
+          const response = await ask(root, "insert", { path: rel, text: document.getText(), at: msg.at, diagram_id: made.diagram_id });
+          if (document.version !== msg.version) throw new StaleEditError("the document changed while the diagram was prepared");
+          await applyResponse(document, response);
+          watchForOverwrite(document, markerOf(made.diagram_id));
+        } catch (err) { failure = String(err.message || err); }
+        if (failure) {                                // the additional requirement: its ID, and a way to place it later
+          log(`[new] ${made.diagram_id} not inserted: ${failure}`);
+          panel.webview.postMessage({ type: "placeLater", id: made.diagram_id, path: made.path, reason: failure });
+          const add = "Add Existing Diagram…";
+          vscode.window.showWarningMessage(`Diagram ${made.diagram_id} was created and registered (${made.path}), but it ` +
+            `was not inserted: ${failure}. Use Add Existing Diagram to place it.`, add)
+            .then((a) => { if (a === add) panel.webview.postMessage({ type: "placeNow", id: made.diagram_id }); });
+          return;
+        }
+        log(`[insert] ${rel}: ${made.diagram_id} before line ${msg.at + 1}`);
+        panel.webview.postMessage({ type: "created", id: made.diagram_id, path: made.path });
+        await openSource(root, made.diagram_id).catch((err) => log(`[edit] ${err.message}`));
+        return;
+      }
+      case "removeBlock": {                           // decision B7: a retired diagram's reference, by the user's click
+        if (!Number.isInteger(msg.line) || !Number.isInteger(msg.version) || typeof msg.id !== "string") return;
+        if (msg.version !== document.version) throw new StaleEditError("the document changed; nothing was removed (try again)");
+        if (!(await confirmOtherEditors(document, "Remove"))) return;
+        const response = await ask(root, "remove-block", { path: rel, text: document.getText(), line: msg.line });
+        if (document.version !== msg.version) throw new StaleEditError("the document changed; nothing was removed (try again)");
+        await applyResponse(document, response);
+        log(`[remove] ${rel}: the block for retired ${msg.id} at line ${msg.line + 1}`);
         return;
       }
       case "insertDiagram": {
         if (!Number.isInteger(msg.at) || typeof msg.id !== "string" || !Number.isInteger(msg.version)) return;
         if (msg.version !== document.version) throw new StaleEditError("the document changed; nothing was inserted (try again)");
-        const others = otherCustomEditors(document.uri);
-        if (others.length && !acknowledged.has(document.uri.toString())) {
-          const go = "Insert";
-          const answer = await vscode.window.showWarningMessage(
-            `This file is also open in ${others.join(", ")}. Feature Designer edits VS Code's shared document, but text you are ` +
-            `still typing in ${others.join(", ")} may not have reached it yet. Pause typing there (or save) before inserting.`,
-            { modal: true }, go);
-          if (answer !== go) return;
-          acknowledged.add(document.uri.toString());
-        }
+        if (!(await confirmOtherEditors(document, "Insert"))) return;
         if (document.version !== msg.version) throw new StaleEditError("the document changed while you confirmed; nothing was inserted (try again)");
         const response = await ask(root, "insert", { path: rel, text: document.getText(), at: msg.at, diagram_id: msg.id });
         if (document.version !== msg.version) throw new StaleEditError("the document changed while the diagram was prepared; nothing was inserted (try again)");
         await applyResponse(document, response);
-        watchForOverwrite(document, `<!-- diagram:start ${msg.id} -->`);
+        watchForOverwrite(document, markerOf(msg.id));     // fingerprinted markers too (PR A changed the marker form)
         log(`[insert] ${rel}: ${msg.id} before line ${msg.at + 1}`);
         return;
       }
@@ -284,7 +361,7 @@ function html(webview, ext) {
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="${uri("media", "designer.css")}"><title>Feature Designer</title></head>
-<body><div id="toolbar"></div><div id="banner" hidden></div><div id="stale" hidden></div><main id="doc" aria-label="Feature document"></main>
+<body><div id="toolbar"></div><div id="banner" hidden></div><div id="stale" hidden></div><div id="notice" hidden></div><main id="doc" aria-label="Feature document"></main>
 ${scripts.map((s) => `<script nonce="${nonce}" src="${s}"></script>`).join("\n")}
 <script nonce="${nonce}">window.FD_HOST = { api: acquireVsCodeApi() };</script>
 <script nonce="${nonce}" src="${uri("media", "designer.js")}"></script>
@@ -309,6 +386,7 @@ function activate(context) {
       log(`[python] saved featureDesigner.${SETTING} = ${picked}`);
     }),
     vscode.workspace.onDidSaveTextDocument((doc) => syncFeatureIndex(doc).catch((err) => log(`[index] ${err.stack || err}`))),
+    ...sourceWatchers(),
     vscode.workspace.onDidChangeConfiguration((e) => {          // a new interpreter: start a new process next time
       if (!e.affectsConfiguration(`featureDesigner.${SETTING}`)) return;
       for (const b of bridges.values()) b.dispose();
@@ -320,7 +398,19 @@ function activate(context) {
   return {
     bridgePid: (root) => (bridges.get(root) ? bridges.get(root).pid : null),
     killBridgeProcess: (root) => { const b = bridges.get(root); if (b && b.proc) b.proc.kill(); return !!(b && b.proc); },
+    failNextInsertion: () => { testFaults.failNextInsertion = true; return true; },   // Make New: the insertion after creation fails once
   };
+}
+
+/** Re-render open views when a diagram source, an architecture document or the registry changes on
+ *  disk (saved in VS Code or changed outside it). Rendering only: no document is changed here. */
+function sourceWatchers() {
+  let timer = null;
+  const again = () => { clearTimeout(timer); timer = setTimeout(() => { for (const set of panels.values()) for (const p of set) if (p.updateBlocks) p.updateBlocks(); }, 250); };
+  return ["**/designs/**/*.md", "**/designs/diagrams/registry.yml", "**/docs/architecture/**/*.md"].flatMap((glob) => {
+    const w = vscode.workspace.createFileSystemWatcher(glob);
+    return [w, w.onDidChange(again), w.onDidCreate(again), w.onDidDelete(again)];
+  });
 }
 
 function deactivate() { for (const b of bridges.values()) b.dispose(); bridges.clear(); }

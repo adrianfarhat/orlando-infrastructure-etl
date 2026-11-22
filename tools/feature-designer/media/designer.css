@@ -83,3 +83,40 @@ pre code { display: block; padding: 8px; overflow-x: auto; }
 .lib-actions button { font: inherit; padding: 3px 10px; border: 1px solid var(--border); background: var(--panel); color: var(--fg); border-radius: 4px; cursor: pointer; }
 #stale { margin: 0; padding: 6px 16px; font-size: 12px; background: var(--vscode-inputValidation-infoBackground, #ddf4ff);
          color: var(--fg); border-bottom: 1px solid var(--vscode-inputValidation-infoBorder, #54aeff); }
+
+/* ---- PR B: the Place Diagram submenu, Make New, diagram blocks drawn from their sources ---- */
+.menu [role="menuitem"].has-sub { display: flex; justify-content: space-between; gap: 12px; }
+.menu .chev { color: var(--muted); }
+.gen-label .grow { flex: 1; }
+.gen-label .alias, .gen-label .src { text-transform: none; letter-spacing: 0; font-family: var(--vscode-editor-font-family, monospace); }
+.gen-label button.edit-diagram { font-size: 14px; line-height: 1; padding: 2px 7px; }
+.dg-notice { font-size: 12px; padding: 4px 8px; margin: 6px 0; border-radius: 4px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+             background: var(--vscode-inputValidation-infoBackground, #ddf4ff); border: 1px solid var(--vscode-inputValidation-infoBorder, #54aeff); }
+.dg-notice.warn { background: var(--vscode-inputValidation-warningBackground, #fff8c5); border-color: var(--vscode-inputValidation-warningBorder, #d4a72c); }
+.dg-notice button, #notice button { font: inherit; padding: 1px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); cursor: pointer; }
+.gen.dg-conflict, .gen.dg-retired, .gen.dg-missing, .gen.dg-unknown, .gen.dg-problem { border-left-color: var(--vscode-inputValidation-warningBorder, #d4a72c); }
+.dg-both { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; }
+.dg-version { border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; background: var(--bg); }
+.dg-version.document-copy { border-style: dashed; border-color: var(--vscode-inputValidation-warningBorder, #d4a72c); }
+.dg-vlabel { font-size: 11px; color: var(--muted); font-weight: 600; }
+.dg-fix { font-size: 11px; color: var(--muted); margin: 4px 0; }
+.dg-copy, .dg-diff { font-size: 12px; margin: 4px 0; }
+.dg-copy > summary, .dg-diff > summary { cursor: pointer; color: var(--muted); }
+pre.diff { font-size: 12px; padding: 6px 8px; background: var(--panel); border-radius: 4px; overflow-x: auto; }
+pre.diff .add { color: var(--vscode-gitDecoration-addedResourceForeground, #1a7f37); }
+pre.diff .del { color: var(--vscode-gitDecoration-deletedResourceForeground, #cf222e); }
+.tree .cat-tag { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 0 6px; }
+.make-new label { display: flex; margin: 0 0 10px; }
+.make-new input[type="text"], .make-new select { font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px;
+       background: var(--vscode-input-background, var(--bg)); color: var(--fg); }
+.make-new .owner-row { display: flex; gap: 8px; align-items: center; font-size: 12px; margin: 4px 0 8px; }
+.make-new .owner-row .k { color: var(--muted); }
+.make-new .owner-pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; margin-bottom: 8px; }
+.make-new .confirm-text { flex-basis: 100%; }
+.make-new .dg-hint { font-size: 12px; color: var(--muted); margin: 6px 0; }
+.dg-file { font-size: 12px; font-family: var(--vscode-editor-font-family, monospace); margin-top: 6px; }
+.dg-file.bad { color: #cf222e; font-family: inherit; }
+#notice { margin: 0; padding: 6px 16px; font-size: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+          background: var(--vscode-inputValidation-warningBackground, #fff8c5); border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, #d4a72c); }
+#notice[hidden] { display: none; }
+body.placing .block > .plus { opacity: 1; color: var(--accent); }
