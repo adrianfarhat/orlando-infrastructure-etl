@@ -348,9 +348,53 @@ implemented). Scope, order and acceptance tests are on the T-97 card; evidence i
     and later, per approved document, as standalone source documents with identical content and
     rendering. Their former catalog IDs remain valid as aliases. No Mermaid diagram is converted
     to draw.io. Nothing is migrated before the user approves the exact scope.
-21. **Open before PR A:** decisions U1–U12 in the architecture document (ID scheme for
-    document-owned diagrams, the planning diagrams in `docs/agents/`, what architecture
-    documents show after extraction, existing markers, automatic refresh of copies, the feature
-    template's example diagram, the category list, the migration order, the catalog scan after
-   extraction, in-file identity of document-owned diagrams, renamed headings before extraction
-   and move limits).
+21. **U1–U12 (approved by the user, 2026-11-22),** detailed in section 14 of the architecture
+    document:
+    - **U1** Diagrams owned by a document get `AD-nnnn` IDs from the never-reuse allocator; former
+      catalog IDs stay valid as permanent aliases.
+    - **U2** The 7 planning diagrams in `docs/agents/development-status.md` stay out of the library
+      (project planning, not architecture).
+    - **U3/U5 Single authority.** After extraction the standalone source is the only authoritative,
+      editable version. Mermaid kept in an architecture page or any other document is a generated
+      representation of it, tracked by the diagram ID and refreshed when the source changes; manual
+      changes to generated content are detected and reported, never silently overwritten, and
+      reconciled only by an explicit choice; documents with unsaved changes are never edited
+      automatically. Architecture pages show the representation without a caption, so they look
+      as they do today.
+    - **U4** Existing references with catalog IDs keep resolving through the aliases; no automatic
+      rewrite.
+    - **U6** The feature template's example diagram is replaced by guidance to use Place Diagram.
+    - **U7** Categories: `system-architecture`, `data-model`, `process`, `sequence`, `state`, `ui`,
+      `legend`, `other` (replaces R5's `architecture`).
+    - **U8 / M0** Stage M0 (register the 14 architecture diagrams in place, no document changed) is
+      the first implementation migration scope; approved, not yet executed. M1 (extraction) follows
+      later, one approved change per document.
+    - **U9** Uniqueness comes from registry identity: each diagram is listed once; standalone
+      sources are not read as documents and generated representations are never counted; missing,
+      duplicate and inconsistent references are reported.
+    - **U10** `owner_document` identifies the owning document independently of the file name;
+      reuse never changes the owner.
+    - **U11** A heading renamed between M0 and M1 is reported as a broken reference and needs an
+      explicit relink; nothing is guessed.
+    - **U12** Sources stay in their approved directories (document-owned:
+      `docs/architecture/diagrams/`; feature-owned: a `diagrams/` folder under
+      `designs/features/`); reuse across documents only through stable IDs.
+22. **Proposed, awaiting approval** (they adjust approved T-96 decisions 2 and 3):
+    - **U13** Detecting manual changes needs to know what was last generated, so the start marker
+      gains an optional fingerprint of that content (backward compatible).
+    - **U14** Generated copies in architecture documents are written verbatim, blank lines
+      included, so their Mermaid content stays byte-identical; feature documents keep the `%%`
+      blank-line rule that Mark Sharp requires.
+23. **Earlier decisions changed by the approved U decisions** (recorded so the two do not
+    conflict):
+    - T-97 Phase 2 decision 4 ("generated diagram blocks … never repaired automatically"): replaced
+      by U5. Generated blocks are refreshed automatically in documents without unsaved changes;
+      manual modifications and documents with unsaved changes are never touched.
+    - T-97 Phase 1 decision 1 ("owned by exactly one feature; `feature_id` required"): amended by
+      U1 and U10. A diagram has exactly one owner, either a feature (`feature_id`) or a document
+      (`owner_document`).
+    - R7 (a block shows a caption with title, ID and source link): applies to feature documents.
+      Architecture pages show the representation without a visible caption (U3), with the ID and
+      source in an HTML comment.
+    - The Phase 2b plan's "a saved Mermaid source writes Markdown only when the user clicks
+      Refresh" is replaced by U5.
