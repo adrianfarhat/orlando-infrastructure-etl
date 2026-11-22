@@ -490,3 +490,37 @@ implemented). Scope, order and acceptance tests are on the T-97 card; evidence i
    `registry relink --title` on a document-owned standalone source updates the registry only when
    the source already has that title (technical-lead changes the file first); for an embedded
    architecture diagram it changes the registry only. Reconciliation never writes there either.
+
+## 2026-11-22: T-97 PR B — Feature Designer diagram placement and editing (approved by the user)
+
+Mermaid diagrams only; draw.io and M1 are not part of PR B. Built on the PR A registry, resolution
+and fingerprint rules, which are unchanged. Scope, order and acceptance tests are on the T-97 card.
+
+1. **B1 — writes.** The Feature Designer creates diagram files only by running the PR A commands
+   (`python -m tools.design new diagram …`) as one-shot processes: argument arrays, no shell, the
+   validated interpreter. The long-running designer interface stays read-only (Phase 1 decision 3).
+2. **B2 — rendering.** A diagram block renders from its authoritative source. When the embedded
+   copy differs from what the source generates (a conflict), the block says so, distinguishes the
+   source from the embedded document copy, and lets the reader inspect both. A manual edit is never
+   hidden and a conflicted document never looks synchronized.
+3. **B3 — refresh of an open document (modified by the user).** A case-1 source change may refresh a
+   clean open document automatically through the guarded editor API, as one undoable edit, and is
+   never saved automatically: the document becomes dirty so the user can inspect, undo or save it.
+   A document with unsaved edits is not modified automatically: a notification offers a guarded
+   manual refresh. Conflicts are never overwritten. (PR B2.)
+4. **B4 — closed documents** are updated only by an explicit one-click action, case-1 blocks only
+   (PR B2), or by `python -m tools.design index`.
+5. **B5 — default category** of Make New by section: 1 Objective other, 2 Data contract data-model,
+   3 Logic process, 4 Dependencies and 5 Downstream impact system-architecture, 6 Acceptance criteria
+   other. Always changeable before creating.
+6. **B6 — editing an architecture diagram** opens its document at the block with a notice that
+   changes go through technical-lead's documentation workflow; the Feature Designer never writes there.
+7. **B7 — retired diagrams** are hidden in the library; their blocks show a placeholder with
+   Remove reference (an undoable edit by the user's click).
+8. **B8 — Make New** uses the existing diagram template.
+9. **B9 — two PRs.** PR B1: API support, command runner, Place Diagram submenu, Add Existing, Make New,
+   the Edit Diagram pencil, source-based rendering and conflict indicators. PR B2: synchronization,
+   guarded refresh and reconciliation UI, explicit closed-document updates, rename hook.
+10. **Insertion after creation.** If Make New creates and registers a diagram but inserting its
+    reference fails (for example because the document changed), the stable ID is shown with an
+    Add Existing Diagram action so it can be placed later; nothing is half-done.
