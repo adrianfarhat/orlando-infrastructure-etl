@@ -20,3 +20,5 @@ tools/feature-designer/.toolchain/
 tools/feature-designer/.vscode-test/
 tools/feature-designer/test/gui/.run/
 tools/feature-designer/*.vsix
+# The diagram registry's lock (tools/design/registry.py): exists only while a diagram command runs.
+designs/diagrams/.registry.lock

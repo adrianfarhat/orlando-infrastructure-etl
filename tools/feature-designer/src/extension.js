@@ -136,8 +136,9 @@ class DesignerEditor {
       try {
         const root = rootOf(document.uri);
         const r = await ask(root, "refresh", { path: relPath(root, document.uri), text: document.getText() }, false);
-        panel.webview.postMessage({ type: "generated", stale: r.edits.length, blocking: r.blocking });
-        if (r.edits.length || r.blocking.length) log(`[generated] ${relPath(root, document.uri)}: ${r.edits.length} stale block(s), ${r.blocking.length} problem(s)`);
+        const conflicts = r.conflicts || [];
+        panel.webview.postMessage({ type: "generated", stale: r.edits.length, blocking: r.blocking, conflicts });
+        if (r.edits.length || r.blocking.length || conflicts.length) log(`[generated] ${relPath(root, document.uri)}: ${r.edits.length} stale block(s), ${conflicts.length} conflict(s), ${r.blocking.length} problem(s)`);
       } catch (err) { log(`[generated] not checked: ${err.message}`); }
     };
     const subs = [
@@ -188,7 +189,8 @@ class DesignerEditor {
         if (typeof msg.id !== "string") return;
         const lib = await ask(root, "library", {});
         const all = [...lib.architecture.flatMap((g) => g.diagrams), ...lib.features.flatMap((g) => g.diagrams), ...lib.unowned];
-        const entry = all.find((d) => d.id === msg.id);
+        // a block may name a diagram by its stable ID or by an alias (a former catalog ID)
+        const entry = all.find((d) => d.id === msg.id || (Array.isArray(d.aliases) && d.aliases.includes(msg.id)));
         if (!entry) throw new Error(`no source found for diagram ${msg.id}`);
         const target = path.resolve(root, entry.path);
         if (!target.startsWith(root + path.sep)) throw new Error("the diagram source is outside the repository");
@@ -228,31 +230,38 @@ class DesignerEditor {
 async function syncFeatureIndex(doc) {
   if (!panels.has(doc.uri.toString()) || !panels.get(doc.uri.toString()).size) return;
   const root = rootOf(doc.uri);
-  let response;                                       // the index on disk describes the saved files only
+  let response;                                       // the indexes on disk describe the saved files only
   try { response = await ask(root, "feature-index", { texts: {} }, false); }
   catch (err) {
     log(`[index] not updated: ${err.message}`);
     vscode.window.showWarningMessage(`Feature Designer could not update ${INDEX} (${err.message}). Run python -m tools.design index.`);
     return;
   }
-  if (!response.changed) return;
-  const indexPath = path.join(root, ...INDEX.split("/"));
-  if (!fs.existsSync(indexPath)) { vscode.window.showWarningMessage(`${INDEX} is missing: run python -m tools.design index`); return; }
+  await syncGenerated(root, response);
+  if (response.diagram_index) await syncGenerated(root, response.diagram_index);   // its "Used by" column follows the blocks
+}
+
+/** Replace one generated index through the editor, only if it has no unsaved changes and still has the base text. */
+async function syncGenerated(root, generated) {
+  const rel = generated.path;
+  if (!generated.changed) return;
+  const indexPath = path.join(root, ...rel.split("/"));
+  if (!fs.existsSync(indexPath)) { vscode.window.showWarningMessage(`${rel} is missing: run python -m tools.design index`); return; }
   const indexDoc = await vscode.workspace.openTextDocument(vscode.Uri.file(indexPath));
   if (indexDoc.isDirty) {
-    vscode.window.showWarningMessage(`${INDEX} has unsaved changes, so Feature Designer did not update it; save or revert it, then run python -m tools.design index.`);
+    vscode.window.showWarningMessage(`${rel} has unsaved changes, so Feature Designer did not update it; save or revert it, then run python -m tools.design index.`);
     return;
   }
-  if (!response.base || sha256(indexDoc.getText()) !== response.base.sha256) {
-    log(`[index] ${INDEX} changed while it was being computed (or has a BOM or mixed line endings); not updated`);
-    vscode.window.showWarningMessage(`Feature Designer did not update ${INDEX}: it changed while being computed. Run python -m tools.design index.`);
+  if (!generated.base || sha256(indexDoc.getText()) !== generated.base.sha256) {
+    log(`[index] ${rel} changed while it was being computed (or has a BOM or mixed line endings); not updated`);
+    vscode.window.showWarningMessage(`Feature Designer did not update ${rel}: it changed while being computed. Run python -m tools.design index.`);
     return;
   }
   const eol = eolOf(indexDoc);
   const edit = new vscode.WorkspaceEdit();
   edit.replace(indexDoc.uri, new vscode.Range(indexDoc.positionAt(0), indexDoc.positionAt(indexDoc.getText().length)),
-               eol === "\n" ? response.content : response.content.replace(/\n/g, eol));
-  if (await vscode.workspace.applyEdit(edit)) { await indexDoc.save(); log(`[index] updated ${INDEX}`); }
+               eol === "\n" ? generated.content : generated.content.replace(/\n/g, eol));
+  if (await vscode.workspace.applyEdit(edit)) { await indexDoc.save(); log(`[index] updated ${rel}`); }
 }
 
 function restrictedHtml(nowTrusted) {

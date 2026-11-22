@@ -1,0 +1,174 @@
+# The diagram registry (T-97): stable diagram IDs, owners, formats and source paths.
+# Written only by `python -m tools.design` commands (new diagram, registry adopt,
+# registry adopt-architecture, registry relink, registry retire); review changes in pull
+# requests. Never holds diagram content. See docs/architecture/diagram-library.md.
+version: 1
+diagrams:
+  - diagram_id: AD-0001
+    title: 1. Implementation-status legend
+    owner: {kind: document, ref: docs/architecture/conventions.md}
+    format: mermaid-embedded
+    category: legend
+    path: docs/architecture/conventions.md
+    anchor: 1-implementation-status-legend
+    ordinal: 1
+    aliases: [conventions/1-implementation-status-legend]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0002
+    title: '1. Current model (built): schema public, real data'
+    owner: {kind: document, ref: docs/architecture/database-schema.md}
+    format: mermaid-embedded
+    category: data-model
+    path: docs/architecture/database-schema.md
+    anchor: 1-current-model-built-schema-public-real-data
+    ordinal: 1
+    aliases: [database-schema/1-current-model-built-schema-public-real-data]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0003
+    title: '2. Target model: PROPOSED, NOT BUILT'
+    owner: {kind: document, ref: docs/architecture/database-schema.md}
+    format: mermaid-embedded
+    category: data-model
+    path: docs/architecture/database-schema.md
+    anchor: 2-target-model-proposed-not-built
+    ordinal: 1
+    aliases: [database-schema/2-target-model-proposed-not-built]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0004
+    title: (a) The team workflow
+    owner: {kind: document, ref: docs/architecture/database-schema.md}
+    format: mermaid-embedded
+    category: process
+    path: docs/architecture/database-schema.md
+    anchor: a-the-team-workflow
+    ordinal: 1
+    aliases: [database-schema/a-the-team-workflow]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0005
+    title: The common pattern
+    owner: {kind: document, ref: docs/architecture/etl-workflow.md}
+    format: mermaid-embedded
+    category: process
+    path: docs/architecture/etl-workflow.md
+    anchor: the-common-pattern
+    ordinal: 1
+    aliases: [etl-workflow/the-common-pattern]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0006
+    title: Streets → road_segments
+    owner: {kind: document, ref: docs/architecture/etl-workflow.md}
+    format: mermaid-embedded
+    category: process
+    path: docs/architecture/etl-workflow.md
+    anchor: streets--road_segments
+    ordinal: 1
+    aliases: [etl-workflow/streets--road_segments]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0007
+    title: Wastewater → utility_lines
+    owner: {kind: document, ref: docs/architecture/etl-workflow.md}
+    format: mermaid-embedded
+    category: process
+    path: docs/architecture/etl-workflow.md
+    anchor: wastewater--utility_lines
+    ordinal: 1
+    aliases: [etl-workflow/wastewater--utility_lines]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0008
+    title: Manholes → manholes
+    owner: {kind: document, ref: docs/architecture/etl-workflow.md}
+    format: mermaid-embedded
+    category: process
+    path: docs/architecture/etl-workflow.md
+    anchor: manholes--manholes
+    ordinal: 1
+    aliases: [etl-workflow/manholes--manholes]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0009
+    title: Safety gates
+    owner: {kind: document, ref: docs/architecture/etl-workflow.md}
+    format: mermaid-embedded
+    category: process
+    path: docs/architecture/etl-workflow.md
+    anchor: safety-gates
+    ordinal: 1
+    aliases: [etl-workflow/safety-gates]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0010
+    title: '1. Current state: the big picture'
+    owner: {kind: document, ref: docs/architecture/system-architecture.md}
+    format: mermaid-embedded
+    category: system-architecture
+    path: docs/architecture/system-architecture.md
+    anchor: 1-current-state-the-big-picture
+    ordinal: 1
+    aliases: [system-architecture/1-current-state-the-big-picture]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0011
+    title: Credential boundary
+    owner: {kind: document, ref: docs/architecture/system-architecture.md}
+    format: mermaid-embedded
+    category: system-architecture
+    path: docs/architecture/system-architecture.md
+    anchor: credential-boundary
+    ordinal: 1
+    aliases: [system-architecture/credential-boundary]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0012
+    title: '2. Current state: inside the web app'
+    owner: {kind: document, ref: docs/architecture/system-architecture.md}
+    format: mermaid-embedded
+    category: system-architecture
+    path: docs/architecture/system-architecture.md
+    anchor: 2-current-state-inside-the-web-app
+    ordinal: 1
+    aliases: [system-architecture/2-current-state-inside-the-web-app]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0013
+    title: 3. One map pan, step by step
+    owner: {kind: document, ref: docs/architecture/system-architecture.md}
+    format: mermaid-embedded
+    category: sequence
+    path: docs/architecture/system-architecture.md
+    anchor: 3-one-map-pan-step-by-step
+    ordinal: 1
+    aliases: [system-architecture/3-one-map-pan-step-by-step]
+    status: active
+    created: '2026-11-22'
+    created_from:
+  - diagram_id: AD-0014
+    title: '4. Target state: the product vision (mostly planned)'
+    owner: {kind: document, ref: docs/architecture/system-architecture.md}
+    format: mermaid-embedded
+    category: system-architecture
+    path: docs/architecture/system-architecture.md
+    anchor: 4-target-state-the-product-vision-mostly-planned
+    ordinal: 1
+    aliases: [system-architecture/4-target-state-the-product-vision-mostly-planned]
+    status: active
+    created: '2026-11-22'
+    created_from:

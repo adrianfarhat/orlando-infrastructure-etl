@@ -52,10 +52,16 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
   (by name, ID, source document or owning feature), then Enter or **Insert**. The block is
   inserted below the block you hovered, as one undoable edit. Nothing is saved until you save.
 - **Save** as usual (Ctrl+S). When a feature open in Feature Designer is saved,
-  `designs/index/feature-index.md` is brought up to date from the saved files (its Diagrams
-  column), exactly as `python -m tools.design index` would write it — unless that index file
-  has unsaved changes or cannot be computed, in which case it is left alone and you are told.
-- **Edit source** on a diagram opens its authoritative Mermaid source beside it.
+  `designs/index/feature-index.md` (its Diagrams column) and `designs/index/diagram-index.md`
+  (its Used by column) are brought up to date from the saved files, exactly as
+  `python -m tools.design index` would write them — unless an index file has unsaved changes
+  or cannot be computed, in which case it is left alone and you are told.
+- **Edit source** on a diagram opens its authoritative Mermaid source beside it, whether the
+  block names the diagram by its stable ID or by an alias (a former catalog ID).
+- **Generated blocks** carry a fingerprint in their start marker (diagram registry, T-97 PR A).
+  A block changed outside its source (for example reformatted by another editor) is shown in a
+  banner and never overwritten automatically; resolve it with `python -m tools.design reconcile`
+  (see [designs/README.md](../../designs/README.md#diagrams)).
 - **Restricted Mode:** in an untrusted workspace Feature Designer shows a notice only; it
   runs no scripts and no Python. (VS Code does not enforce the manifest's trust setting for
   development-mode extensions, so this is checked at runtime.)

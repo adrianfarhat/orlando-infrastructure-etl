@@ -65,11 +65,14 @@
     else if (m.type === "library") { state.library = m.data; if (libraryView) libraryView.fill(); }
     else if (m.type === "generated") {
       const el = $("#stale");
-      const n = m.stale || 0, p = (m.blocking || []).length;
-      el.hidden = !(n || p);
+      const n = m.stale || 0, p = (m.blocking || []).length, c = (m.conflicts || []).length;
+      el.hidden = !(n || p || c);
       el.textContent = p ? `A generated diagram block has a problem (${m.blocking[0]}). Run python -m tools.design check.`
-        : `${n} generated diagram block${n === 1 ? " no longer matches its source" : "s no longer match their sources"} ` +
-          "(for example after another editor reformatted them). Your own text is unaffected; run python -m tools.design index to regenerate them.";
+        : c ? `${c} generated diagram block${c === 1 ? " was changed outside its source" : "s were changed outside their sources"} ` +
+              `(for example reformatted by another editor), so ${c === 1 ? "it is" : "they are"} never overwritten automatically. ` +
+              "Your own text is unaffected; resolve them with python -m tools.design reconcile (see python -m tools.design check)."
+        : `${n} generated diagram block${n === 1 ? " no longer matches its source" : "s no longer match their sources"}. ` +
+          "Your own text is unaffected; run python -m tools.design index to regenerate them.";
     }
     else if (m.type === "error") status(m.message, true);
   });

@@ -2,6 +2,7 @@
 that proposes edits for unsaved text and never writes a file."""
 
 import hashlib
+import re
 import io
 import json
 import os
@@ -56,7 +57,9 @@ class Library(unittest.TestCase):
             self.assertEqual((code, r["ok"], r["version"]), (0, True, 1))
             cat = architecture.catalog(architecture.documents(ws.root))
             flat = [d for g in r["architecture"] for d in g["diagrams"]]
-            self.assertEqual([d["id"] for d in flat], [c.diagram_id for c in cat])          # no second catalog
+            self.assertEqual([d["aliases"] for d in flat], [[c.diagram_id] for c in cat])   # one entry per diagram
+            self.assertEqual([d["id"] for d in flat], [f"AD-{n:04d}" for n in range(1, 15)])  # stable IDs (M0)
+            self.assertEqual({d["format"] for d in flat}, {"mermaid-embedded"})
             self.assertEqual(len(flat), 14)
             self.assertEqual([g["document"] for g in r["architecture"]], sorted({c.document for c in cat}))
             for d in flat:                                                              # Edit source lands on the fence
@@ -64,17 +67,19 @@ class Library(unittest.TestCase):
                     line = (ws.root / d["path"]).read_text(encoding="utf-8").split("\n")[d["line"] - 1]
                     self.assertTrue(line.lstrip().startswith("```mermaid"), line)
                     self.assertEqual((d["kind"], d["owner"]), ("current", None))
-            cred = next(d for d in flat if d["id"] == "system-architecture/credential-boundary")
+            cred = next(d for d in flat if "system-architecture/credential-boundary" in d["aliases"])
+            self.assertEqual(cred["id"], "AD-0011")
             self.assertEqual(cred["title"], "Credential boundary")
             feats = {g["feature_id"]: [(d["id"], d["title"]) for d in g["diagrams"]] for g in r["features"]}
             self.assertEqual(feats, {"FD-0001": [("FD-0001-D1", "Only of A")],
                                      "FD-0002": [("FD-0002-D1", "Second of B"), ("FD-0002-D2", "First of B")]})
-            self.assertEqual([(d["id"], "not an existing feature" in d["problem"]) for d in r["unowned"]],
-                             [("FD-0007-D1", True)])
+            self.assertEqual([(d["id"], d["status"], "(E5)" in d["problem"]) for d in r["unowned"]],
+                             [("FD-0007-D1", "unregistered", True)])
             for g in r["features"]:
                 for d in g["diagrams"]:
                     line = (ws.root / d["path"]).read_text(encoding="utf-8").split("\n")[d["line"] - 1]
                     self.assertEqual(line, "```mermaid")
+                    self.assertEqual((d["format"], d["category"], d["status"]), ("mermaid-md", "other", "active"))
             self.assertEqual(designer_api.dumps(r), designer_api.dumps(request(ws, op="library")[0]))  # deterministic
 
 
@@ -98,7 +103,7 @@ class Insert(unittest.TestCase):
         self.assertEqual(r["edits"][0]["start"], at)
         inserted = r["edits"][0]["lines"]
         self.assertEqual(inserted[0], "")                                    # separates it from the list above
-        self.assertEqual(inserted[1], f"<!-- diagram:start {ETL} -->")
+        self.assertRegex(inserted[1], rf"^<!-- diagram:start {re.escape(ETL)} sha256:[0-9a-f]{{16}} -->$")
         self.assertEqual(inserted[-1], "<!-- diagram:end -->")              # the following line is already blank
         new = apply(self.text, r)
         self.assertEqual(new.split("\n")[:at], self.lines[:at])                                 # unrelated text kept
@@ -147,7 +152,7 @@ class Insert(unittest.TestCase):
     def test_inside_an_existing_diagram_block_is_refused(self):
         at = after(self.lines, "- **Desired outcome:**")
         first = apply(self.text, request(self.ws, op="insert", path=self.f.path, text=self.text, at=at, diagram_id=ETL)[0])
-        inside = first.split("\n").index(f"<!-- diagram:start {ETL} -->") + 2
+        inside = next(i for i, l in enumerate(first.split("\n")) if l.startswith(f"<!-- diagram:start {ETL} ")) + 2
         r, code = request(self.ws, op="insert", path=self.f.path, text=first, at=inside, diagram_id=ETL)
         self.assertEqual(code, 1)
         self.assertIn("not inside a generated diagram block", r["error"]["message"])
@@ -164,7 +169,8 @@ class Insert(unittest.TestCase):
         at = after(self.lines, "- **Desired outcome:**")
         r, code = request(self.ws, op="insert", path=self.f.path, text=self.text, at=at, diagram_id=d.diagram_id)
         self.assertEqual(code, 0, r)
-        self.assertIn("**🔷 Proposed: [Owned by B](diagrams/owned-by-b.md)** · `FD-0002-D1`", "\n".join(r["edits"][0]["lines"]))
+        self.assertIn("**🔷 Proposed: [Owned by B](diagrams/b_other_owned-by-b.md)** · `FD-0002-D1`",
+                      "\n".join(r["edits"][0]["lines"]))
         lib = request(self.ws, op="library")[0]
         owners = {d["id"]: g["feature_id"] for g in lib["features"] for d in g["diagrams"]}
         self.assertEqual(owners, {"FD-0002-D1": "FD-0002"})                                   # listed only under its owner
@@ -177,11 +183,17 @@ class Refresh(unittest.TestCase):
             text = (ws.root / f.path).read_text(encoding="utf-8")
             at = after(text.split("\n"), "- **Desired outcome:**")
             fresh = apply(text, request(ws, op="insert", path=f.path, text=text, at=at, diagram_id=ETL)[0])
-            stale = fresh.replace("flowchart", "flowchart  ", 1)                               # a hand edit in the copy
-            r, code = request(ws, op="refresh", path=f.path, text=stale)
-            self.assertEqual((code, r["blocking"]), (0, []))
-            self.assertEqual(len(r["edits"]), 1)
-            self.assertEqual(apply(stale, r), fresh)
+            hand = fresh.replace("flowchart", "flowchart  ", 1)                                 # a hand edit in the copy
+            r, code = request(ws, op="refresh", path=f.path, text=hand)
+            self.assertEqual((code, r["blocking"], r["edits"]), (0, [], []))                     # U13: never overwritten
+            self.assertTrue(r["conflicts"] and "(E15)" in r["conflicts"][0], r)
+            old = re.sub(r" sha256:[0-9a-f]{16} -->", " -->", fresh)
+            r, code = request(ws, op="refresh", path=f.path, text=old.replace("flowchart", "flowchart  ", 1))
+            self.assertEqual((code, r["edits"]), (0, []))                                     # old marker, differs: kept
+            self.assertIn("generated before fingerprints", r["conflicts"][0])
+            r, code = request(ws, op="refresh", path=f.path, text=old)                       # old marker, exact
+            self.assertEqual((code, r["blocking"], len(r["edits"])), (0, [], 1))
+            self.assertEqual(apply(old, r), fresh)                                             # marker gains its fingerprint
             self.assertEqual(request(ws, op="refresh", path=f.path, text=fresh)[0]["edits"], [])   # nothing to do
 
     def test_a_file_index_would_refuse_gets_no_edits(self):

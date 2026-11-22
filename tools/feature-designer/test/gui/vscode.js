@@ -33,6 +33,7 @@ function fixture() {
   const copy = (rel) => fs.cpSync(path.join(REPO, rel), path.join(WS, rel), { recursive: true,
     filter: (src) => !/__pycache__|\.pyc$/.test(src) && !src.includes(`${path.sep}features${path.sep}`) });
   for (const rel of ["tools/design", "docs/architecture", "designs/templates", "designs/index/architecture-index.md",
+                     "designs/index/diagram-index.md", "designs/diagrams/registry.yml",
                      "designs/README.md", "designs/DECISIONS.md", "designs/IMPLEMENTATION_BRIEF.md"]) copy(rel);
   git("init", "-q"); git("add", "-A"); git("commit", "-qm", "fixture baseline");
   design("new", "feature", "--name", "Road pipe intersections");

@@ -11,7 +11,8 @@
   const GENERATED = [
     { start: /^<!-- summary:start/, end: /^<!-- summary:end -->\s*$/, kind: "summary" },
     { start: /^<!-- related-features:start/, end: /^<!-- related-features:end -->\s*$/, kind: "related" },
-    { start: /^<!--\s*diagram:start\s+(\S+)\s*-->\s*$/, end: /^<!--\s*diagram:end\s*-->\s*$/, kind: "diagram" },
+    // The start marker may carry a fingerprint of its generated content (diagram library U13).
+    { start: /^<!--\s*diagram:start\s+(?!sha256:)(\S+)(?:\s+sha256:[0-9a-f]{16})?\s*-->\s*$/, end: /^<!--\s*diagram:end\s*-->\s*$/, kind: "diagram" },
   ];
 
   function splitLines(text) {

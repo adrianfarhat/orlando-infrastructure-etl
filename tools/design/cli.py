@@ -1,7 +1,12 @@
 """Command line for the Feature Design Workspace.
 
   python -m tools.design new feature [--name NAME] [--parent PARENT] [--convert-parent] [--root DIR]
-  python -m tools.design new diagram --feature FD-0001 [--title TITLE] [--root DIR]
+  python -m tools.design new diagram --feature FD-0001 [--title TITLE] [--category CATEGORY] [--root DIR]
+  python -m tools.design registry adopt PATH --category CATEGORY | adopt-architecture
+  python -m tools.design registry relink ID [--path PATH] [--title TITLE] [--heading ANCHOR [--ordinal N]]
+  python -m tools.design registry retire ID [--confirm]
+  python -m tools.design resolve ID
+  python -m tools.design reconcile --file PATH --line N (--discard | --apply-to-source) [--confirm TOKEN]
   python -m tools.design index [--check] [--root DIR]
   python -m tools.design check [--root DIR]
   python -m tools.design designer [--root DIR]  < request.json   (the Feature Designer interface, T-97)
@@ -23,7 +28,7 @@ import traceback
 from pathlib import Path
 from typing import Callable, TextIO
 
-from . import architecture, dependencies, designer_api, diagrams, ownership, workspace
+from . import architecture, dependencies, designer_api, diagrams, ownership, registry, workspace
 from .workspace import DesignError
 
 EXIT_OK, EXIT_PROBLEMS, EXIT_FAILURE = 0, 1, 2
@@ -52,19 +57,52 @@ def build_parser() -> argparse.ArgumentParser:
                                                "(the next diagram ID that was never used)")
     diagram.add_argument("--feature", required=True, help="the owning feature's ID, e.g. FD-0001")
     diagram.add_argument("--title", help="the diagram's readable name (asked for when missing)")
+    diagram.add_argument("--category", default="other", choices=registry.CATEGORIES,
+                         help="the diagram's category (part of its file name): " + ", ".join(registry.CATEGORIES))
+    reg = sub.add_parser("registry", help="change the diagram registry (designs/diagrams/registry.yml) under its lock")
+    ops = reg.add_subparsers(dest="action", required=True, metavar="ACTION")
+    adopt = ops.add_parser("adopt", help="register an existing, unregistered Mermaid diagram source")
+    adopt.add_argument("path", help="the source file, e.g. designs/features/diagrams/x_process_y.md")
+    adopt.add_argument("--category", required=True, choices=registry.CATEGORIES)
+    adopt_arch = ops.add_parser("adopt-architecture", help="stage M0: register the architecture diagrams in place "
+                                                           "(AD IDs, catalog IDs as aliases; no document is changed)")
+    relink = ops.add_parser("relink", help="change a diagram's path or title, or re-point an embedded diagram")
+    relink.add_argument("diagram_id", help="the diagram ID or alias")
+    relink.add_argument("--path", help="the source's new path (a moved or renamed file)")
+    relink.add_argument("--title", help="the diagram's new title (also written to a Mermaid source's front matter)")
+    relink.add_argument("--heading", help="mermaid-embedded: the heading anchor the diagram is now under")
+    relink.add_argument("--ordinal", type=int, help="mermaid-embedded: which diagram under that heading (default 1)")
+    unlock = ops.add_parser("unlock", help="remove a stale registry lock, only after checking that the process that "
+                                           "took it has ended (shows the check; removes it only with --confirm)")
+    unlock.add_argument("--confirm", action="store_true", help="remove the lock if the check allows it")
+    retire = ops.add_parser("retire", help="retire a diagram (lists its references; the ID is never reused)")
+    retire.add_argument("diagram_id", help="the diagram ID or alias")
+    retire.add_argument("--confirm", action="store_true", help="retire it (without this, only the references are listed)")
+    resolve = sub.add_parser("resolve", help="show a diagram's authoritative source (JSON); writes nothing")
+    resolve.add_argument("diagram_id", help="the diagram ID or alias")
+    reconcile = sub.add_parser("reconcile", help="resolve a diagram block that was edited by hand (E15): shows the "
+                                                 "change first; repeat with --confirm TOKEN to apply it")
+    reconcile.add_argument("--file", required=True, help="the feature document, e.g. designs/features/x.md")
+    reconcile.add_argument("--line", required=True, type=int, help="the 1-based line of the block's start marker")
+    how = reconcile.add_mutually_exclusive_group(required=True)
+    how.add_argument("--discard", action="store_true", help="discard the manual change: regenerate the block")
+    how.add_argument("--apply-to-source", action="store_true",
+                     help="copy the block's Mermaid into its feature-owned source, then regenerate the block")
+    reconcile.add_argument("--confirm", metavar="TOKEN", help="apply the change shown in the preview with this token")
     designer = sub.add_parser("designer", help="answer one Feature Designer request (JSON on stdin, JSON on "
                                                "stdout); writes nothing")
     designer.add_argument("--serve", action="store_true",
                           help="keep running: read one JSON request per line and write one JSON response per line "
                                "until the input ends (used by the Feature Designer extension)")
     index = sub.add_parser("index", help="refresh each feature's generated summary table and Related features rows, "
-                                         "then regenerate designs/index/feature-index.md and "
-                                         "designs/index/architecture-index.md")
+                                         "and the diagram blocks (never a hand-edited one), then regenerate "
+                                         "designs/index/feature-index.md, architecture-index.md and diagram-index.md")
     index.add_argument("--check", action="store_true",
                        help="only report whether the indexes, summary tables and Related features rows are up to "
                             "date (writes nothing)")
     sub.add_parser("check", help="check every feature specification and both indexes")
-    for p in (feature, diagram, designer, index, sub.choices["check"]):
+    for p in (feature, diagram, designer, index, sub.choices["check"], adopt, adopt_arch, relink, retire, unlock,
+              resolve, reconcile):
         p.add_argument("--root", type=Path, help="repository root (default: found from the current folder)")
     return parser
 
@@ -90,18 +128,30 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             if args.kind == "diagram":
                 return _new_diagram(args, root, out, ask or input, interactive)
             return _new_feature(args, root, out, ask or input, interactive)
+        if args.command == "registry":
+            return _registry(args, root, out)
+        if args.command == "resolve":
+            response, code = designer_api.handle(root, {"version": designer_api.VERSION, "op": "resolve",
+                                                        "diagram_id": args.diagram_id})
+            print(json.dumps(response, indent=2, sort_keys=True, ensure_ascii=False), file=out)
+            return code
+        if args.command == "reconcile":
+            return _reconcile(args, root, out)
         if args.command == "index":
             if args.check:
                 fresh = workspace.index_is_fresh(root)
                 arch_fresh = architecture.architecture_index_is_fresh(root)
+                diagram_fresh = registry.diagram_index_is_fresh(root)
                 stale = workspace.stale_summaries(root) + dependencies.stale_related(root) + diagrams.stale(root)
                 print(f"{workspace.INDEX} is {'up to date' if fresh else 'out of date: run `python -m tools.design index`'}",
                       file=out)
                 print(f"{architecture.ARCHITECTURE_INDEX} is "
                       f"{'up to date' if arch_fresh else 'out of date: run `python -m tools.design index`'}", file=out)
+                print(f"{registry.DIAGRAM_INDEX} is "
+                      f"{'up to date' if diagram_fresh else 'out of date: run `python -m tools.design index`'}", file=out)
                 for p in stale:
                     print(f"{p.path}: {p.message}", file=out)
-                return EXIT_OK if fresh and arch_fresh and not stale else EXIT_PROBLEMS
+                return EXIT_OK if fresh and arch_fresh and diagram_fresh and not stale else EXIT_PROBLEMS
             for p in diagrams.problems(root):                    # warn before those blocks are regenerated
                 if "inside a generated summary or Related features block" in p.message:
                     print(f"design: warning: {p.path}: {p.message}", file=err)
@@ -111,6 +161,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 print(f"refreshed the Related features rows in {path}", file=out)
             for path, count in diagrams.refresh(root):
                 print(f"refreshed {count} diagram block{'s' if count != 1 else ''} in {path}", file=out)
+            for p in diagrams.stale(root):                       # conflicts are never overwritten (U13)
+                if "(E15)" in p.message:
+                    print(f"design: warning: {p.path}: {p.message}", file=err)
             for p in workspace.not_refreshable(root):           # one line per file; nothing is repaired
                 print(f"design: warning: {p.path}: {p.message}; run `python -m tools.design check`", file=err)
             fresh = workspace.index_is_fresh(root)
@@ -122,6 +175,10 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 print(f"no {workspace.ARCHITECTURE}/ folder, so there is no architecture index", file=out)
             else:
                 print(f"{path} is already up to date" if arch_fresh else f"wrote {path}", file=out)
+            diagram_fresh = registry.diagram_index_is_fresh(root)
+            path = registry.write_diagram_index(root)
+            if path is not None:
+                print(f"{path} is already up to date" if diagram_fresh else f"wrote {path}", file=out)
             return EXIT_OK
         problems = workspace.check(root)
         features, _ = workspace.discover(root)
@@ -191,8 +248,9 @@ def _new_diagram(args, root: Path, out: TextIO, ask: Callable[[str], str], inter
         if not interactive:
             raise DesignError("--title is required when not running interactively")
         title = ask("Diagram title: ")
-    created = ownership.new_diagram(root, args.feature, title)
-    print(f"created {created.path} ({created.diagram_id}, owned by {created.owner})", file=out)
+    created = ownership.new_diagram(root, args.feature, title, args.category)
+    print(f"created {created.path} ({created.diagram_id}, owned by {created.owner}, category {created.category}) "
+          f"and registered it in {registry.REGISTRY}", file=out)
     print("Attach it to a feature with a diagram block (see designs/README.md). This is an uncommitted "
           "working-tree change: nothing was staged, committed or pushed.", file=out)
     return EXIT_OK
@@ -216,3 +274,79 @@ def _new_feature(args, root: Path, out: TextIO, ask: Callable[[str], str], inter
     print(f"updated {created.index}", file=out)
     print("These are uncommitted working-tree changes: nothing was staged, committed or pushed.", file=out)
     return EXIT_OK
+
+
+def _registry(args, root: Path, out: TextIO) -> int:
+    note = "Uncommitted working-tree changes: nothing was staged, committed or pushed."
+    if args.action == "adopt":
+        e = registry.adopt(root, args.path, args.category)
+        print(f"registered {e.diagram_id} ({e.path}, owned by {e.owner_ref}). {note}", file=out)
+        return EXIT_OK
+    if args.action == "adopt-architecture":
+        created = registry.adopt_architecture(root)
+        for e in created:
+            print(f"registered {e.diagram_id} = {e.aliases[0]} ({e.category}, in place in {e.path})", file=out)
+        print(f"{len(created)} architecture diagram(s) registered; no document was changed. "
+              "Run `python -m tools.design index`. " + note, file=out)
+        return EXIT_OK
+    if args.action == "unlock":
+        state = registry.unlock(root, args.confirm)
+        if not state.exists:
+            print("there is no registry lock; nothing to do", file=out)
+            return EXIT_OK
+        print(f"{registry.LOCK}: process {state.pid}, computer {state.host or '(unknown)'}, "
+              f"{int(state.age_seconds // 60)} minute(s) old: {state.reason}", file=out)
+        if not state.removable:
+            print("the lock was kept", file=out)
+            return EXIT_PROBLEMS
+        if not args.confirm:
+            print("nothing was changed: repeat with --confirm to remove it", file=out)
+            return EXIT_PROBLEMS
+        print("removed the stale registry lock", file=out)
+        return EXIT_OK
+    if args.action == "relink":
+        e = registry.relink(root, args.diagram_id, path=args.path, title=args.title, heading=args.heading,
+                            ordinal=args.ordinal)
+        print(f"relinked {e.diagram_id}: {e.path}" + (f" #{e.anchor} ({e.ordinal})" if e.format == "mermaid-embedded"
+                                                      else "") + f", title {e.title!r}. Run `python -m tools.design "
+                                                                 f"index` to refresh the blocks that show it. {note}",
+              file=out)
+        return EXIT_OK
+    e, refs, done = registry.retire(root, args.diagram_id, args.confirm)
+    print(f"{e.diagram_id} ({e.title}) is referenced {len(refs)} time(s):", file=out)
+    for r in refs:
+        print(f"  {r}", file=out)
+    if not done:
+        print("nothing was changed: repeat with --confirm to retire it (its ID is never issued again)", file=out)
+        return EXIT_PROBLEMS
+    print(f"retired {e.diagram_id} on {e.retired}; the references above are now reported (E11). {note}", file=out)
+    return EXIT_OK
+
+
+def _reconcile(args, root: Path, out: TextIO) -> int:
+    action = "discard" if args.discard else "apply-to-source"
+    try:
+        plan = diagrams.plan_reconcile(root, args.file, args.line, action)
+    except (ValueError, OSError, UnicodeDecodeError) as exc:
+        raise DesignError(str(exc)) from None
+    rel = plan.rel                                      # a feature document inside the repository
+    if args.confirm is None:
+        print(f"{action} for the {plan.block.diagram_id} block on line {args.line} of {rel} (state: {plan.state}).",
+              file=out)
+        if plan.warning:
+            print(f"Warning: {plan.warning}.", file=out)
+        print(plan.diff or "(no change)", file=out, end="" if plan.diff.endswith("\n") else "\n")
+        print(f"Nothing was changed. To apply exactly this change, repeat with --confirm {plan.token}", file=out)
+        return EXIT_OK
+    if args.confirm != plan.token:
+        print("the document or the diagram source changed since the preview: nothing was changed; "
+              "preview again (without --confirm)", file=out)
+        return EXIT_PROBLEMS
+    ownership.guard_write(root, root / rel)            # never docs/architecture/ (plan_reconcile also refuses it)
+    if plan.source_path:                               # the source first: a failure leaves the document as it was
+        ownership.write_atomically(root / plan.source_path, plan.source_text, root=root)
+    workspace.write_feature_text(root / rel, plan.document_text)
+    print(f"{action}: updated {rel}" + (f" and {plan.source_path}" if plan.source_path else "")
+          + ". Uncommitted working-tree changes: nothing was staged, committed or pushed.", file=out)
+    return EXIT_OK
+

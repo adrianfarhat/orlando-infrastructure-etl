@@ -180,7 +180,22 @@ class GitEnvironment(unittest.TestCase):
             new_feature(ws.root, "A"); commit(ws)
             subprocess.run(GIT + ["init", "-q", other], check=True, capture_output=True)
             with mock.patch.dict("os.environ", {"GIT_DIR": str(Path(other) / ".git"), "GIT_WORK_TREE": other}):
-                self.assertEqual(ids.committed_ids(ws.root), {"FD-0001"})
+                self.assertEqual(feature_ids(ws.root), {"FD-0001"})
+
+
+def feature_ids(root):
+    """The committed feature-side IDs (the copied registry also commits the AD IDs of the
+    architecture diagrams, which these tests do not concern)."""
+    return {i for i in ids.committed_ids(root) if not i.startswith("AD-")}
+
+
+class RegistryHistory(unittest.TestCase):
+    def test_registry_list_lines_and_ad_ids_are_read_from_history(self):
+        with Workspace() as ws:
+            ws.git("add", "-A"); ws.git("commit", "-qm", "baseline with the registry")
+            self.assertEqual({i for i in ids.committed_ids(ws.root) if i.startswith("AD-")},
+                             {f"AD-{n:04d}" for n in range(1, 15)})
+            self.assertEqual(ids.next_document_diagram_id([], ids.committed_ids(ws.root)), "AD-0015")
 
 
 class HistoryParsing(unittest.TestCase):
@@ -190,13 +205,13 @@ class HistoryParsing(unittest.TestCase):
             (d / "x.md").write_text('---\ndiagram_id: "FD-0002-D3"   # note\nfeature_id: \'FD-0002\'\n---\n', encoding="utf-8")
             (ws.root / "designs/features/y.md").write_text("---\nfeature_id: FD-0005\n---\n", encoding="utf-8")
             commit(ws)
-            self.assertEqual(ids.committed_ids(ws.root), {"FD-0002-D3", "FD-0002", "FD-0005"})
+            self.assertEqual(feature_ids(ws.root), {"FD-0002-D3", "FD-0002", "FD-0005"})
 
     def test_ids_in_prose_are_not_allocations(self):
         with Workspace() as ws:
             (ws.root / "designs/notes.md").write_text("See FD-0042 and feature_id FD-0043 in text.\n", encoding="utf-8")
             commit(ws)
-            self.assertEqual(ids.committed_ids(ws.root), set())
+            self.assertEqual(feature_ids(ws.root), set())
 
 
 if __name__ == "__main__":

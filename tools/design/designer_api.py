@@ -11,8 +11,14 @@ document changed in the meantime.
 
 Requests (all carry "version": 1 and "op"):
 - {"op": "library"}
-    the diagram library: architecture diagrams grouped by document (from the existing
-    catalog) and feature-owned diagrams grouped by their owner (`feature_id`).
+    the diagram library from the diagram registry: architecture (document-owned) diagrams
+    grouped by document, and feature-owned diagrams grouped by their owner. Each item has its
+    stable `id`, its `aliases` (former catalog IDs, which keep resolving), `format`,
+    `category` and `status`; architecture diagrams not registered yet keep their catalog ID.
+- {"op": "resolve", "diagram_id": <ID or alias>}
+    the one authoritative source of a diagram: its stable ID, aliases, kind, format, path,
+    1-based line of the Mermaid block, title, owner, category, status, the editor to open it
+    with ("text" or "architecture-docs") and a problem ('' when it can be used). Read only.
 - {"op": "insert", "path": <feature file>, "text": <its current, possibly unsaved text>,
    "at": <0-based line index to insert before>, "diagram_id": <ID>}
     the lines of a T-96 diagram block for that position, or a refusal when the position is
@@ -23,7 +29,8 @@ Requests (all carry "version": 1 and "op"):
     (none when the file has a problem that `index` would refuse to touch).
 - {"op": "feature-index", "texts": {<feature path>: <unsaved text>, ...}}
     the complete text of designs/index/feature-index.md as `index` would write it, using the
-    given unsaved texts instead of those files on disk.
+    given unsaved texts instead of those files on disk; and, in `diagram_index`, the same for
+    designs/index/diagram-index.md (from the files on disk; null when there is nothing to index).
 
 Edits are {"start": s, "end": e, "lines": [...]}: replace lines s..e-1 (0-based, counted by
 "\\n" exactly like the T-96 scanner; e == s inserts) with `lines` (no line endings; the
@@ -82,13 +89,22 @@ def _newline(text: str) -> str:
 # --------------------------------------------------------------------------- library
 
 def library(root: Path) -> dict:
+    from . import registry
     known = diagrams.sources(root)
+    reg = registry.load(root)
+    by_alias = {a: e for e in reg.entries for a in e.aliases}
     groups: dict[str, dict] = {}
     for d in catalog(documents(root)):
         g = groups.setdefault(d.document, {"document": d.document, "title": d.title or posixpath.basename(d.document),
                                            "diagrams": []})
-        s = known.get(d.diagram_id)
-        g["diagrams"].append({"id": d.diagram_id, "kind": "current", "owner": None, "path": d.document, "line": d.line,
+        e = by_alias.get(d.diagram_id)
+        ident = e.diagram_id if e is not None else d.diagram_id
+        s = known.get(ident)
+        g["diagrams"].append({"id": ident, "aliases": list(e.aliases) if e is not None else [], "kind": "current",
+                              "owner": None, "path": d.document, "line": d.line,
+                              "format": e.format if e is not None else "mermaid-embedded",
+                              "category": e.category if e is not None else None,
+                              "status": e.status if e is not None else "unregistered",
                               "title": d.heading.text if d.heading is not None and d.heading.text else g["title"],
                               "problem": s.problem if s else ""})
     features, _ = discover(root)
@@ -98,10 +114,22 @@ def library(root: Path) -> dict:
     for p in ownership.problems(root, features):
         issues.setdefault(p.path, p.message)
     unowned = []
+    entries = {e.diagram_id: e for e in reg.entries}
     for s in diagrams.proposed_sources(root):
-        entry = {"id": s.diagram_id, "kind": "proposed", "owner": s.owner or None, "path": s.path, "line": s.line,
-                 "title": s.title, "problem": s.problem or issues.get(s.path, "")}
+        e = entries.get(s.diagram_id)
+        entry = {"id": s.diagram_id, "aliases": list(e.aliases) if e else [], "kind": "proposed",
+                 "owner": s.owner or None, "path": s.path, "line": s.line, "title": s.title,
+                 "format": e.format if e else "mermaid-md", "category": e.category if e else None,
+                 "status": e.status if e else "active", "problem": s.problem or issues.get(s.path, "")}
         (owned[s.owner]["diagrams"] if s.owner in owned else unowned).append(entry)
+    registered = {e.path for e in reg.entries}
+    for f in registry.source_files(root):              # unregistered sources: shown with their problem (E5)
+        if f.path not in registered and f.path.startswith(FEATURES + "/"):
+            unowned.append({"id": f.diagram_id, "aliases": [], "kind": "proposed", "owner": f.feature_id or None,
+                            "path": f.path, "line": 0, "title": f.title, "format": "mermaid-md", "category": None,
+                            "status": "unregistered",
+                            "problem": f"not registered: run `python -m tools.design registry adopt {f.path} "
+                                       "--category <category>` (E5)"})
 
     def order(entry):
         m = DIAGRAM_ID.match(entry["id"])
@@ -186,7 +214,8 @@ def insert(root: Path, rel: str, text: str, at: int, diagram_id: str) -> dict:
     if source.problem:
         raise Refused(f"diagram {diagram_id} cannot be inserted: {source.problem}")
     lines = _lines(text)
-    block = [f"<!-- diagram:start {diagram_id} -->", *diagrams.render(source, rel), diagrams.END]
+    generated = diagrams.render(source, rel)
+    block = [diagrams.start_marker(diagram_id, generated), *generated, diagrams.END]
     before = [""] if at > 0 and lines[at - 1].strip() else []
     after = [""] if at < len(lines) and lines[at].strip() else []
     new = before + block + after
@@ -197,26 +226,53 @@ def insert(root: Path, rel: str, text: str, at: int, diagram_id: str) -> dict:
 
 
 def refresh(root: Path, rel: str, text: str) -> dict:
+    """Edits for the refreshable blocks only (each replaces the start marker, for its new
+    fingerprint, and the generated lines). Conflicts (E15) are listed, never edited."""
     known = diagrams.sources(root)
     blocking = diagrams.blocking(text, rel, known)
     edits = []
     if not blocking:
-        lines = _lines(text)
-        for b in diagrams.scan(text)[0]:
-            want = diagrams.render(known[b.diagram_id], rel)
-            if lines[b.start + 1:b.end] != want:
-                edits.append({"start": b.start + 1, "end": b.end, "lines": want})
-    return {"base": _base(text), "newline": _newline(text), "blocking": blocking, "edits": edits}
+        for start, end, new in diagrams.regenerated(text, rel, known):
+            edits.append({"start": start, "end": end, "lines": new})
+    return {"base": _base(text), "newline": _newline(text), "blocking": blocking,
+            "conflicts": diagrams.conflicts(text, rel, known) if not blocking else [], "edits": edits}
+
+
+def resolve(root: Path, ident: str) -> dict:
+    """The authoritative source of one diagram (diagram library 6.2); read only."""
+    from . import registry
+    known = diagrams.sources(root)
+    reg = registry.load(root)
+    e = reg.lookup().get(ident)
+    s = known.get(ident)
+    if e is None and s is None:
+        raise Refused(f"{ident} is not in the registry as an ID or an alias, nor in the architecture catalog (E1)")
+    if e is not None:
+        canonical = known.get(e.diagram_id, s)
+        return {"id": e.diagram_id, "aliases": list(e.aliases), "kind": canonical.kind if canonical else "missing",
+                "format": e.format, "path": e.path, "line": canonical.line if canonical else 0, "title": e.title,
+                "owner": {"kind": e.owner_kind, "ref": e.owner_ref}, "category": e.category, "status": e.status,
+                "editor": "architecture-docs" if e.owner_kind == "document" else "text",
+                "problem": canonical.problem if canonical else "cannot be found (E7)"}
+    return {"id": ident, "aliases": [], "kind": s.kind, "format": "mermaid-embedded", "path": s.path, "line": s.line,
+            "title": s.title, "owner": None, "category": None, "status": "unregistered",
+            "editor": "architecture-docs", "problem": s.problem}
+
+
+def _generated(root: Path, rel: str, content: str) -> dict:
+    path = root / rel
+    disk = path.read_bytes() if path.is_file() else None
+    current = disk.decode("utf-8", "replace") if disk is not None else None
+    return {"path": rel, "content": content, "base": _base(current) if current is not None else None,
+            "changed": current is None or current.replace("\r\n", "\n") != content}
 
 
 def feature_index(root: Path, texts: dict[str, str]) -> dict:
-    content = render_index(root, texts)
-    path = root / INDEX
-    disk = path.read_bytes() if path.is_file() else None
-    current = disk.decode("utf-8", "replace") if disk is not None else None
-    return {"path": INDEX, "content": content,
-            "base": _base(current) if current is not None else None,
-            "changed": current is None or current.replace("\r\n", "\n") != content}
+    from . import registry
+    out = _generated(root, INDEX, render_index(root, texts))
+    out["diagram_index"] = (None if registry._nothing_to_index(root)
+                            else _generated(root, registry.DIAGRAM_INDEX, registry.render_diagram_index(root)))
+    return out
 
 
 # --------------------------------------------------------------------------- requests
@@ -262,13 +318,18 @@ def handle(root: Path, request) -> tuple[dict, int]:
             result = insert(root, _feature_path(root, request.get("path")), _text(request.get("text")), at, did)
         elif op == "refresh":
             result = refresh(root, _feature_path(root, request.get("path")), _text(request.get("text")))
+        elif op == "resolve":
+            did = request.get("diagram_id")
+            if not isinstance(did, str) or not did:
+                raise BadRequest("`diagram_id` must be a diagram ID or alias")
+            result = resolve(root, did)
         elif op == "feature-index":
             texts = request.get("texts", {})
             if not isinstance(texts, dict):
                 raise BadRequest("`texts` must map feature paths to their unsaved text")
             result = feature_index(root, {_feature_path(root, k): _text(v, k) for k, v in texts.items()})
         else:
-            raise BadRequest(f"unknown op {op!r} (library, insert, refresh, feature-index)")
+            raise BadRequest(f"unknown op {op!r} (library, insert, refresh, resolve, feature-index)")
         return {"version": VERSION, "op": op, "ok": True, **result}, EXIT_OK
     except Refused as exc:
         return {"version": VERSION, "ok": False, "error": {"code": "refused", "message": str(exc)}}, EXIT_REFUSED

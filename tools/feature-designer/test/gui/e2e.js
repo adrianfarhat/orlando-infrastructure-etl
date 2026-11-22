@@ -8,7 +8,10 @@ const { RUN, WS, PY, fixture, launch, close, designerFrame, markSharpFrame, desi
 
 const FEATURE = "designs/features/road-pipe-intersections.md";
 const OWNED = "FD-0002-D1";
-const CRED = "system-architecture/credential-boundary";
+const CRED = "AD-0011";                                   // stable ID (diagram registry, M0) of the credential boundary
+const CRED_ALIAS = "system-architecture/credential-boundary";   // its former catalog ID, still valid as an alias
+// a start marker for an ID, with or without its fingerprint (diagram library U13)
+const markerAt = (lines, id) => lines.findIndex((l) => l === `<!-- diagram:start ${id} -->` || l.startsWith(`<!-- diagram:start ${id} sha256:`));
 const EV = path.join(RUN, "evidence");
 const results = [];
 let app, f, shot = 0;
@@ -194,7 +197,7 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     const b = await insertVia("2. Data contract", "credential");
     await waitVersion(b.v);
     const after = (await doc()).text, L = after.split(/\r?\n/);
-    const iOwned = L.indexOf(`<!-- diagram:start ${OWNED} -->`), iCred = L.indexOf(`<!-- diagram:start ${CRED} -->`);
+    const iOwned = markerAt(L, OWNED), iCred = markerAt(L, CRED);
     const untouched = before.split(/\r?\n/).every((l) => L.includes(l));                 // every original line still there
     insertedText = after;
     await waitFor(() => f.evaluate((id) => !!document.querySelector(`.gen[data-diagram="${id}"] .mermaid-out svg`), OWNED));
@@ -207,7 +210,7 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
 
   await step("5 stale insert refused", async () => {
     const v = await version(), t = await text();
-    await f.evaluate((ver) => window.FD_HOST.api.postMessage({ type: "insertDiagram", at: 30, id: "system-architecture/credential-boundary", version: ver - 1 }), v);
+    await f.evaluate(([ver, id]) => window.FD_HOST.api.postMessage({ type: "insertDiagram", at: 30, id, version: ver - 1 }), [v, CRED_ALIAS]);
     const msg = await waitFor(() => f.evaluate(() => { const s = document.querySelector("#status"); return s && s.style.display !== "none" ? s.textContent : ""; }));
     rec("5 an insert computed for an older version is refused; nothing changes", /changed/.test(msg || "") && (await text()) === t, msg);
   });
@@ -349,14 +352,24 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     const check1 = py(["-m", "tools.design", "check"]);
     const stale = await waitFor(() => f.evaluate(() => { const s = document.querySelector("#stale"); return s && !s.hidden ? s.textContent : ""; }), 8000);
     await snap("stale-banner");
-    py(["-m", "tools.design", "index"]);
+    py(["-m", "tools.design", "index"]);                  // summary and Related features rows are restored ...
+    const afterIndex = fs.readFileSync(path.join(WS, FEATURE), "utf8");
+    // ... but a reformatted diagram block is a conflict (U13, exact comparison): never overwritten by index
+    const conflicts = [...py(["-m", "tools.design", "check"]).matchAll(/line (\d+): the diagram block for \S+ was edited by hand/g)]
+      .map((m) => +m[1]).sort((a, b) => b - a);
+    const untouched = conflicts.every((n) => afterIndex.split(/\r?\n/)[n] === saved.split(/\r?\n/)[n]);
+    for (const n of conflicts) {                             // explicit reconciliation, bottom up: preview, then confirm
+      const preview = py(["-m", "tools.design", "reconcile", "--file", FEATURE, "--line", String(n), "--discard"]);
+      py(["-m", "tools.design", "reconcile", "--file", FEATURE, "--line", String(n), "--discard", "--confirm", preview.trim().split(/\s+/).pop()]);
+    }
     const restored = fs.readFileSync(path.join(WS, FEATURE), "utf8");
     const check2 = py(["-m", "tools.design", "check"]);
     const authored = (s) => s.replace(/<!-- (diagram|summary|related-features):start[\s\S]*?<!-- (diagram|summary|related-features):end -->/g, "").replace(/\r/g, "");
-    rec("11f Mark Sharp's reformatting of generated blocks is detected (check + Designer banner); index restores them; authored text identical",
-        (/0 problem\(s\)/.test(check1) || !!stale) && /0 problem\(s\)/.test(check2) && authored(saved) === authored(restored) &&
-        restored.includes("MarkSharpTyped") && restored.includes("RaceTyped"),
-        { checkAfterMarkSharp: check1.trim().split("\n").pop(), banner: (stale || "").slice(0, 80), checkAfterIndex: check2.trim().split("\n").pop() });
+    rec("11f Mark Sharp's reformatting of generated blocks is detected (check + Designer banner) as conflicts that index never overwrites; reconcile --discard restores them; authored text identical",
+        (/0 problem\(s\)/.test(check1) || !!stale) && conflicts.length > 0 && untouched && /0 problem\(s\)/.test(check2) &&
+        authored(saved) === authored(restored) && restored.includes("MarkSharpTyped") && restored.includes("RaceTyped"),
+        { checkAfterMarkSharp: check1.trim().split("\n").pop(), banner: (stale || "").slice(0, 80), conflicts: conflicts.length,
+          untouched, checkAfterReconcile: check2.trim().split("\n").pop() });
   });
 
   await close(app); app = null;

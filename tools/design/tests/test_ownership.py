@@ -2,7 +2,7 @@
 
 import unittest
 
-from tools.design import ownership, workspace
+from tools.design import ownership, registry, workspace
 from tools.design.workspace import DesignError, new_feature
 from tools.design.tests.test_design import Workspace, cmd
 
@@ -27,8 +27,11 @@ class NewDiagram(unittest.TestCase):
             new_feature(ws.root, "Road pipe intersections")
             code, out, _ = cmd(ws.root, "new", "diagram", "--feature", "fd-0001", "--title", "Road/Pipe Intersection Logic")
             self.assertEqual(code, 0, out)
-            rel = "designs/features/diagrams/road-pipe-intersection-logic.md"
-            self.assertIn(f"created {rel} (FD-0001-D1, owned by FD-0001)", out)
+            rel = "designs/features/diagrams/road-pipe-intersections_other_road-pipe-intersection-logic.md"
+            self.assertIn(f"created {rel} (FD-0001-D1, owned by FD-0001, category other)", out)
+            e = registry.load(ws.root).by_id()["FD-0001-D1"]                       # registered with the file
+            self.assertEqual((e.owner_kind, e.owner_ref, e.format, e.category, e.path),
+                             ("feature", "FD-0001", "mermaid-md", "other", rel))
             meta = ws.meta(rel)
             self.assertEqual((meta["diagram_id"], meta["feature_id"], meta["title"]),
                              ("FD-0001-D1", "FD-0001", "Road/Pipe Intersection Logic"))
@@ -42,8 +45,8 @@ class NewDiagram(unittest.TestCase):
         with Workspace() as ws:
             parent = new_feature(ws.root, "Parent")
             new_feature(ws.root, "Child", parent=parent.feature_id, convert_parent=True)
-            created = ownership.new_diagram(ws.root, "FD-0001", "Overview")
-            self.assertEqual(created.path, "designs/features/parent/diagrams/overview.md")
+            created = ownership.new_diagram(ws.root, "FD-0001", "Overview", "process")
+            self.assertEqual(created.path, "designs/features/parent/diagrams/parent_process_overview.md")
             self.assertIn("[FD-0001](../README.md)", ws.text(created.path))
             self.assertEqual(problems(ws), [])
 
@@ -57,7 +60,11 @@ class NewDiagram(unittest.TestCase):
                                           ("FD-0001", "Same", "already exists; nothing was overwritten")):
                 with self.subTest(owner=owner, title=title), self.assertRaisesRegex(DesignError, message):
                     ownership.new_diagram(ws.root, owner, title)
-            self.assertEqual(sorted(p.name for p in (ws.root / "designs/features/diagrams").iterdir()), ["same.md"])
+            with self.assertRaisesRegex(DesignError, "--category must be one of"):
+                ownership.new_diagram(ws.root, "FD-0001", "Other", "nonsense")
+            self.assertEqual(sorted(p.name for p in (ws.root / "designs/features/diagrams").iterdir()), ["a_other_same.md"])
+            self.assertEqual([e.diagram_id for e in registry.load(ws.root).entries if e.owner_kind == "feature"],
+                             ["FD-0001-D1"])                                        # refusals registered nothing
             code, _, err = cmd(ws.root, "new", "diagram", "--feature", "FD-0001", interactive=False)
             self.assertEqual(code, 2)
             self.assertIn("--title is required", err)
@@ -117,6 +124,10 @@ class OwnershipRules(unittest.TestCase):
 
     def test_a_valid_owned_diagram_has_no_problem(self):
         diagram_file(self.ws, "designs/features/diagrams/ok.md", diagram_id='"FD-0002-D4"', feature_id='"FD-0002"', title='"Ok"')
+        self.assertEqual(problems(self.ws), ["designs/features/diagrams/ok.md: FD-0002-D4 is not registered: run `python -m "
+                                             "tools.design registry adopt designs/features/diagrams/ok.md --category "
+                                             "<category>` (E5)"])
+        registry.adopt(self.ws.root, "designs/features/diagrams/ok.md", "other")
         self.assertEqual(problems(self.ws), [])
 
 
