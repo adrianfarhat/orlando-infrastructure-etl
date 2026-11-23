@@ -20,7 +20,8 @@ function isSourcePath(rel) {
 /** Counts distinct source paths changed within a sliding window (C5). */
 class StormGuard {
   constructor(count = STORM_COUNT, windowMs = STORM_WINDOW_MS) { this.count = count; this.windowMs = windowMs; this.seen = new Map(); }
-  record(rel, now) { this.seen.set(rel, now); }
+  /** Record one changed source; true when this change makes (or keeps) it a storm. */
+  record(rel, now) { this.seen.set(rel, now); return this.isStorm(now); }
   /** True when more than `count` distinct sources changed in the window ending at `now`. */
   isStorm(now) {
     for (const [rel, t] of this.seen) if (now - t > this.windowMs) this.seen.delete(rel);

@@ -404,6 +404,12 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(request(self.ws, op="reconcile", path=self.f.path, text=self.hand, line=0, action="discard")[1], 1)
         self.assertEqual(request(self.ws, op="reconcile", path=self.f.path, text=self.hand, line=True, action="discard")[1], 2)
         self.assertEqual(self.plan(self.hand, self.made.diagram_id, "both")[1], 2)
+        self.src.write_text(self.src.read_text(encoding="utf-8").replace('A["Existing step"]', 'A["Changed"]'),
+                            encoding="utf-8")                                          # QA M2: an out-of-date block
+        for action in ("apply-to-source", "discard"):                                 # is not a conflict: refused
+            r, code = self.plan(self.fresh, self.made.diagram_id, action)
+            self.assertEqual(code, 1, action)
+            self.assertIn("not in conflict", r["error"]["message"])
 
 
 class FeatureIndex(unittest.TestCase):

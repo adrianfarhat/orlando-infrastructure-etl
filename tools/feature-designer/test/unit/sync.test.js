@@ -22,6 +22,9 @@ test("event storms: more than 5 distinct sources within 2 seconds", () => {
   g.record("s5", 1700);
   assert.equal(g.isStorm(1700), true);
   assert.equal(g.isStorm(5000), false);                               // the window has passed
+  const slow = new StormGuard();                                      // QA M1: a steady stream seen as it happens
+  const seen = [0, 350, 700, 1050, 1400, 1750].map((t, i) => slow.record(`p${i}`, t));
+  assert.deepEqual(seen, [false, false, false, false, false, true]);
   assert.equal(g.size(5000), 0);
 });
 

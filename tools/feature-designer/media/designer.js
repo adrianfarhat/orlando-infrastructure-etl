@@ -72,6 +72,9 @@
       state.featureId = ((/^feature_id:\s*"?(FD-\d{4})"?(?=\s|#|$)/m.exec(m.text.split(/\r?\n---\r?\n/)[0] || "")) || [])[1] || "";
       if (state.pending && new RegExp(`<!--\\s*diagram:start\\s+${state.pending.id}\\s`).test(m.text)) { state.pending = null; notice(); }
       if (m.rel) { state.rel = m.rel; toolbar(); }
+      if (state.syncNote && state.syncNote.kind === "auto" && state.syncNote.version !== undefined && m.version !== state.syncNote.version) {
+        state.syncNote = null; strip();             // the document changed after the refresh: Undo would undo something else
+      }
       banner();
       if (!menuState && !dialogOpen) render(); else render.pending = true;
     } else if (m.type === "others") { state.others = m.others || []; banner(); }
@@ -94,17 +97,17 @@
       el.textContent = p ? `A generated diagram block has a problem (${m.blocking[0]}). Run python -m tools.design check.`
         : c ? `${c} generated diagram block${c === 1 ? " was changed outside its source" : "s were changed outside their sources"} ` +
               `(for example reformatted by another editor), so ${c === 1 ? "it is" : "they are"} never overwritten automatically. ` +
-              "Your own text is unaffected; resolve them with python -m tools.design reconcile (see python -m tools.design check)."
+              "Your own text is unaffected; resolve them with Review… on the block (or python -m tools.design reconcile)."
         : `${n} generated diagram block${n === 1 ? " no longer matches its source" : "s no longer match their sources"}. ` +
           "Your own text is unaffected; run python -m tools.design index to regenerate them.";
     }
     else if (m.type === "error") status(m.message, true);
     else if (m.type === "syncNote") {
       const kind = state.syncNote && state.syncNote.kind;
-      if (m.only && m.only !== kind) { if (m.only === "partial" && state.partial) { state.partial = null; strip(); } return; }
-      if (m.unless && m.unless === kind) return;
+      if (!m.note && m.kinds && !m.kinds.includes(kind)) return;   // clears only the kinds it names (QA M4)
       state.syncNote = m.note; strip();
     }
+    else if (m.type === "partialCleared") { if (state.partial && state.partial.recovery === m.recovery) { state.partial = null; strip(); } }
     else if (m.type === "partial") { state.partial = { recovery: m.recovery, id: m.id, source: m.source, reason: m.reason }; strip(); }
     else if (m.type === "reconciled") { state.syncNote = null; status(m.text); strip(); }
     else if (m.type === "review") openReview(m);

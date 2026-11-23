@@ -141,6 +141,7 @@ function textEditorOpen(uri) {
 
 // ------------------------------------------------------------------ source changes (B3, C1, C2, C5)
 const sourceTimers = new Map();                  // repository root -> pending sync
+const stormSeen = new Map();                     // repository root -> sources counted when a storm was seen (QA M1)
 
 /** A file changed on disk: if it is a diagram source, refresh the open documents (debounced). */
 function onSourceEvent(uri) {
@@ -148,7 +149,7 @@ function onSourceEvent(uri) {
   if (!folder) return;
   const root = folder.uri.fsPath, rel = relPath(root, uri);
   if (!sync.isSourcePath(rel)) return;           // a feature document's own save never triggers a refresh
-  storm.record(`${root}|${rel}`, Date.now());
+  if (storm.record(`${root}|${rel}`, Date.now())) stormSeen.set(root, Math.max(stormSeen.get(root) || 0, storm.size(Date.now())));
   clearTimeout(sourceTimers.get(root));
   sourceTimers.set(root, setTimeout(() => syncOpenDocuments(root).catch((err) => log(`[sync] ${err.stack || err}`)), 400));
 }
@@ -157,7 +158,9 @@ function onSourceEvent(uri) {
 async function syncOpenDocuments(root, { manual = false } = {}) {
   if (!vscode.workspace.isTrusted) return;
   const now = Date.now();
-  const isStorm = !manual && storm.isStorm(now), count = storm.size(now);
+  const latched = stormSeen.get(root) || 0;      // a storm seen while the debounce was waiting still counts
+  stormSeen.delete(root);
+  const isStorm = !manual && (latched > 0 || storm.isStorm(now)), count = Math.max(latched, storm.size(now));
   if (isStorm) log(`[sync] ${count} diagram sources changed within ${sync.STORM_WINDOW_MS / 1000} s: no automatic refresh`);
   for (const [key, set] of panels) {
     if (!set.size) continue;
@@ -176,7 +179,7 @@ async function refreshOpenDocument(doc, { storm: isStorm = false, sources = 0 } 
   const key = doc.uri.toString(), root = rootOf(doc.uri), rel = relPath(root, doc.uri);
   const version = doc.version;
   const r = await ask(root, "refresh", { path: rel, text: doc.getText() }, false);
-  if (!r.edits.length) { postAll(key, { type: "syncNote", note: null, unless: "partial" }); return "none"; }
+  if (!r.edits.length) { postAll(key, { type: "syncNote", note: null, kinds: ["manual"] }); return "none"; }
   const ids = sync.idsOfEdits(r.edits);
   const now = () => ({ busy: busy.has(key), storm: isStorm, dirty: doc.isDirty, otherEditors: otherCustomEditors(doc.uri),
                        textEditor: textEditorOpen(doc.uri), designerViews: (panels.get(key) || new Set()).size });
@@ -189,7 +192,7 @@ async function refreshOpenDocument(doc, { storm: isStorm = false, sources = 0 } 
       try {
         await applyResponse(doc, r);              // the base-text guard: only the exact text it was computed from
         log(`[sync] ${rel}: refreshed ${ids.join(", ")} from their sources (one edit, not saved)`);
-        postAll(key, { type: "syncNote", note: { kind: "auto", ids } });
+        postAll(key, { type: "syncNote", note: { kind: "auto", ids, version: doc.version } });
         return "auto";
       } catch (err) { log(`[sync] ${rel}: not refreshed automatically (${err.message})`); d = { action: "manual", reason: "changed" }; }
     } else if (d.action === "auto" || d.action === "skip") d = { action: d.action === "skip" ? "skip" : "manual", reason: "changed" };
@@ -211,11 +214,18 @@ function saveRecovery(meta, original) {
 }
 function updateRecovery(record) { fs.writeFileSync(path.join(recoveryDir, `${record.id}.json`), JSON.stringify(record, null, 2)); }
 function dropRecovery(id) { for (const ext of [".json", ".original"]) { try { fs.unlinkSync(path.join(recoveryDir, id + ext)); } catch { /* gone */ } } }
-function listRecovery() {
+const inside = (root, rel) => typeof rel === "string" && !!rel && !rel.startsWith("docs/architecture/") &&
+  path.resolve(root, ...rel.split("/")).startsWith(root + path.sep);
+/** Records of this window's repositories only (the storage is shared by all windows), with their
+ *  paths inside the repository; "started" records of another operation in progress are left alone. */
+function listRecovery({ all = false } = {}) {
   if (!recoveryDir || !fs.existsSync(recoveryDir)) return [];
+  const roots = new Set((vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath));
   return fs.readdirSync(recoveryDir).filter((n) => n.endsWith(".json"))
     .map((n) => { try { return JSON.parse(fs.readFileSync(path.join(recoveryDir, n), "utf8")); } catch { return null; } })
-    .filter((r) => r && typeof r.id === "string" && /^[0-9]+-[0-9a-f]{8}$/.test(r.id));
+    .filter((r) => r && typeof r.id === "string" && /^[0-9]+-[0-9a-f]{8}$/.test(r.id) && typeof r.root === "string" &&
+                   roots.has(r.root) && inside(r.root, r.source) && inside(r.root, r.document) && typeof r.diagram === "string")
+    .filter((r) => all || r.state === "partial" || Date.now() - Date.parse(r.time) > 120000);   // not one still running
 }
 const recoveryOriginal = (id) => path.join(recoveryDir, `${id}.original`);
 
@@ -232,7 +242,7 @@ async function writeSourceThroughEditor(srcDoc, srcPath, text) {
  *  source back (only if the source is still exactly what was written), "open" shows the preserved
  *  original, "dismiss" keeps the current source and forgets the record. Each step is guarded. */
 async function recoveryAction(id, kind) {
-  const record = listRecovery().find((r) => r.id === id);
+  const record = listRecovery({ all: true }).find((r) => r.id === id);
   if (!record) { vscode.window.showInformationMessage("That interrupted operation was already resolved."); return; }
   const srcPath = path.join(record.root, ...record.source.split("/"));
   if (kind === "open") {
@@ -243,6 +253,7 @@ async function recoveryAction(id, kind) {
     const keep = "Keep the current source";
     if ((await vscode.window.showWarningMessage(`Forget the preserved original of ${record.source}? The current source stays as it is.`, { modal: true }, keep)) !== keep) return;
     dropRecovery(id); log(`[recovery] ${id}: dismissed; ${record.source} kept as is`);
+    for (const [key] of panels) postAll(key, { type: "partialCleared", recovery: id });
     return;
   }
   if (kind === "restore") {
@@ -255,7 +266,7 @@ async function recoveryAction(id, kind) {
     dropRecovery(id);
     log(`[recovery] ${id}: restored the original ${record.source}`);
     vscode.window.showInformationMessage(`Restored the original ${record.source}. The feature document was not changed.`);
-    for (const [key] of panels) postAll(key, { type: "syncNote", note: null, only: "partial" });
+    for (const [key] of panels) postAll(key, { type: "partialCleared", recovery: id });
     return;
   }
   if (kind === "finish") {
@@ -271,7 +282,7 @@ async function recoveryAction(id, kind) {
     dropRecovery(id);
     log(`[recovery] ${id}: the ${record.diagram} block in ${record.document} now matches its source`);
     vscode.window.showInformationMessage(`Completed: the ${record.diagram} block in ${record.document} now matches the saved source (not saved).`);
-    postAll(docUri.toString(), { type: "syncNote", note: null, only: "partial" });
+    for (const [key] of panels) postAll(key, { type: "partialCleared", recovery: id });
   }
 }
 
@@ -366,6 +377,18 @@ class DesignerEditor {
 
   async handle(document, panel, msg) {
     if (!msg || typeof msg.type !== "string") return;
+    // The document's own guarded edits are computed, then applied: no automatic refresh may change
+    // the document in between (it would make them fail; seen when Make New's registry write
+    // triggered a refresh). Refreshes skipped meanwhile stay visible in the strip (Refresh now).
+    const guarded = ["makeNew", "insertDiagram", "removeBlock", "refreshNow"].includes(msg.type);
+    const key = document.uri.toString();
+    if (!guarded) return this.handleMessage(document, panel, msg);
+    if (busy.has(key)) throw refused("another change to this document is in progress; try again in a moment");
+    busy.add(key);
+    try { return await this.handleMessage(document, panel, msg); } finally { busy.delete(key); }
+  }
+
+  async handleMessage(document, panel, msg) {
     const root = rootOf(document.uri);
     const rel = relPath(root, document.uri);
     switch (msg.type) {
@@ -396,7 +419,6 @@ class DesignerEditor {
       case "refreshNow": {                            // guarded manual refresh (B3): one undoable edit, not saved
         if (!Number.isInteger(msg.version)) return;
         if (msg.version !== document.version) throw new StaleEditError("the document changed; nothing was refreshed (try again)");
-        if (busy.has(document.uri.toString())) throw refused("this document is being reconciled; try again in a moment");
         if (!(await confirmOtherEditors(document, "Refresh"))) return;
         const r = await ask(root, "refresh", { path: rel, text: document.getText() });
         if (document.version !== msg.version) throw new StaleEditError("the document changed; nothing was refreshed (try again)");
@@ -560,8 +582,15 @@ async function applySourceThenBlock(document, root, rel, plan, msg) {
   } catch (err) {
     let restored = false;
     try {
-      if (!fs.readFileSync(srcPath).equals(original) || srcDoc.isDirty) await writeSourceThroughEditor(srcDoc, srcPath, original.toString("utf8"));
-      restored = fs.readFileSync(srcPath).equals(original);
+      const disk = fs.existsSync(srcPath) ? fs.readFileSync(srcPath) : null;
+      const ours = disk && disk.equals(Buffer.from(src.text, "utf8"));       // only what this operation wrote is put back
+      if (disk && disk.equals(original)) {
+        if (srcDoc.isDirty) await writeSourceThroughEditor(srcDoc, srcPath, original.toString("utf8"));   // the buffer only
+        restored = fs.readFileSync(srcPath).equals(original) && !srcDoc.isDirty;
+      } else if (ours) {
+        await writeSourceThroughEditor(srcDoc, srcPath, original.toString("utf8"));
+        restored = fs.readFileSync(srcPath).equals(original);
+      } else log(`[reconcile] ${src.path} changed meanwhile; it is not overwritten`);
     } catch (e2) { log(`[reconcile] could not put ${src.path} back: ${e2.message}`); }
     if (restored) { dropRecovery(record.id); throw refused(`Nothing was applied: ${src.path} could not be written (${err.message}); it is unchanged.`); }
     record.state = "partial"; record.reason = `the source could not be written cleanly (${err.message})`; updateRecovery(record);
@@ -676,7 +705,10 @@ function activate(context) {
       if (answer) await recoveryAction(pick.id, choices[answer]).catch((e) => vscode.window.showErrorMessage(e.message));
     }),
     vscode.workspace.registerTextDocumentContentProvider("featuredesigner-saved",       // Show changes: the file as saved
-      { provideTextDocumentContent: (uri) => { try { return fs.readFileSync(vscode.Uri.file(uri.path).fsPath, "utf8"); } catch { return ""; } } }),
+      { provideTextDocumentContent: (uri) => {
+          const file = vscode.Uri.file(uri.path).fsPath;
+          const ok = (vscode.workspace.workspaceFolders || []).some((f) => file.startsWith(f.uri.fsPath + path.sep));
+          try { return ok ? fs.readFileSync(file, "utf8") : ""; } catch { return ""; } } }),
     vscode.commands.registerCommand("featureDesigner.selectPython", async () => {
       const picked = await pickInterpreter(vscode);
       if (!picked) return;
@@ -697,7 +729,8 @@ function activate(context) {
     }),
     { dispose: () => { for (const b of bridges.values()) b.dispose(); bridges.clear(); } });
   setTimeout(() => offerRecovery().catch((err) => log(`[recovery] ${err.message}`)), 1500);
-  // Hooks for the automated tests (process ID, simulated crash, fault injection); inert unless called.
+  // Hooks for the automated tests only: the process ID, a simulated crash, and fault injection
+  // (failNextInsertion, failNextReconcileDocument, delayNextAutoRefresh). Each is inert unless called.
   return {
     bridgePid: (root) => (bridges.get(root) ? bridges.get(root).pid : null),
     killBridgeProcess: (root) => { const b = bridges.get(root); if (b && b.proc) b.proc.kill(); return !!(b && b.proc); },

@@ -709,6 +709,18 @@ async function prB2aSteps() {
     rec("S1 a clean document open only in Feature Designer is refreshed automatically: one edit, not saved (disk unchanged), with an Undo / Show changes / Save notice; Undo restores it exactly",
         !!done && !disk.includes("Auto one") && /Updated 1 diagram from its source \(FD-0001-D1\) — not saved/.test(note || "") &&
         undone.text === t0 && !undone.isDirty && changed > 0 && changed <= 3, { changedLines: changed, note: (note || "").slice(0, 120), undoneClean: !undone.isDirty });
+    // Make New in a clean document with an out-of-date block: its own registry write must not trigger a
+    // refresh that races with the insertion (found in a GUI run)
+    const before = await caText();
+    const m = await makeNew("4. Dependencies", "During refresh");
+    await waitVersion(m.v);
+    const withNew = await caText();
+    const ins = markerAt(withNew.split(/\r?\n/), "FD-0002-D8");
+    const newNotice = await f.evaluate(() => { const n = document.querySelector("#notice"); return n && !n.hidden ? n.innerText : ""; });
+    rec("S1c Make New in a clean document with an out-of-date block is inserted normally; the out-of-date block is not refreshed meanwhile",
+        ins > 0 && !newNotice && !withNew.includes('B["Auto one"]') && before.split(/\r?\n/).every((l) => withNew.split(/\r?\n/).includes(l)),
+        { ins, notice: newNotice.slice(0, 80) });
+    await app.host("command", { id: "workbench.action.focusFirstEditorGroup" });
     const counts = await waitFor(() => stripRow("counts"), 8000);
     await f.locator("#strip .counts .refresh-now").click();
     await waitFor(async () => (await caText()).includes('B["Auto one"]'), 10000);

@@ -626,6 +626,9 @@ def plan_reconcile_text(root: Path, rel: str, text: str, line: int, action: str)
     state = classify(b, current, expected)
     source_path = source_text = ""
     source_bytes = b""
+    if action in ("discard", "apply-to-source") and state not in CONFLICTS:
+        raise ValueError(f"the {b.diagram_id} block is not in conflict with its source (state: {state}); there is "
+                         "nothing to reconcile: `python -m tools.design index` refreshes it")
     if action == "discard":
         new_lines = [start_marker(b.diagram_id, expected), *expected]
     elif action == "apply-to-source":
