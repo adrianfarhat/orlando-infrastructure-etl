@@ -897,15 +897,21 @@ async function prB2aSteps() {
     const row = await waitFor(() => stripRow("partial"), 15000);
     const pending = (await app.host("designer", { fn: "pendingRecovery" })).value;
     const written = fs.readFileSync(path.join(WS, ownedSrc), "utf8");
+    const atPartial = await caText();
+    await sleep(3000);                                    // the source change must not trigger a refresh of this document
+    const heldOff = (await caText()) === atPartial;
     await snap("b2a-partial");
     rec("C3a when the source is saved but the block update fails, this is reported as partial (never as success), with a durable recovery record",
         /Partly done: .* was updated and saved, but the FD-0002-D1 block here was NOT updated/.test(row || "") && written.includes("Dirty source") &&
-        (await caText()).includes("Dirty source") && pending.length === 1 && pending[0].state === "partial", { row: (row || "").slice(0, 160), pending });
+        (await caText()).includes("Dirty source") && pending.length === 1 && pending[0].state === "partial" && heldOff,
+        { row: (row || "").slice(0, 160), pending, heldOff });
     await f.locator("#strip .partial .restore").click();
     await waitFor(async () => fs.readFileSync(path.join(WS, ownedSrc)).equals(original), 10000);
     const gone = await waitFor(async () => ((await app.host("designer", { fn: "pendingRecovery" })).value.length === 0 ? 1 : 0), 8000);
-    rec("C3b Restore the original source puts back the exact original bytes and clears the record; the document is not changed",
-        fs.readFileSync(path.join(WS, ownedSrc)).equals(original) && !!gone && (await caText()).includes("Dirty source"));
+    await sleep(3000);                                    // time for any automatic refresh after the source change
+    const kept = (await caText()).includes("Dirty source"), st = await blockState(OWNED);
+    rec("C3b Restore the original source puts back the exact original bytes and clears the record; the copy the user wanted to apply stays in the document (as a conflict), never refreshed away",
+        fs.readFileSync(path.join(WS, ownedSrc)).equals(original) && !!gone && kept && st === "conflict", { kept, st });
     await app.host("designer", { fn: "failNextReconcileDocument" });
     await waitFor(async () => ((await blockState(OWNED)) === "conflict" ? 1 : 0), 10000);
     await review(OWNED);

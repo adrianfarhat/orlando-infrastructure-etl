@@ -181,7 +181,9 @@ async function refreshOpenDocument(doc, { storm: isStorm = false, sources = 0 } 
   const r = await ask(root, "refresh", { path: rel, text: doc.getText() }, false);
   if (!r.edits.length) { postAll(key, { type: "syncNote", note: null, kinds: ["manual"] }); return "none"; }
   const ids = sync.idsOfEdits(r.edits);
-  const now = () => ({ busy: busy.has(key), storm: isStorm, dirty: doc.isDirty, otherEditors: otherCustomEditors(doc.uri),
+  // An unresolved partial Apply to source on this document is left for the user to resolve: an automatic
+  // refresh would complete or, after a restore, overwrite the copy they wanted to apply (found in a GUI run).
+  const now = () => ({ busy: busy.has(key) || partialFor(root, rel), storm: isStorm, dirty: doc.isDirty, otherEditors: otherCustomEditors(doc.uri),
                        textEditor: textEditorOpen(doc.uri), designerViews: (panels.get(key) || new Set()).size });
   let d = sync.decide(now());
   if (d.action === "skip") return "skip";
@@ -228,6 +230,7 @@ function listRecovery({ all = false } = {}) {
     .filter((r) => all || r.state === "partial" || Date.now() - Date.parse(r.time) > 120000);   // not one still running
 }
 const recoveryOriginal = (id) => path.join(recoveryDir, `${id}.original`);
+const partialFor = (root, rel) => listRecovery({ all: true }).some((r) => r.root === root && r.document === rel);
 
 /** Write `bytesOrText` into a source through the editor and save it; true only when the file on disk is exactly that. */
 async function writeSourceThroughEditor(srcDoc, srcPath, text) {
@@ -418,6 +421,7 @@ class DesignerEditor {
         return;
       case "refreshNow": {                            // guarded manual refresh (B3): one undoable edit, not saved
         if (!Number.isInteger(msg.version)) return;
+        if (partialFor(root, rel)) throw refused("An Apply to source on this document did not complete: resolve it first (Update the block now, or Restore the original source).");
         if (msg.version !== document.version) throw new StaleEditError("the document changed; nothing was refreshed (try again)");
         if (!(await confirmOtherEditors(document, "Refresh"))) return;
         const r = await ask(root, "refresh", { path: rel, text: document.getText() });
