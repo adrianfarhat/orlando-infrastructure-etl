@@ -704,6 +704,16 @@ async function prB2aSteps() {
     const disk = fs.readFileSync(path.join(WS, CA), "utf8");
     const changed = done ? done.text.split(/\r?\n/).filter((l, i) => l !== t0.split(/\r?\n/)[i]).length : -1;
     await snap("b2a-auto-refresh");
+    // Show changes compares read-only snapshots: closing it must never ask to save (and so never revert) the document
+    await f.locator("#strip .show-changes").click();
+    const diffTab = await waitFor(async () => (await app.host("tabs")).find((x) => /saved ↔ now/.test(x.label)), 10000);
+    await app.host("command", { id: "workbench.action.closeActiveEditor" }, 8000);
+    await sleep(1200);
+    const prompt = await app.page.locator(".monaco-dialog-box").count();
+    const still = await doc(CA);
+    rec("S1d Show changes opens a read-only comparison; closing it asks nothing and the document keeps the unsaved refresh",
+        !!diffTab && prompt === 0 && still.isDirty && still.text.includes('B["Auto one"]'), { tab: diffTab && diffTab.label, prompt });
+    await app.host("command", { id: "workbench.action.focusFirstEditorGroup" }); await sleep(300);
     await f.locator("#strip .undo-refresh").click(); await sleep(1000);
     const undone = await doc(CA);
     rec("S1 a clean document open only in Feature Designer is refreshed automatically: one edit, not saved (disk unchanged), with an Undo / Show changes / Save notice; Undo restores it exactly",
@@ -925,8 +935,36 @@ async function prB2aSteps() {
     await app.host("save", { path: CA }); await sleep(800);
   });
 
+  await step("C3d a save setting that changes the source", async () => {
+    await app.host("setGlobal", { section: "files", key: "trimTrailingWhitespace", value: true });   // the isolated test profile only
+    await app.host("replace", { path: CA, find: 'B["Dirty source"]', replace: 'B["Trailing"]  ', after: `diagram:start ${OWNED} ` });
+    await waitFor(async () => ((await blockState(OWNED)) === "conflict" ? 1 : 0), 10000);
+    await review(OWNED);
+    await f.locator(".dlg footer .apply").click();
+    if (await f.locator(".dlg .replace-ok").count()) await f.locator(".dlg .replace-ok").check();
+    await f.locator(".dlg footer .confirm").click();
+    const row = await waitFor(() => stripRow("partial"), 10000);
+    const pending = (await app.host("designer", { fn: "pendingRecovery" })).value;
+    const src = fs.readFileSync(path.join(WS, ownedSrc), "utf8");
+    await snap("b2a-trim-partial");
+    rec("C3d when a save setting changes the source as it is saved, Apply to source stops: the strip shows Partly done at once, a durable record is kept, and the manual edit stays in the document",
+        /Partly done/.test(row || "") && /Restore the original source/.test(row || "") && pending.length === 1 && pending[0].state === "partial" &&
+        src.includes('B["Trailing"]') && (await caText()).includes('B["Trailing"]  '), { row: (row || "").slice(0, 140), pending });
+    await app.host("setGlobal", { section: "files", key: "trimTrailingWhitespace", value: false });
+    await app.host("command", { id: "featureDesigner.recovery" }, 4000).catch(() => {});
+    await dialogButton("Keep the current source (forget)");
+    await dialogButton("Keep the current source");
+    const cleared = await waitFor(async () => ((await app.host("designer", { fn: "pendingRecovery" })).value.length === 0 && (await stripRow("partial")) === "" ? 1 : 0), 10000);
+    rec("C3e the interrupted operation is resolved explicitly (keep the current source); the record and the strip row are cleared", !!cleared);
+    await review(OWNED);
+    await f.locator(".dlg footer .discard").click();
+    await f.locator(".dlg footer .confirm").click();
+    await sleep(1000);
+    await app.host("save", { path: CA }); await sleep(800);
+  });
+
   await step("S12 status strip and navigation", async () => {
-    await app.host("replace", { path: CA, find: 'B["Dirty source"]', replace: 'B["Navigate"]', after: `diagram:start ${OWNED} ` });
+    await app.host("replace", { path: CA, find: 'B["Trailing"]', replace: 'B["Navigate"]', after: `diagram:start ${OWNED} ` });
     await waitFor(async () => ((await blockState(OWNED)) === "conflict" ? 1 : 0), 10000);
     await f.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await sleep(500);
     const visible = await f.evaluate(() => { const s = document.querySelector("#strip"); const r = s.getBoundingClientRect(); return !s.hidden && r.top >= 0 && r.bottom < 260 ? s.innerText : ""; });

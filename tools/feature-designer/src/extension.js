@@ -27,7 +27,8 @@ const acknowledged = new Set();                  // document uris whose "also op
 const testFaults = { failNextInsertion: false, failNextReconcileDocument: false, autoRefreshDelayMs: 0 };
 const storm = new sync.StormGuard();             // C5: many sources changed at once
 const busy = new Set();                          // document uris being reconciled: never refreshed meanwhile
-let recoveryDir = null;                          // durable records of Apply to source until it completes (C3)
+let recoveryDir = null;
+const snapshots = new Map();                     // Show changes: read-only copies of the text, by id                          // durable records of Apply to source until it completes (C3)
 
 const log = (s) => output && output.appendLine(`${new Date().toISOString()} ${s}`);
 
@@ -438,8 +439,15 @@ class DesignerEditor {
         await document.save();
         return;
       case "showChanges": {                           // C2: the saved file against the refreshed buffer
+        // Two read-only snapshots, never the live document: closing a diff that shows the live document
+        // asks to save it, and "Don't Save" would revert it, discarding the refresh and any other
+        // unsaved work (found in the acceptance run).
         const saved = vscode.Uri.from({ scheme: "featuredesigner-saved", path: document.uri.path });
-        await vscode.commands.executeCommand("vscode.diff", saved, document.uri, `${path.basename(document.uri.fsPath)}: saved ↔ now (not saved)`,
+        const id = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+        snapshots.set(id, document.getText());
+        if (snapshots.size > 20) snapshots.delete(snapshots.keys().next().value);
+        const now = vscode.Uri.from({ scheme: "featuredesigner-now", path: document.uri.path, query: id });
+        await vscode.commands.executeCommand("vscode.diff", saved, now, `${path.basename(document.uri.fsPath)}: saved ↔ now (not saved; read-only)`,
                                              { viewColumn: vscode.ViewColumn.Beside, preview: true });
         return;
       }
@@ -601,6 +609,12 @@ async function applySourceThenBlock(document, root, rel, plan, msg) {
     } catch (e2) { log(`[reconcile] could not put ${src.path} back: ${e2.message}`); }
     if (restored) { dropRecovery(record.id); throw refused(`Nothing was applied: ${src.path} could not be written (${err.message}); it is unchanged.`); }
     record.state = "partial"; record.reason = `the source could not be written cleanly (${err.message})`; updateRecovery(record);
+    // shown at once and persistently, like the other partial outcome (found in the acceptance run)
+    postAll(key, { type: "partial", recovery: record.id, id: plan.id, source: src.path, reason: record.reason });
+    const resolve = "Resolve…";
+    vscode.window.showWarningMessage(`Partly done: ${src.path} may have been changed (${err.message}), and the ${plan.id} block in ${rel} was NOT ` +
+      "updated. The original source is preserved.", resolve)
+      .then((a) => { if (a === resolve) vscode.commands.executeCommand("featureDesigner.recovery"); });
     throw refused(`${src.path} may have been changed and could not be put back (${err.message}). Its original is preserved: run "Feature Designer: Resolve Interrupted Apply to Source".`);
   }
   try {                                           // 2. the block, only on the reviewed text
@@ -711,6 +725,8 @@ function activate(context) {
         `was changed, the block in ${pick.document} was not. The original source is preserved.`, { modal: true }, ...Object.keys(choices));
       if (answer) await recoveryAction(pick.id, choices[answer]).catch((e) => vscode.window.showErrorMessage(e.message));
     }),
+    vscode.workspace.registerTextDocumentContentProvider("featuredesigner-now",         // Show changes: the text when it was asked for
+      { provideTextDocumentContent: (uri) => snapshots.get(uri.query) || "" }),
     vscode.workspace.registerTextDocumentContentProvider("featuredesigner-saved",       // Show changes: the file as saved
       { provideTextDocumentContent: (uri) => {
           const file = vscode.Uri.file(uri.path).fsPath;
