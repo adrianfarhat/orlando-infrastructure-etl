@@ -18,6 +18,9 @@
     legacy: "Possibly changed outside its source: this copy was made before fingerprints and differs from its source, so whether it was edited by hand cannot be established.",
   };
   let nameSeq = 0, nameView = null;
+  state.syncNote = null;                           // PR B2a: what the last source change did to this document
+  state.partial = null;                            // an Apply to source whose second step did not complete
+  let navIndex = -1;
   const svgCache = new Map();
   let mermaidSeq = 0, menuState = null, dialogOpen = false, libraryView = null;
 
@@ -38,9 +41,8 @@
   const sanitize = (html) => window.DOMPurify.sanitize(html, PURIFY);
   const post = (msg) => api.postMessage(msg);
 
-  function status(text, err) {
-    let el = $("#status");
-    if (!el) { el = h("div", { id: "status", role: "status", "aria-live": "polite" }); document.body.append(el); }
+  function status(text, err) {                     // in the top area, so it never covers the document
+    const el = $("#status");
     el.textContent = text; el.className = err ? "err" : ""; el.style.display = "block";
     clearTimeout(status.t); status.t = setTimeout(() => (el.style.display = "none"), err ? 7000 : 2500);
   }
@@ -97,7 +99,126 @@
           "Your own text is unaffected; run python -m tools.design index to regenerate them.";
     }
     else if (m.type === "error") status(m.message, true);
+    else if (m.type === "syncNote") {
+      const kind = state.syncNote && state.syncNote.kind;
+      if (m.only && m.only !== kind) { if (m.only === "partial" && state.partial) { state.partial = null; strip(); } return; }
+      if (m.unless && m.unless === kind) return;
+      state.syncNote = m.note; strip();
+    }
+    else if (m.type === "partial") { state.partial = { recovery: m.recovery, id: m.id, source: m.source, reason: m.reason }; strip(); }
+    else if (m.type === "reconciled") { state.syncNote = null; status(m.text); strip(); }
+    else if (m.type === "review") openReview(m);
   });
+
+  // ------------------------------------------------------------------ the status strip (PR B2a, C2, C8)
+  const AFFECTED = ["outdated", "empty", "fingerprint", "conflict", "retired", "missing", "unknown", "problem"];
+  const REASONS = { unsaved: "this document has unsaved changes", "other-editor": "this file is also open in another editor",
+                    "text-editor": "this file is also open in the text editor", storm: "many diagram sources changed at once",
+                    changed: "the document changed while the refresh was prepared", "not-in-designer": "" };
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  function counts() {
+    const out = { outdated: 0, conflict: 0, problem: 0 };
+    for (const b of (state.blocks && state.blocks.list) || []) {
+      if (["outdated", "empty", "fingerprint"].includes(b.state)) out.outdated++;
+      else if (b.state === "conflict") out.conflict++;
+      else if (AFFECTED.includes(b.state)) out.problem++;
+    }
+    return out;
+  }
+  function strip() {
+    const el = $("#strip"), c = counts(), total = c.outdated + c.conflict + c.problem;
+    const n = state.syncNote, p = state.partial, parts = [];
+    const btn = (cls, text, onclick, title) => h("button", { type: "button", class: cls, text, onclick, title });
+    if (p) parts.push(h("div", { class: "strip-row partial", role: "alert" },
+      h("span", { text: `Partly done: ${p.source} was updated and saved, but the ${p.id} block here was NOT updated (${p.reason}). The original source is preserved.` }),
+      btn("finish", "Update the block now", () => post({ type: "recovery", recovery: p.recovery, kind: "finish" })),
+      btn("restore", "Restore the original source", () => post({ type: "recovery", recovery: p.recovery, kind: "restore" }))));
+    if (n && n.kind === "auto") parts.push(h("div", { class: "strip-row auto" },
+      h("span", { text: `Updated ${plural(n.ids.length, "diagram", "diagrams")} from ${n.ids.length === 1 ? "its source" : "their sources"} (${n.ids.join(", ")}) — not saved.` }),
+      btn("undo-refresh", "Undo", () => { state.syncNote = null; strip(); post({ type: "undo" }); }, "Undo the refresh (one step)"),
+      btn("show-changes", "Show changes", () => post({ type: "showChanges" }), "Compare with the saved file"),
+      btn("save-doc", "Save", () => post({ type: "save" })),
+      btn("dismiss", "Dismiss", () => { state.syncNote = null; strip(); })));
+    if (n && n.kind === "refreshed") parts.push(h("div", { class: "strip-row auto" },
+      h("span", { text: `Refreshed ${n.ids.join(", ")} (one undoable edit; not saved).` }), btn("dismiss", "Dismiss", () => { state.syncNote = null; strip(); })));
+    if (n && n.kind === "manual" && c.outdated) parts.push(h("div", { class: "strip-row manual" },
+      h("span", { text: n.reason === "storm"
+        ? `Many diagram sources changed at once (${n.sources}); nothing was refreshed automatically. ${plural(n.ids.length, "diagram", "diagrams")} here ${n.ids.length === 1 ? "is" : "are"} out of date.`
+        : `${plural(n.ids.length, "diagram is", "diagrams are")} out of date (${n.ids.join(", ")}); not refreshed automatically because ${REASONS[n.reason] || n.reason}${n.editors && n.editors.length ? ` (${n.editors.join(", ")})` : ""}.` }),
+      btn("refresh-now", "Refresh now", () => post({ type: "refreshNow", version: state.version }), "Refresh the out-of-date blocks (one undoable edit; not saved)")));
+    if (total) parts.push(h("div", { class: "strip-row counts" },
+      h("span", { class: "count-text", text: [c.outdated && `${c.outdated} out of date`, c.conflict && plural(c.conflict, "conflict", "conflicts"),
+                                              c.problem && plural(c.problem, "problem", "problems")].filter(Boolean).join(" · ") }),
+      c.outdated && !(n && n.kind === "manual") ? btn("refresh-now", "Refresh now", () => post({ type: "refreshNow", version: state.version }),
+                                                         "Refresh the out-of-date blocks (one undoable edit; not saved)") : null,
+      btn("prev", "Previous", () => navigate(-1), "Previous diagram that needs attention"),
+      btn("next", "Next", () => navigate(1), "Next diagram that needs attention")));
+    el.replaceChildren(...parts);
+    el.hidden = !parts.length;
+  }
+  function navigate(step) {
+    const blocks = [...document.querySelectorAll(".gen.dg")].filter((g) => AFFECTED.includes(g.dataset.state));
+    if (!blocks.length) return;
+    navIndex = (navIndex + step + blocks.length) % blocks.length;
+    const g = blocks[navIndex];
+    g.scrollIntoView({ block: "center" });
+    g.classList.add("flash"); setTimeout(() => g.classList.remove("flash"), 1400);
+    const b = g.querySelector(".edit-diagram"); if (b) b.focus({ preventScroll: true });
+  }
+
+  // ------------------------------------------------------------------ Review a changed diagram (PR B2a, C3)
+  function openReview(m) {
+    const info = ((state.blocks && state.blocks.list) || []).find((b) => b.start === m.line && b.id === m.id);
+    const pre = (text) => h("pre", { class: "diff" }, ...String(text || "(no change)").split("\n").map((l) =>
+      h("span", { class: /^\+(?!\+\+)/.test(l) ? "add" : /^-(?!--)/.test(l) ? "del" : "", text: `${l}\n` })));
+    const versions = info ? h("div", { class: "dg-both" },
+      h("div", { class: "dg-version authoritative" }, h("div", { class: "dg-vlabel", text: `Authoritative source${info.source ? ` · ${info.source.path}` : ""}` }), mdHtml(info.generated.join("\n"))),
+      h("div", { class: "dg-version document-copy" }, h("div", { class: "dg-vlabel", text: "Copy in this document · differs from its source" }), mdHtml(info.embedded.join("\n")))) : null;
+    const body = h("div", { class: "review" });
+    let d;
+    const choose = (action) => {
+      const plan = action === "discard" ? m.discard : m.apply;
+      const replace = h("input", { type: "checkbox", class: "replace-ok" });
+      const confirmBtn = h("button", { type: "button", class: "primary confirm", text: action === "discard" ? "Confirm: Discard manual change" : "Confirm: Apply to source",
+                                       disabled: !!plan.replaces });
+      replace.addEventListener("change", () => (confirmBtn.disabled = !replace.checked));
+      body.replaceChildren(
+        h("p", { text: action === "discard"
+          ? `Replaces the copy of ${m.id} in this document with what its source generates. One undoable edit in this document; not saved. The source is not changed.`
+          : `Writes the copy's diagram into ${plan.source} and saves that file, then updates the ${m.id} block in this document (not saved).` }),
+        action === "discard" ? null : h("p", { class: "undo-note", text: `Ctrl+Z in this document reverts only the block. The source change is saved and is undone separately in ${plan.source}. If the second step fails, you are told, and the original source is kept so it can be restored.` }),
+        plan.warning ? h("div", { class: "dg-notice warn", role: "alert" }, h("span", { text: `Warning: ${plan.warning}.` })) : null,
+        plan.replaces ? h("label", { class: "replace-confirm" }, replace, h("span", { text: `Replace the changes made in ${plan.source} with this copy` })) : null,
+        h("details", { open: true }, h("summary", { text: "Exactly what changes" }), pre(plan.diff)));
+      const footer = d.dlg.querySelector("footer");
+      footer.replaceChildren(h("button", { type: "button", text: "Back", onclick: () => main() }), confirmBtn);
+      confirmBtn.addEventListener("click", () => {
+        if (confirmBtn.disabled) return;
+        d.close();
+        status(action === "discard" ? "Discarding the manual change…" : "Applying to the source…");
+        post({ type: "applyReconcile", action, line: m.line, id: m.id, version: m.version, token: plan.token, replaceConfirmed: plan.replaces ? replace.checked : false });
+      });
+    };
+    const main = () => {
+      body.replaceChildren(
+        h("p", { text: `The copy of ${m.id} in this document differs from its authoritative source, so it is never overwritten automatically. Inspect both versions, then choose.` }),
+        versions,
+        h("details", {}, h("summary", { text: "Show the text differences" }), pre((info && info.diff || []).join("\n"))),
+        h("div", { class: "review-actions" },
+          h("div", { class: "review-action" }, h("strong", { text: "Discard manual change" }),
+            h("span", { text: m.discard.error ? m.discard.error : "Keep the source; restore the generated copy here." })),
+          h("div", { class: "review-action" }, h("strong", { text: "Apply to source" }),
+            h("span", { class: m.apply.error ? "bad" : "", text: m.apply.error ? `Not available: ${m.apply.error}` : `Write this copy into ${m.apply.source} and save it.` }))));
+      const footer = d.dlg.querySelector("footer");
+      footer.replaceChildren(h("button", { type: "button", text: "Cancel", onclick: () => d.close() }),
+        h("button", { type: "button", class: "discard", text: "Discard manual change…", disabled: !!m.discard.error, onclick: () => choose("discard") }),
+        h("button", { type: "button", class: "apply", text: "Apply to source…", disabled: !!m.apply.error, onclick: () => choose("apply-to-source") }));
+      drawMermaid(body);
+    };
+    d = dialog(`Review changed diagram ${m.id}`, body, []);
+    d.dlg.classList.add("wide");
+    main();
+  }
 
   // ------------------------------------------------------------------ rendering
   function render() {
@@ -117,6 +238,7 @@
     $("#doc").replaceChildren(...out);
     $("#doc").querySelectorAll("a").forEach((a) => a.addEventListener("click", (ev) => ev.preventDefault()));
     drawMermaid($("#doc"));
+    strip();
     window.scrollTo(0, scroll);
   }
 
@@ -190,7 +312,9 @@
     else if (st === "empty") body.push(note("info", "Empty in this document: shown from its source (python -m tools.design index fills it in)."), md(info.generated));
     else if (st === "outdated") body.push(note("info", "Out of date in this document: its source changed and this copy was not edited. Shown from the source; python -m tools.design index updates the copy."),
                                           md(info.generated), copy("Show the out-of-date copy in this document"), diff());
-    else if (st === "conflict") body.push(note("warn", `${CONFLICT_TEXT[info.conflict] || "Changed outside its source."} It is never overwritten automatically (E15).`),
+    else if (st === "conflict") body.push(note("warn", `${CONFLICT_TEXT[info.conflict] || "Changed outside its source."} It is never overwritten automatically (E15).`,
+        h("button", { type: "button", class: "review", text: "Review…", title: "Compare both versions, then discard the manual change or apply it to the source",
+                       onclick: () => post({ type: "reviewConflict", line: seg.start, id: seg.id, version: state.version }) })),
       h("div", { class: "dg-both" }, version("authoritative", `Authoritative source${src && src.path ? ` · ${src.path}` : ""}`, info.generated),
                                       version("document-copy", "Copy in this document · differs from its source", embedded)),
       diff(), h("div", { class: "dg-fix", text: info.message }));
@@ -215,6 +339,7 @@
     const segs = C.segments(state.text).filter((s) => s.kind === "diagram");
     const els = [...$("#doc").querySelectorAll(":scope > .block.diagram")];
     if (segs.length !== els.length || segs.some((s, i) => +els[i].dataset.start !== s.start)) { render(); return; }
+    strip();
     segs.forEach((seg, i) => {
       const old = els[i], fresh = diagramBlock(seg);
       if (fresh.fdKey === old.fdKey) return;

@@ -408,6 +408,7 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
   });
 
   await prB1Steps();
+  await prB2aSteps();
 
   await close(app); app = null;
 
@@ -607,7 +608,7 @@ async function prB1Steps() {
       return { note: g.querySelector(".dg-notice").innerText, fromSource: info.generated.some((l) => l.includes("Source step")),
                copyOld: info.embedded.some((l) => l.includes("New step (planned)")), copyShown: !!g.querySelector("details.dg-copy") };
     });
-    rec("B2d after its source is saved, the block is drawn from the source and marked out of date; the document itself is not changed in B1",
+    rec("B2d after its source is saved, the block is drawn from the source and marked out of date; a document with unsaved changes is not changed automatically",
         !!back && outdated === "outdated" && /Out of date in this document/.test(o.note) && o.fromSource && o.copyOld && o.copyShown && (await text()) === t, o);
     await app.host("replace", { path: OWN_SRC, find: 'B["Source step"]', replace: 'B["New step (planned)"]' });
     await app.host("save", { path: OWN_SRC });
@@ -650,6 +651,316 @@ async function prB1Steps() {
 
   await step("B12 safety", async () => {
     rec("B12 docs/architecture/ unchanged byte for byte through every PR B1 step", archHash() === archBefore);
+  });
+}
+
+// ---------------------------------------------------------------------------------------- PR B2a
+const CA = "designs/features/condition-analysis.md";
+const caText = async () => (await doc(CA)).text;
+const write = (rel, from, to) => { const f2 = path.join(WS, rel); const s = fs.readFileSync(f2, "utf8"); if (!s.includes(from)) throw new Error(`${from} not in ${rel}`); fs.writeFileSync(f2, s.replace(from, to)); };
+const stripRow = (cls) => f.evaluate((c) => { const r = document.querySelector(`#strip .strip-row.${c}`); return r ? r.innerText : ""; }, cls);
+async function caKey(key) { await app.host("command", { id: "workbench.action.focusFirstEditorGroup" }); await f.locator("h1").click(); await app.page.keyboard.press(key); }
+async function openCa() {                          // the fixture file is saved first: closing never meets a save prompt
+  if ((await doc(CA)) && (await doc(CA)).isDirty) { await app.host("save", { path: CA }); await sleep(500); }
+  await app.host("closeAll"); await dialogDismissIfAny();
+  if ((await app.host("tabs")).length) { await app.host("revert", { path: FEATURE }); await app.host("revert", { path: CA }); await app.host("closeAll"); await dialogDismissIfAny(); }
+  await app.host("openWith", { path: CA, viewType: "featureDesigner.editor", column: 1 });
+  f = await designerFrame(app.page);
+  await waitFor(() => f.evaluate(() => !!document.querySelector("h1")), 15000);
+}
+async function caInsert(heading, query) { const a = await insertVia(heading, query); await waitFor(async () => (await version()) > a.v, 15000); await sleep(300); }
+async function review(id) {
+  await f.locator(`.gen[data-diagram="${id}"] .review`).first().scrollIntoViewIfNeeded();
+  await f.locator(`.gen[data-diagram="${id}"] .review`).first().click();
+  await f.waitForSelector(".dlg .review", { timeout: 15000 });
+}
+const blockState = (id) => f.evaluate((x) => { const g = document.querySelector(`.gen[data-diagram="${x}"]`); return g ? g.dataset.state : ""; }, id);
+
+async function prB2aSteps() {
+  const archBefore = archHash();
+  let ownedSrc = "";
+  const extra = [];
+  await step("B2a setup", async () => {
+    for (let i = 1; i <= 5; i++) {                       // sources for the event-storm test (C5)
+      const out = py(["-m", "tools.design", "new", "diagram", "--feature", "FD-0002", "--title", `Storm ${i}`, "--json"]);
+      extra.push(JSON.parse(out).path);
+    }
+    ownedSrc = JSON.parse(py(["-m", "tools.design", "resolve", OWNED])).path;
+    await app.host("save", { path: FEATURE });
+    await openCa();
+    await caInsert("1. Objective", "credential");
+    await caInsert("2. Data contract", "condition analysis workflow");
+    await caInsert("3. Logic", "pipe flow");
+    await app.host("save", { path: CA }); await sleep(1200);
+    const ok = !(await doc(CA)).isDirty && markerAt((await caText()).split(/\r?\n/), "FD-0001-D1") > 0;
+    rec("B2a setup: a saved feature document with an architecture diagram, its own diagram and another feature's diagram", ok, { extra: extra.length, ownedSrc });
+  });
+
+  await step("S1 automatic refresh of a clean document", async () => {
+    const t0 = await caText();
+    write(OWN_SRC, 'B["New step (planned)"]', 'B["Auto one"]');
+    const done = await waitFor(async () => { const d = await doc(CA); return d.isDirty && d.text.includes('B["Auto one"]') ? d : null; }, 20000);
+    const note = await waitFor(() => stripRow("auto"), 5000);
+    const disk = fs.readFileSync(path.join(WS, CA), "utf8");
+    const changed = done ? done.text.split(/\r?\n/).filter((l, i) => l !== t0.split(/\r?\n/)[i]).length : -1;
+    await snap("b2a-auto-refresh");
+    await f.locator("#strip .undo-refresh").click(); await sleep(1000);
+    const undone = await doc(CA);
+    rec("S1 a clean document open only in Feature Designer is refreshed automatically: one edit, not saved (disk unchanged), with an Undo / Show changes / Save notice; Undo restores it exactly",
+        !!done && !disk.includes("Auto one") && /Updated 1 diagram from its source \(FD-0001-D1\) — not saved/.test(note || "") &&
+        undone.text === t0 && !undone.isDirty && changed > 0 && changed <= 3, { changedLines: changed, note: (note || "").slice(0, 120), undoneClean: !undone.isDirty });
+    const counts = await waitFor(() => stripRow("counts"), 8000);
+    await f.locator("#strip .counts .refresh-now").click();
+    await waitFor(async () => (await caText()).includes('B["Auto one"]'), 10000);
+    rec("S1b afterwards the strip shows the block as out of date with Refresh now, which refreshes it as one edit", /1 out of date/.test(counts || "") && (await caText()).includes('B["Auto one"]'), counts);
+    await app.host("save", { path: CA }); await sleep(1000);
+  });
+
+  await step("S2 a document with unsaved changes is never refreshed automatically", async () => {
+    await app.host("replace", { path: CA, find: "[Who needs the result?]", replace: "[Who needs the result?] typed" });
+    await sleep(500);
+    const t1 = await caText();
+    write(OWN_SRC, 'B["Auto one"]', 'B["Auto two"]');
+    await sleep(3500);
+    const untouched = (await caText()) === t1;
+    const manual = await waitFor(() => stripRow("manual"), 8000);
+    await snap("b2a-manual-refresh");
+    await f.locator("#strip .manual .refresh-now").click();
+    await waitFor(async () => (await caText()).includes('B["Auto two"]'), 10000);
+    const refreshed = await caText();
+    await caKey("Control+Z"); await sleep(1000);
+    rec("S2 unsaved edits: nothing changes automatically; the notice says why and Refresh now applies one edit that keeps the typing; one Ctrl+Z reverts exactly it",
+        untouched && /out of date \(FD-0001-D1\); not refreshed automatically because this document has unsaved changes/.test(manual || "") &&
+        refreshed.includes("typed") && refreshed.includes('B["Auto two"]') && (await caText()) === t1, (manual || "").slice(0, 140));
+    await caKey("Control+Y"); await sleep(800);
+    await app.host("save", { path: CA }); await sleep(1000);
+  });
+
+  await step("S3 conflicts are never refreshed", async () => {
+    await app.host("replace", { path: CA, find: 'B["New step (planned)"]', replace: 'B["Hand edited copy"]', after: `diagram:start ${OWNED} ` });
+    await app.host("save", { path: CA }); await sleep(1500);
+    write(OWN_SRC, 'B["Auto two"]', 'B["Auto three"]');
+    const done = await waitFor(async () => ((await caText()).includes('B["Auto three"]') ? true : null), 20000);
+    const t = await caText();
+    rec("S3 with a conflict in the same document, only the out-of-date block is refreshed; the conflicting copy is kept",
+        !!done && t.includes('B["Hand edited copy"]') && (await blockState(OWNED)) === "conflict", { conflict: await blockState(OWNED) });
+    await app.host("save", { path: CA }); await sleep(1000);
+  });
+
+  await step("S4 typing while a refresh is prepared", async () => {
+    await app.host("designer", { fn: "delayNextAutoRefresh" });
+    write(OWN_SRC, 'B["Auto three"]', 'B["Auto four"]');
+    await sleep(1200);
+    await app.host("replace", { path: CA, find: "[Who needs the result?] typed", replace: "[Who needs the result?] typed again" });
+    await sleep(4500);
+    const t = await caText();
+    const manual = await waitFor(() => stripRow("manual"), 5000);
+    rec("S4 if the document changes while an automatic refresh is prepared, nothing is applied and Refresh now is offered",
+        t.includes("typed again") && !t.includes('B["Auto four"]') && /not refreshed automatically/.test(manual || ""), (manual || "").slice(0, 120));
+    await f.locator("#strip .manual .refresh-now").click();
+    await waitFor(async () => (await caText()).includes('B["Auto four"]'), 10000);
+    await app.host("save", { path: CA }); await sleep(1000);
+  });
+
+  await step("S5 two views of one document", async () => {
+    await app.host("openWith", { path: CA, viewType: "featureDesigner.editor", column: 2 });
+    await sleep(2000);
+    const t0 = await caText();
+    write(OWN_SRC, 'B["Auto four"]', 'B["Auto five"]');
+    const done = await waitFor(async () => ((await caText()).includes('B["Auto five"]') ? true : null), 20000);
+    await sleep(1500);
+    await app.host("command", { id: "workbench.action.focusFirstEditorGroup" });
+    f = await designerFrame(app.page);
+    await caKey("Control+Z"); await sleep(1000);
+    rec("S5 with two Feature Designer views of the document it is refreshed once (one Ctrl+Z restores the saved text)", !!done && (await caText()) === t0);
+    await caKey("Control+Y"); await sleep(800);
+    await app.host("save", { path: CA }); await sleep(800);
+    await openCa();
+  });
+
+  await step("S8 review: Discard manual change", async () => {
+    await review(OWNED);
+    const dlg = await f.evaluate(() => ({ title: document.querySelector(".dlg header").textContent,
+      labels: [...document.querySelectorAll(".dlg .dg-vlabel")].map((x) => x.textContent),
+      buttons: [...document.querySelectorAll(".dlg footer button")].map((x) => `${x.textContent}${x.disabled ? " (disabled)" : ""}`) }));
+    await snap("b2a-review");
+    await f.locator(".dlg footer .discard").click();
+    const confirmText = await f.locator(".dlg .review").innerText();
+    const v = await version();
+    await f.locator(".dlg footer .confirm").click();
+    await waitVersion(v);
+    const after = await caText();
+    const st = await waitFor(async () => ((await blockState(OWNED)) === "current" ? "current" : ""), 10000);
+    await caKey("Control+Z"); await sleep(1000);
+    const undone = await caText();
+    rec("S8 Review shows both versions and both actions; Discard previews exactly what changes, then restores the generated copy as one undoable edit",
+        dlg.title === `Review changed diagram ${OWNED}` && dlg.labels.length === 2 && /Authoritative source/.test(dlg.labels[0]) &&
+        JSON.stringify(dlg.buttons) === '["Cancel","Discard manual change…","Apply to source…"]' && /The source is not changed/.test(confirmText) &&
+        !after.includes("Hand edited copy") && st === "current" && undone.includes("Hand edited copy"), { ...dlg, st });
+  });
+
+  await step("S8b review: Apply to source", async () => {
+    const srcBefore = fs.readFileSync(path.join(WS, ownedSrc), "utf8");
+    await review(OWNED);
+    await f.locator(".dlg footer .apply").click();
+    const confirmText = await f.locator(".dlg .review").innerText();
+    const v = await version();
+    await f.locator(".dlg footer .confirm").click();
+    await waitVersion(v);
+    const msg = await waitFor(statusText, 8000);
+    const src = fs.readFileSync(path.join(WS, ownedSrc), "utf8");
+    const st = await waitFor(async () => ((await blockState(OWNED)) === "current" ? "current" : ""), 10000);
+    const pending = (await app.host("designer", { fn: "pendingRecovery" })).value;
+    rec("S8b Apply to source saves the source, then updates the block (not saved); the message says Ctrl+Z reverts only the block; nothing is left pending",
+        /reverts only the block/.test(confirmText) && src.includes('B["Hand edited copy"]') && src !== srcBefore && !(await doc(CA)).text.includes("diagram:start x") &&
+        st === "current" && /Applied to source: saved .* Ctrl\+Z in this document reverts only the block/.test(msg || "") && pending.length === 0 && (await doc(CA)).isDirty,
+        { msg: (msg || "").slice(0, 160), pending });
+    await app.host("save", { path: CA }); await sleep(800);
+  });
+
+  await step("S8c a source changed after the review is never overwritten", async () => {
+    await app.host("replace", { path: CA, find: 'B["Hand edited copy"]', replace: 'B["Stale review"]', after: `diagram:start ${OWNED} ` });
+    await sleep(800);
+    await review(OWNED);
+    await f.locator(".dlg footer .apply").click();
+    write(ownedSrc, 'A["Existing step"]', 'A["Moved on"]');
+    await sleep(1500);
+    await f.locator(".dlg footer .confirm").click();
+    const msg = await waitFor(async () => { const s = await statusText(); return /changed since the review/.test(s || "") ? s : ""; }, 8000);
+    const src = fs.readFileSync(path.join(WS, ownedSrc), "utf8");
+    rec("S8c if the source changes between the review and the confirmation, nothing is written and the review must be repeated",
+        !!msg && src.includes("Moved on") && !src.includes("Stale review") && (await caText()).includes("Stale review"), (msg || "").slice(0, 120));
+    await review(OWNED);
+    await f.locator(".dlg footer .apply").click();
+    const box = await f.evaluate(() => ({ disabled: document.querySelector(".dlg footer .confirm").disabled, label: (document.querySelector(".dlg .replace-confirm") || {}).innerText || "",
+                                         warn: (document.querySelector(".dlg .dg-notice.warn") || {}).innerText || "" }));
+    await f.locator(".dlg .replace-ok").check();
+    const enabled = await f.evaluate(() => !document.querySelector(".dlg footer .confirm").disabled);
+    const v = await version();
+    await f.locator(".dlg footer .confirm").click();
+    await waitVersion(v);
+    const src2 = fs.readFileSync(path.join(WS, ownedSrc), "utf8");
+    rec("S8d when applying would replace changes made in the source, Confirm stays disabled until that is explicitly ticked",
+        box.disabled && /Replace the changes made in/.test(box.label) && /replaces those source changes/.test(box.warn) && enabled && src2.includes("Stale review") && !src2.includes("Moved on"), box);
+    await app.host("save", { path: CA }); await sleep(800);
+  });
+
+  await step("S8e architecture diagrams: Apply to source is not offered", async () => {
+    await app.host("replace", { path: CA, find: 'ROLE --> NEON', replace: 'ROLE --> NEON2["Edited"]\n  ROLE --> NEON', after: `diagram:start ${CRED} ` });
+    await waitFor(async () => ((await blockState(CRED)) === "conflict" ? 1 : 0), 10000);
+    await review(CRED);
+    const apply = await f.evaluate(() => ({ disabled: document.querySelector(".dlg footer .apply").disabled, text: document.querySelector(".dlg .review-actions").innerText }));
+    await f.locator(".dlg footer .discard").click();
+    const v = await version();
+    await f.locator(".dlg footer .confirm").click();
+    await waitVersion(v);
+    rec("S8e for an architecture diagram Apply to source is disabled with the technical-lead reason; Discard restores the copy; docs/architecture is not written",
+        apply.disabled && /technical-lead's documentation workflow/.test(apply.text) && !(await caText()).includes("NEON2") && archHash() === archBefore, apply.text.slice(0, 160));
+  });
+
+  await step("S9 a source with unsaved changes is never overwritten", async () => {
+    await app.host("replace", { path: CA, find: 'B["Stale review"]', replace: 'B["Dirty source"]', after: `diagram:start ${OWNED} ` });
+    await sleep(800);
+    await app.host("openText", { path: ownedSrc, column: 2 });
+    await app.host("replace", { path: ownedSrc, find: 'A["Existing step"]', replace: 'A["Unsaved in source"]' });
+    await app.host("command", { id: "workbench.action.focusFirstEditorGroup" });
+    const disk = fs.readFileSync(path.join(WS, ownedSrc), "utf8");
+    await review(OWNED);
+    await f.locator(".dlg footer .apply").click();
+    await f.locator(".dlg footer .confirm").click();
+    const msg = await waitFor(async () => { const s = await statusText(); return /unsaved changes/.test(s || "") ? s : ""; }, 8000);
+    rec("S9 Apply to source is refused while the source has unsaved changes; nothing is written",
+        !!msg && fs.readFileSync(path.join(WS, ownedSrc), "utf8") === disk && (await caText()).includes("Dirty source"), (msg || "").slice(0, 120));
+    await app.host("revert", { path: ownedSrc });
+    await openCa();
+  });
+
+  await step("C3 partial completion and recovery", async () => {
+    const original = fs.readFileSync(path.join(WS, ownedSrc));
+    await app.host("designer", { fn: "failNextReconcileDocument" });
+    await review(OWNED);
+    await f.locator(".dlg footer .apply").click();
+    if (await f.locator(".dlg .replace-ok").count()) await f.locator(".dlg .replace-ok").check();
+    await f.locator(".dlg footer .confirm").click();
+    const row = await waitFor(() => stripRow("partial"), 15000);
+    const pending = (await app.host("designer", { fn: "pendingRecovery" })).value;
+    const written = fs.readFileSync(path.join(WS, ownedSrc), "utf8");
+    await snap("b2a-partial");
+    rec("C3a when the source is saved but the block update fails, this is reported as partial (never as success), with a durable recovery record",
+        /Partly done: .* was updated and saved, but the FD-0002-D1 block here was NOT updated/.test(row || "") && written.includes("Dirty source") &&
+        (await caText()).includes("Dirty source") && pending.length === 1 && pending[0].state === "partial", { row: (row || "").slice(0, 160), pending });
+    await f.locator("#strip .partial .restore").click();
+    await waitFor(async () => fs.readFileSync(path.join(WS, ownedSrc)).equals(original), 10000);
+    const gone = await waitFor(async () => ((await app.host("designer", { fn: "pendingRecovery" })).value.length === 0 ? 1 : 0), 8000);
+    rec("C3b Restore the original source puts back the exact original bytes and clears the record; the document is not changed",
+        fs.readFileSync(path.join(WS, ownedSrc)).equals(original) && !!gone && (await caText()).includes("Dirty source"));
+    await app.host("designer", { fn: "failNextReconcileDocument" });
+    await waitFor(async () => ((await blockState(OWNED)) === "conflict" ? 1 : 0), 10000);
+    await review(OWNED);
+    await f.locator(".dlg footer .apply").click();
+    if (await f.locator(".dlg .replace-ok").count()) await f.locator(".dlg .replace-ok").check();
+    await f.locator(".dlg footer .confirm").click();
+    await waitFor(() => stripRow("partial"), 15000);
+    await f.locator("#strip .partial .finish").click();
+    const fin = await waitFor(async () => ((await app.host("designer", { fn: "pendingRecovery" })).value.length === 0 && (await blockState(OWNED)) === "current" ? 1 : 0), 15000);
+    rec("C3c Update the block now completes it: the block matches the saved source and the record is cleared", !!fin);
+    await app.host("save", { path: CA }); await sleep(800);
+  });
+
+  await step("S12 status strip and navigation", async () => {
+    await app.host("replace", { path: CA, find: 'B["Dirty source"]', replace: 'B["Navigate"]', after: `diagram:start ${OWNED} ` });
+    await waitFor(async () => ((await blockState(OWNED)) === "conflict" ? 1 : 0), 10000);
+    await f.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await sleep(500);
+    const visible = await f.evaluate(() => { const s = document.querySelector("#strip"); const r = s.getBoundingClientRect(); return !s.hidden && r.top >= 0 && r.bottom < 260 ? s.innerText : ""; });
+    await f.locator("#strip .counts .next").click(); await sleep(800);
+    const nav = await f.evaluate(() => { const g = document.querySelector(".gen.dg.flash"); if (!g) return null; const r = g.getBoundingClientRect(); return { id: g.dataset.diagram, inView: r.top < innerHeight && r.bottom > 0 }; });
+    await snap("b2a-strip");
+    rec("S12 the status strip stays visible while scrolling, counts the blocks that need attention, and Next scrolls to one",
+        /1 conflict/.test(visible || "") && nav && nav.id === OWNED && nav.inView, { visible: (visible || "").slice(0, 80), nav });
+    await review(OWNED);
+    await f.locator(".dlg footer .discard").click();
+    await f.locator(".dlg footer .confirm").click();
+    await sleep(1000);
+    await app.host("save", { path: CA }); await sleep(800);
+  });
+
+  await step("S13 event storm", async () => {
+    const t0 = await caText();
+    write(OWN_SRC, 'B["Auto five"]', 'B["Storm"]');
+    for (const e of extra) write(e, 'B["New step (planned)"]', 'B["Storm"]');
+    await sleep(5000);
+    const manual = await waitFor(() => stripRow("manual"), 8000);
+    rec("S13 when more than 5 sources change within 2 seconds nothing is refreshed automatically; the strip says so and offers Refresh now",
+        (await caText()) === t0 && /Many diagram sources changed at once \(6\)/.test(manual || ""), (manual || "").slice(0, 140));
+    await f.locator("#strip .manual .refresh-now").click();
+    await waitFor(async () => (await caText()).includes('B["Storm"]'), 10000);
+    await app.host("save", { path: CA }); await sleep(800);
+  });
+
+  await step("S7 other editors", async () => {
+    await app.host("openText", { path: CA, column: 2 });
+    await sleep(1000);
+    const t0 = await caText();
+    write(OWN_SRC, 'B["Storm"]', 'B["Text editor open"]');
+    await sleep(3500);
+    const manual = await waitFor(() => stripRow("manual"), 8000);
+    rec("S7 a document also open in the text editor is not refreshed automatically", (await caText()) === t0 && /also open in the text editor/.test(manual || ""), (manual || "").slice(0, 120));
+    if (!app.markSharp) { rec("S7b Mark Sharp", false, "Mark Sharp not available"); return; }
+    await openCa();
+    await app.host("openWith", { path: CA, viewType: "msharp.customEditor", column: 2 });
+    await sleep(2500);
+    await app.host("command", { id: "workbench.action.focusFirstEditorGroup" });
+    f = await designerFrame(app.page);
+    const t1 = await caText();
+    write(OWN_SRC, 'B["Text editor open"]', 'B["Mark Sharp open"]');
+    await sleep(3500);
+    const ms = await waitFor(() => stripRow("manual"), 8000);
+    const changedAuto = (await caText()).includes('B["Mark Sharp open"]');
+    rec("S7b a document also open in Mark Sharp is not refreshed automatically", !changedAuto && /Mark Sharp/.test(ms || ""), { ms: (ms || "").slice(0, 120), t1Same: (await caText()) === t1 });
+  });
+
+  await step("S15 safety", async () => {
+    rec("S15 docs/architecture/ unchanged byte for byte through every PR B2a step", archHash() === archBefore);
   });
 }
 

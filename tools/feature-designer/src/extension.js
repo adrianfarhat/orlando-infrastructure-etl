@@ -14,6 +14,7 @@ const { Bridge } = require("./bridge");
 const { replacements, sha256, StaleEditError } = require("./edits");
 const { ensurePython, pickInterpreter, interpreterProblem, SETTING } = require("./python");
 const commands = require("./commands");
+const sync = require("./sync");
 
 const VIEW_TYPE = "featureDesigner.editor";
 const INDEX = "designs/index/feature-index.md";
@@ -22,7 +23,11 @@ let output;
 const bridges = new Map();                       // repository root -> Bridge
 const panels = new Map();                        // document uri -> Set<WebviewPanel>
 const acknowledged = new Set();                  // document uris whose "also open elsewhere" warning was accepted
-const testFaults = { failNextInsertion: false };  // fault injection for the automated tests only (see activate)
+// Fault injection for the automated tests only (see activate): nothing here is set in normal use.
+const testFaults = { failNextInsertion: false, failNextReconcileDocument: false, autoRefreshDelayMs: 0 };
+const storm = new sync.StormGuard();             // C5: many sources changed at once
+const busy = new Set();                          // document uris being reconciled: never refreshed meanwhile
+let recoveryDir = null;                          // durable records of Apply to source until it completes (C3)
 
 const log = (s) => output && output.appendLine(`${new Date().toISOString()} ${s}`);
 
@@ -124,6 +129,160 @@ async function openSource(root, id) {
   return r;
 }
 
+const sha256Bytes = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
+const postAll = (key, msg) => { for (const p of panels.get(key) || []) p.webview.postMessage(msg); };
+const fullRange = (doc) => new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length));
+function refused(message) { const e = new Error(message); e.refused = true; return e; }
+
+/** Whether the document is also open in a plain text editor tab. */
+function textEditorOpen(uri) {
+  return vscode.window.tabGroups.all.some((g) => g.tabs.some((t) => t.input instanceof vscode.TabInputText && t.input.uri.toString() === uri.toString()));
+}
+
+// ------------------------------------------------------------------ source changes (B3, C1, C2, C5)
+const sourceTimers = new Map();                  // repository root -> pending sync
+
+/** A file changed on disk: if it is a diagram source, refresh the open documents (debounced). */
+function onSourceEvent(uri) {
+  const folder = vscode.workspace.getWorkspaceFolder(uri);
+  if (!folder) return;
+  const root = folder.uri.fsPath, rel = relPath(root, uri);
+  if (!sync.isSourcePath(rel)) return;           // a feature document's own save never triggers a refresh
+  storm.record(`${root}|${rel}`, Date.now());
+  clearTimeout(sourceTimers.get(root));
+  sourceTimers.set(root, setTimeout(() => syncOpenDocuments(root).catch((err) => log(`[sync] ${err.stack || err}`)), 400));
+}
+
+/** Every open feature document shown in Feature Designer under `root`, refreshed or offered a refresh. */
+async function syncOpenDocuments(root, { manual = false } = {}) {
+  if (!vscode.workspace.isTrusted) return;
+  const now = Date.now();
+  const isStorm = !manual && storm.isStorm(now), count = storm.size(now);
+  if (isStorm) log(`[sync] ${count} diagram sources changed within ${sync.STORM_WINDOW_MS / 1000} s: no automatic refresh`);
+  for (const [key, set] of panels) {
+    if (!set.size) continue;
+    const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === key);
+    if (!doc) continue;
+    let docRoot;
+    try { docRoot = rootOf(doc.uri); } catch { continue; }
+    if (docRoot !== root) continue;
+    await refreshOpenDocument(doc, { storm: isStorm, sources: count }).catch((err) => log(`[sync] ${relPath(root, doc.uri)}: ${err.message}`));
+  }
+}
+
+/** C1: automatic only for a clean document shown exclusively in Feature Designer, as one undoable
+ *  edit that is never saved; otherwise the document is left alone and "Refresh now" is offered. */
+async function refreshOpenDocument(doc, { storm: isStorm = false, sources = 0 } = {}) {
+  const key = doc.uri.toString(), root = rootOf(doc.uri), rel = relPath(root, doc.uri);
+  const version = doc.version;
+  const r = await ask(root, "refresh", { path: rel, text: doc.getText() }, false);
+  if (!r.edits.length) { postAll(key, { type: "syncNote", note: null, unless: "partial" }); return "none"; }
+  const ids = sync.idsOfEdits(r.edits);
+  const now = () => ({ busy: busy.has(key), storm: isStorm, dirty: doc.isDirty, otherEditors: otherCustomEditors(doc.uri),
+                       textEditor: textEditorOpen(doc.uri), designerViews: (panels.get(key) || new Set()).size });
+  let d = sync.decide(now());
+  if (d.action === "skip") return "skip";
+  if (d.action === "auto") {
+    if (testFaults.autoRefreshDelayMs) { const ms = testFaults.autoRefreshDelayMs; testFaults.autoRefreshDelayMs = 0; await new Promise((res) => setTimeout(res, ms)); }
+    d = sync.decide(now());                       // checked again immediately before applying
+    if (d.action === "auto" && doc.version === version) {
+      try {
+        await applyResponse(doc, r);              // the base-text guard: only the exact text it was computed from
+        log(`[sync] ${rel}: refreshed ${ids.join(", ")} from their sources (one edit, not saved)`);
+        postAll(key, { type: "syncNote", note: { kind: "auto", ids } });
+        return "auto";
+      } catch (err) { log(`[sync] ${rel}: not refreshed automatically (${err.message})`); d = { action: "manual", reason: "changed" }; }
+    } else if (d.action === "auto" || d.action === "skip") d = { action: d.action === "skip" ? "skip" : "manual", reason: "changed" };
+    if (d.action === "skip") return "skip";
+  }
+  log(`[sync] ${rel}: ${ids.join(", ")} out of date; not refreshed automatically (${d.reason})`);
+  postAll(key, { type: "syncNote", note: { kind: "manual", reason: d.reason, ids, sources, editors: d.editors || [] } });
+  return "manual";
+}
+
+// ------------------------------------------------------------------ Apply to source: recovery records (C3)
+function saveRecovery(meta, original) {
+  fs.mkdirSync(recoveryDir, { recursive: true });
+  const id = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+  fs.writeFileSync(path.join(recoveryDir, `${id}.original`), original);           // the source exactly as it was
+  const record = { id, time: new Date().toISOString(), state: "started", ...meta };
+  fs.writeFileSync(path.join(recoveryDir, `${id}.json`), JSON.stringify(record, null, 2));
+  return record;
+}
+function updateRecovery(record) { fs.writeFileSync(path.join(recoveryDir, `${record.id}.json`), JSON.stringify(record, null, 2)); }
+function dropRecovery(id) { for (const ext of [".json", ".original"]) { try { fs.unlinkSync(path.join(recoveryDir, id + ext)); } catch { /* gone */ } } }
+function listRecovery() {
+  if (!recoveryDir || !fs.existsSync(recoveryDir)) return [];
+  return fs.readdirSync(recoveryDir).filter((n) => n.endsWith(".json"))
+    .map((n) => { try { return JSON.parse(fs.readFileSync(path.join(recoveryDir, n), "utf8")); } catch { return null; } })
+    .filter((r) => r && typeof r.id === "string" && /^[0-9]+-[0-9a-f]{8}$/.test(r.id));
+}
+const recoveryOriginal = (id) => path.join(recoveryDir, `${id}.original`);
+
+/** Write `bytesOrText` into a source through the editor and save it; true only when the file on disk is exactly that. */
+async function writeSourceThroughEditor(srcDoc, srcPath, text) {
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(srcDoc.uri, fullRange(srcDoc), text);
+  if (!(await vscode.workspace.applyEdit(edit))) throw new Error("VS Code refused the edit");
+  if (!(await srcDoc.save())) throw new Error("VS Code did not save the file");
+  if (!fs.readFileSync(srcPath).equals(Buffer.from(text, "utf8"))) throw new Error("the saved file is not what was written");
+}
+
+/** Recovery after a partial Apply to source: "finish" updates the block, "restore" puts the original
+ *  source back (only if the source is still exactly what was written), "open" shows the preserved
+ *  original, "dismiss" keeps the current source and forgets the record. Each step is guarded. */
+async function recoveryAction(id, kind) {
+  const record = listRecovery().find((r) => r.id === id);
+  if (!record) { vscode.window.showInformationMessage("That interrupted operation was already resolved."); return; }
+  const srcPath = path.join(record.root, ...record.source.split("/"));
+  if (kind === "open") {
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(recoveryOriginal(id))), { preview: true });
+    return;
+  }
+  if (kind === "dismiss") {
+    const keep = "Keep the current source";
+    if ((await vscode.window.showWarningMessage(`Forget the preserved original of ${record.source}? The current source stays as it is.`, { modal: true }, keep)) !== keep) return;
+    dropRecovery(id); log(`[recovery] ${id}: dismissed; ${record.source} kept as is`);
+    return;
+  }
+  if (kind === "restore") {
+    const srcDoc = await vscode.workspace.openTextDocument(vscode.Uri.file(srcPath));
+    if (srcDoc.isDirty) throw refused(`${record.source} has unsaved changes; save or revert it first. Nothing was restored.`);
+    if (!fs.existsSync(srcPath) || sha256Bytes(fs.readFileSync(srcPath)) !== record.writtenSha)
+      throw refused(`${record.source} changed after Apply to source, so it was not restored automatically. The original is preserved: use "Open the preserved original".`);
+    const original = fs.readFileSync(recoveryOriginal(id));
+    await writeSourceThroughEditor(srcDoc, srcPath, original.toString("utf8"));
+    dropRecovery(id);
+    log(`[recovery] ${id}: restored the original ${record.source}`);
+    vscode.window.showInformationMessage(`Restored the original ${record.source}. The feature document was not changed.`);
+    for (const [key] of panels) postAll(key, { type: "syncNote", note: null, only: "partial" });
+    return;
+  }
+  if (kind === "finish") {
+    const docUri = vscode.Uri.file(path.join(record.root, ...record.document.split("/")));
+    const doc = await vscode.workspace.openTextDocument(docUri);
+    const r = await ask(record.root, "refresh", { path: record.document, text: doc.getText() });
+    const mine = r.edits.filter((e) => sync.idsOfEdits([e])[0] === record.diagram);
+    if (mine.length) await applyResponse(doc, { ...r, edits: mine });
+    const after = await ask(record.root, "blocks", { path: record.document, text: doc.getText() });
+    const states = after.blocks.filter((b) => b.id === record.diagram).map((b) => b.state);
+    if (!states.length || states.some((s) => s !== "current"))
+      throw refused(`The ${record.diagram} block in ${record.document} still differs from its source (${states.join(", ") || "not found"}): review it again. The record is kept.`);
+    dropRecovery(id);
+    log(`[recovery] ${id}: the ${record.diagram} block in ${record.document} now matches its source`);
+    vscode.window.showInformationMessage(`Completed: the ${record.diagram} block in ${record.document} now matches the saved source (not saved).`);
+    postAll(docUri.toString(), { type: "syncNote", note: null, only: "partial" });
+  }
+}
+
+async function offerRecovery() {
+  const pending = listRecovery();
+  if (!pending.length) return;
+  const review = "Review…";
+  const answer = await vscode.window.showWarningMessage(`${pending.length} Apply to source operation(s) did not complete. The original source content is preserved.`, review);
+  if (answer === review) await vscode.commands.executeCommand("featureDesigner.recovery");
+}
+
 /** After an insertion, warn if another editor rewrites the document and drops the inserted block. */
 function watchForOverwrite(doc, marker) {
   const count = (t) => t.split(marker).length - 1;
@@ -197,6 +356,7 @@ class DesignerEditor {
     ];
     panel.onDidDispose(() => { subs.forEach((s) => s.dispose()); clearTimeout(timer); clearTimeout(checkTimer); panels.get(key).delete(panel); });
     panel.updateBlocks = () => { clearTimeout(checkTimer); checkTimer = setTimeout(updateBlocks, 300); };
+    panel.onDidChangeViewState(() => panel.webview.postMessage({ type: "others", others: otherCustomEditors(document.uri) }));
     panel.webview.onDidReceiveMessage((msg) => this.handle(document, panel, msg).catch((err) => {
       if (!(err instanceof StaleEditError) && !err.refused) log(`[error] ${err.stack || err}`);
       panel.webview.postMessage({ type: "error", message: String(err.message || err) });
@@ -213,6 +373,8 @@ class DesignerEditor {
         panel.webview.postMessage({ type: "doc", text: document.getText(), version: document.version, rel,
                                     others: otherCustomEditors(document.uri) });
         panel.updateBlocks();
+        for (const r of listRecovery().filter((x) => x.root === root && x.document === rel && x.state === "partial"))
+          panel.webview.postMessage({ type: "partial", recovery: r.id, id: r.diagram, source: r.source, reason: r.reason });
         return;
       case "library":
         try { panel.webview.postMessage({ type: "library", data: await ask(root, "library", {}) }); }
@@ -230,6 +392,57 @@ class DesignerEditor {
         return;
       case "showLog":
         output.show(true);
+        return;
+      case "refreshNow": {                            // guarded manual refresh (B3): one undoable edit, not saved
+        if (!Number.isInteger(msg.version)) return;
+        if (msg.version !== document.version) throw new StaleEditError("the document changed; nothing was refreshed (try again)");
+        if (busy.has(document.uri.toString())) throw refused("this document is being reconciled; try again in a moment");
+        if (!(await confirmOtherEditors(document, "Refresh"))) return;
+        const r = await ask(root, "refresh", { path: rel, text: document.getText() });
+        if (document.version !== msg.version) throw new StaleEditError("the document changed; nothing was refreshed (try again)");
+        const ids = sync.idsOfEdits(r.edits);
+        if (r.edits.length) await applyResponse(document, r);
+        log(`[sync] ${rel}: refreshed ${ids.join(", ") || "nothing"} on request`);
+        postAll(document.uri.toString(), { type: "syncNote", note: r.edits.length ? { kind: "refreshed", ids } : null });
+        return;
+      }
+      case "save":
+        await document.save();
+        return;
+      case "showChanges": {                           // C2: the saved file against the refreshed buffer
+        const saved = vscode.Uri.from({ scheme: "featuredesigner-saved", path: document.uri.path });
+        await vscode.commands.executeCommand("vscode.diff", saved, document.uri, `${path.basename(document.uri.fsPath)}: saved ↔ now (not saved)`,
+                                             { viewColumn: vscode.ViewColumn.Beside, preview: true });
+        return;
+      }
+      case "checkSources":
+        panel.updateBlocks();
+        await syncOpenDocuments(root, { manual: true });
+        return;
+      case "reviewConflict": {                        // both plans, read only; the dialog confirms one of them
+        if (!Number.isInteger(msg.line) || !Number.isInteger(msg.version)) return;
+        if (msg.version !== document.version) throw new StaleEditError("the document changed; review the block again");
+        const text = document.getText();
+        const plan = async (action) => {
+          try {
+            const p = await ask(root, "reconcile", { path: rel, text, line: msg.line, action });
+            return { token: p.token, diff: p.diff, warning: p.warning, replaces: p.replaces_source_changes, state: p.state,
+                     source: p.source ? p.source.path : "" };
+          } catch (err) { if (err.refused) return { error: String(err.message) }; throw err; }
+        };
+        const discard = await plan("discard"), apply = await plan("apply-to-source");
+        if (document.version !== msg.version) throw new StaleEditError("the document changed; review the block again");
+        panel.webview.postMessage({ type: "review", line: msg.line, id: msg.id, version: msg.version, discard, apply });
+        return;
+      }
+      case "applyReconcile":
+        if (!["discard", "apply-to-source"].includes(msg.action) || !Number.isInteger(msg.line) || !Number.isInteger(msg.version) ||
+            typeof msg.token !== "string") return;
+        await reconcileBlock(document, root, rel, msg);
+        return;
+      case "recovery":
+        if (typeof msg.recovery !== "string" || !["finish", "restore", "open", "dismiss"].includes(msg.kind)) return;
+        await recoveryAction(msg.recovery, msg.kind);
         return;
       case "editDiagram":                            // the pencil: the authoritative source, by stable ID or alias
         if (typeof msg.id !== "string" || !msg.id) return;
@@ -303,6 +516,77 @@ class DesignerEditor {
   }
 }
 
+/** Discard manual change, or Apply to source (C3). Both are planned again on the current text and
+ *  must match the reviewed token; Apply to source writes the source first (saved) and then the
+ *  block, and reports exactly what happened if only the first step succeeded. */
+async function reconcileBlock(document, root, rel, msg) {
+  const key = document.uri.toString();
+  if (msg.version !== document.version) throw refused("The document changed since the review; nothing was changed. Review the block again.");
+  if (!(await confirmOtherEditors(document, msg.action === "discard" ? "Discard" : "Apply"))) return;
+  busy.add(key);                                  // no automatic refresh of this document meanwhile
+  try {
+    const plan = await ask(root, "reconcile", { path: rel, text: document.getText(), line: msg.line, action: msg.action });
+    if (plan.token !== msg.token || document.version !== msg.version)
+      throw refused("The document or the diagram source changed since the review; nothing was changed. Review the block again.");
+    if (plan.replaces_source_changes && msg.replaceConfirmed !== true)
+      throw refused("Applying would replace changes made in the source; confirm that explicitly in the review. Nothing was changed.");
+    if (msg.action === "discard") {
+      await applyResponse(document, plan);
+      log(`[reconcile] ${rel}: discarded the manual change to ${plan.id}`);
+      postAll(key, { type: "reconciled", text: `Discarded the manual change to ${plan.id}: the block matches its source again (one undoable edit; not saved).` });
+      return;
+    }
+    await applySourceThenBlock(document, root, rel, plan, msg);
+  } finally { busy.delete(key); }
+}
+
+async function applySourceThenBlock(document, root, rel, plan, msg) {
+  const key = document.uri.toString(), src = plan.source;
+  const srcPath = path.resolve(root, ...src.path.split("/"));
+  if (!srcPath.startsWith(root + path.sep) || src.path.startsWith("docs/architecture/") || !src.path.startsWith("designs/"))
+    throw refused(`${src.path} is not a feature-owned diagram source; nothing was changed`);   // the design tooling refuses it too
+  const srcDoc = await vscode.workspace.openTextDocument(vscode.Uri.file(srcPath));
+  if (srcDoc.isDirty) throw refused(`${src.path} has unsaved changes; save or revert it first. Nothing was changed.`);
+  const original = fs.readFileSync(srcPath);
+  // immediately before applying: both revisions are still the reviewed ones
+  if (sha256Bytes(original) !== src.sha256 || sha256(srcDoc.getText()) !== src.sha256)
+    throw refused(`${src.path} changed since the review; nothing was changed. Review the block again.`);
+  if (document.version !== msg.version || sha256(document.getText()) !== plan.base.sha256)
+    throw refused("The document changed since the review; nothing was changed. Review the block again.");
+  const record = saveRecovery({ root, source: src.path, document: rel, diagram: plan.id, writtenSha: sha256Bytes(Buffer.from(src.text, "utf8")),
+                                originalSha: sha256Bytes(original) }, original);
+  try {                                           // 1. the source, through the editor, saved and verified
+    await writeSourceThroughEditor(srcDoc, srcPath, src.text);
+  } catch (err) {
+    let restored = false;
+    try {
+      if (!fs.readFileSync(srcPath).equals(original) || srcDoc.isDirty) await writeSourceThroughEditor(srcDoc, srcPath, original.toString("utf8"));
+      restored = fs.readFileSync(srcPath).equals(original);
+    } catch (e2) { log(`[reconcile] could not put ${src.path} back: ${e2.message}`); }
+    if (restored) { dropRecovery(record.id); throw refused(`Nothing was applied: ${src.path} could not be written (${err.message}); it is unchanged.`); }
+    record.state = "partial"; record.reason = `the source could not be written cleanly (${err.message})`; updateRecovery(record);
+    throw refused(`${src.path} may have been changed and could not be put back (${err.message}). Its original is preserved: run "Feature Designer: Resolve Interrupted Apply to Source".`);
+  }
+  try {                                           // 2. the block, only on the reviewed text
+    if (testFaults.failNextReconcileDocument) { testFaults.failNextReconcileDocument = false; throw new Error("the document could not be edited (simulated)"); }
+    if (document.version !== msg.version) throw new StaleEditError("the document changed while the source was being saved");
+    await applyResponse(document, plan);
+  } catch (err) {
+    record.state = "partial"; record.reason = String(err.message || err); updateRecovery(record);
+    log(`[reconcile] PARTIAL ${rel}: ${src.path} saved, the ${plan.id} block NOT updated (${record.reason}); recovery ${record.id}`);
+    postAll(key, { type: "partial", recovery: record.id, id: plan.id, source: src.path, reason: record.reason });
+    const finish = "Update the block now", restore = "Restore the original source";
+    vscode.window.showWarningMessage(`Partly done: ${src.path} was updated and saved, but the ${plan.id} block in ${rel} was NOT updated ` +
+      `(${record.reason}). The original source is preserved.`, finish, restore)
+      .then((a) => a && recoveryAction(record.id, a === finish ? "finish" : "restore").catch((e) => vscode.window.showErrorMessage(e.message)));
+    return;
+  }
+  dropRecovery(record.id);
+  log(`[reconcile] ${rel}: applied the ${plan.id} block to ${src.path} (saved) and updated the block (not saved)`);
+  postAll(key, { type: "reconciled", text: `Applied to source: saved ${src.path} and updated the ${plan.id} block here (not saved). ` +
+    `Ctrl+Z in this document reverts only the block; the source change is saved and is undone separately in ${path.basename(src.path)}.` });
+}
+
 /** When a feature file open in Feature Designer is saved, bring designs/index/feature-index.md up to date. */
 async function syncFeatureIndex(doc) {
   if (!panels.has(doc.uri.toString()) || !panels.get(doc.uri.toString()).size) return;
@@ -361,7 +645,7 @@ function html(webview, ext) {
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="${uri("media", "designer.css")}"><title>Feature Designer</title></head>
-<body><div id="toolbar"></div><div id="banner" hidden></div><div id="stale" hidden></div><div id="notice" hidden></div><main id="doc" aria-label="Feature document"></main>
+<body><div id="top"><div id="toolbar"></div><div id="banner" hidden></div><div id="stale" hidden></div><div id="notice" hidden></div><div id="strip" hidden role="status" aria-live="polite"></div><div id="status" role="status" aria-live="polite"></div></div><main id="doc" aria-label="Feature document"></main>
 ${scripts.map((s) => `<script nonce="${nonce}" src="${s}"></script>`).join("\n")}
 <script nonce="${nonce}">window.FD_HOST = { api: acquireVsCodeApi() };</script>
 <script nonce="${nonce}" src="${uri("media", "designer.js")}"></script>
@@ -370,11 +654,29 @@ ${scripts.map((s) => `<script nonce="${nonce}" src="${s}"></script>`).join("\n")
 
 function activate(context) {
   output = vscode.window.createOutputChannel("Feature Designer");
+  recoveryDir = path.join(context.globalStorageUri.fsPath, "recovery");   // outside the repository; survives restarts
   context.subscriptions.push(
     output,
     vscode.window.registerCustomEditorProvider(VIEW_TYPE, new DesignerEditor(context),
       { webviewOptions: { retainContextWhenHidden: true }, supportsMultipleEditorsPerDocument: true }),
     vscode.commands.registerCommand("featureDesigner.showLog", () => output.show(true)),
+    vscode.commands.registerCommand("featureDesigner.checkSources", async () => {   // when a file watcher missed a change
+      const roots = new Set();
+      for (const [key, set] of panels) { if (!set.size) continue; try { roots.add(rootOf(vscode.Uri.parse(key))); } catch { /* not a repository */ } for (const p of set) p.updateBlocks(); }
+      for (const root of roots) await syncOpenDocuments(root, { manual: true });
+    }),
+    vscode.commands.registerCommand("featureDesigner.recovery", async () => {
+      const pending = listRecovery();
+      if (!pending.length) { vscode.window.showInformationMessage("No interrupted Apply to source operation."); return; }
+      const pick = pending.length === 1 ? pending[0] : (await vscode.window.showQuickPick(pending.map((r) => ({ label: `${r.diagram}: ${r.source}`, description: r.time, r })), { placeHolder: "Interrupted Apply to source" }) || {}).r;
+      if (!pick) return;
+      const choices = { "Restore the original source": "restore", "Update the block": "finish", "Open the preserved original": "open", "Keep the current source (forget)": "dismiss" };
+      const answer = await vscode.window.showWarningMessage(`Apply to source for ${pick.diagram} did not complete (${pick.reason || "interrupted"}): ${pick.source} ` +
+        `was changed, the block in ${pick.document} was not. The original source is preserved.`, { modal: true }, ...Object.keys(choices));
+      if (answer) await recoveryAction(pick.id, choices[answer]).catch((e) => vscode.window.showErrorMessage(e.message));
+    }),
+    vscode.workspace.registerTextDocumentContentProvider("featuredesigner-saved",       // Show changes: the file as saved
+      { provideTextDocumentContent: (uri) => { try { return fs.readFileSync(vscode.Uri.file(uri.path).fsPath, "utf8"); } catch { return ""; } } }),
     vscode.commands.registerCommand("featureDesigner.selectPython", async () => {
       const picked = await pickInterpreter(vscode);
       if (!picked) return;
@@ -394,11 +696,15 @@ function activate(context) {
       log(`[python] featureDesigner.${SETTING} changed; the design tooling restarts on the next request`);
     }),
     { dispose: () => { for (const b of bridges.values()) b.dispose(); bridges.clear(); } });
-  // Read-only hooks for the automated tests (process ID, simulated crash); no document access.
+  setTimeout(() => offerRecovery().catch((err) => log(`[recovery] ${err.message}`)), 1500);
+  // Hooks for the automated tests (process ID, simulated crash, fault injection); inert unless called.
   return {
     bridgePid: (root) => (bridges.get(root) ? bridges.get(root).pid : null),
     killBridgeProcess: (root) => { const b = bridges.get(root); if (b && b.proc) b.proc.kill(); return !!(b && b.proc); },
     failNextInsertion: () => { testFaults.failNextInsertion = true; return true; },   // Make New: the insertion after creation fails once
+    failNextReconcileDocument: () => { testFaults.failNextReconcileDocument = true; return true; },   // Apply to source: the block edit fails once
+    delayNextAutoRefresh: () => { testFaults.autoRefreshDelayMs = 2500; return true; },   // time to type before an automatic refresh applies
+    pendingRecovery: () => listRecovery().map((r) => ({ id: r.id, state: r.state, source: r.source })),
   };
 }
 
@@ -406,7 +712,10 @@ function activate(context) {
  *  disk (saved in VS Code or changed outside it). Rendering only: no document is changed here. */
 function sourceWatchers() {
   let timer = null;
-  const again = () => { clearTimeout(timer); timer = setTimeout(() => { for (const set of panels.values()) for (const p of set) if (p.updateBlocks) p.updateBlocks(); }, 250); };
+  const again = (uri) => {
+    clearTimeout(timer); timer = setTimeout(() => { for (const set of panels.values()) for (const p of set) if (p.updateBlocks) p.updateBlocks(); }, 250);
+    if (uri) onSourceEvent(uri);                    // PR B2a: refresh open documents (C1) or offer it
+  };
   return ["**/designs/**/*.md", "**/designs/diagrams/registry.yml", "**/docs/architecture/**/*.md"].flatMap((glob) => {
     const w = vscode.workspace.createFileSystemWatcher(glob);
     return [w, w.onDidChange(again), w.onDidCreate(again), w.onDidDelete(again)];
