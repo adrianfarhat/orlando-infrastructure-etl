@@ -722,7 +722,7 @@ async function prB2aSteps() {
         { ins, notice: newNotice.slice(0, 80) });
     await app.host("command", { id: "workbench.action.focusFirstEditorGroup" });
     const counts = await waitFor(() => stripRow("counts"), 8000);
-    await f.locator("#strip .counts .refresh-now").click();
+    await f.locator("#strip .refresh-now").first().click();          // in the counts row, or with the reason it was not automatic
     await waitFor(async () => (await caText()).includes('B["Auto one"]'), 10000);
     rec("S1b afterwards the strip shows the block as out of date with Refresh now, which refreshes it as one edit", /1 out of date/.test(counts || "") && (await caText()).includes('B["Auto one"]'), counts);
     await app.host("save", { path: CA }); await sleep(1000);
