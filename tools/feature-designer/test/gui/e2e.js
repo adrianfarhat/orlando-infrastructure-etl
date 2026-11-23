@@ -1,8 +1,9 @@
-// Feature Designer (T-97 Phase 2) end-to-end test in the pinned VS Code 1.146 test build, with
+// Feature Designer (T-97 Phase 2, PR B1) end-to-end test in the pinned VS Code 1.146 test build, with
 // real pointer and keyboard input (Playwright over CDP). Writes evidence to test/gui/.run/.
 "use strict";
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { execFileSync } = require("child_process");
 const { RUN, WS, PY, fixture, launch, close, designerFrame, markSharpFrame, design, sleep } = require("./vscode");
 
@@ -43,11 +44,16 @@ async function dialogButton(label) {                       // VS Code's custom (
   const btn = app.page.locator(".monaco-dialog-box .dialog-buttons a.monaco-button, .monaco-dialog-box .dialog-buttons .monaco-button").filter({ hasText: label }).first();
   await btn.waitFor({ timeout: 15000 }); await btn.click();
 }
+/** "+" below a block, then Place Diagram ▸ <which> (PR B). */
+async function placeMenu(idx, which) {
+  await app.page.mouse.move(...Object.values(center(await box(blockSel(idx)))), { steps: 3 });
+  await f.locator(`${blockSel(idx)} >> .plus`).click();
+  await f.locator('.menu [role="menuitem"].has-sub').click();
+  await f.locator('.menu.sub [role="menuitem"]', { hasText: which }).click();
+}
 async function insertVia(heading, query) {
   const b = await blockAfter(heading);
-  await app.page.mouse.move(...Object.values(center(await box(blockSel(b.idx)))), { steps: 4 });
-  await f.locator(`${blockSel(b.idx)} >> .plus`).click();
-  await f.locator('.menu [role="menuitem"]', { hasText: "Insert Existing Diagram" }).click();
+  await placeMenu(b.idx, "Add Existing Diagram");
   await f.waitForSelector(".tree li.item", { state: "attached", timeout: 20000 });
   await f.locator('.dlg input[type="search"]').fill(query); await sleep(200);
   const v = await version();
@@ -66,9 +72,7 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     await app.host("openWith", { path: FEATURE, viewType: "featureDesigner.editor" });
     f = await designerFrame(app.page);                    // rendering needs no Python; the library does
     const b0 = await blockAfter("3. Logic");
-    await app.page.mouse.move(...Object.values(center(await box(blockSel(b0.idx)))), { steps: 3 });
-    await f.locator(`${blockSel(b0.idx)} >> .plus`).click();
-    await f.locator('.menu [role="menuitem"]').first().click();
+    await placeMenu(b0.idx, "Add Existing Diagram");
     const dlg = app.page.locator(".monaco-dialog-box");
     await dlg.waitFor({ timeout: 30000 });
     const message = await dlg.innerText();
@@ -107,22 +111,42 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     const plus = `${blockSel(b.idx)} >> .plus`;
     await app.page.mouse.move(1000, 14);
     const before = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity);
-    await app.page.mouse.move(...Object.values(center(await box(blockSel(b.idx)))), { steps: 6 }); await sleep(400);
-    const after = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity);
+    const c = center(await box(blockSel(b.idx)));
+    await app.page.mouse.move(c.x, c.y, { steps: 6 });
+    const after = await waitFor(async () => { await app.page.mouse.move(c.x + 2, c.y, { steps: 1 });   // hover is re-evaluated on movement
+                                               const o = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity); return o === "1" ? o : null; }, 3000, 200) || "0";
     await app.page.mouse.move(...Object.values(center(await box(plus))), { steps: 4 }); await sleep(200);
-    const onIt = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity);
+    const onIt = await waitFor(async () => { const o = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity); return o === "1" ? o : null; }, 3000, 200) || "0";
     await f.locator(plus).click();
-    const items = await f.locator('.menu [role="menuitem"]').allTextContents();
+    const items = await f.locator('.menu:not(.sub) [role="menuitem"]').allTextContents();
+    await f.locator('.menu [role="menuitem"].has-sub').hover();
+    const sub = await waitFor(() => f.locator('.menu.sub [role="menuitem"]').allTextContents().then((x) => x.length ? x : null), 3000);
     await snap("menu");
-    rec("2 hover reveals + (stays while moving onto it); the menu shows only Insert Existing Diagram",
-        before === "0" && after === "1" && onIt === "1" && JSON.stringify(items) === '["Insert Existing Diagram"]', { before, after, onIt, items });
+    rec("2 / B1 hover reveals + (stays while moving onto it); the menu shows Place Diagram ▸ Add Existing Diagram… / Make New Diagram…",
+        before === "0" && after === "1" && onIt === "1" && JSON.stringify(items) === '["Place Diagram▸"]' &&
+        JSON.stringify(sub) === '["Add Existing Diagram…","Make New Diagram…"]', { before, after, onIt, items, sub });
     await app.page.keyboard.press("Escape");
+    await f.locator(plus).click();                                    // keyboard: Right opens the submenu, Left closes it
+    await app.page.keyboard.press("ArrowRight");
+    const focused = await f.evaluate(() => document.activeElement && document.activeElement.textContent);
+    await app.page.keyboard.press("ArrowLeft");
+    const closed = await f.evaluate(() => !document.querySelector(".menu.sub") && document.activeElement.classList.contains("has-sub"));
+    rec("B1b keyboard: ArrowRight opens the submenu on its first item; ArrowLeft returns to Place Diagram", focused === "Add Existing Diagram…" && closed, { focused, closed });
+    await app.page.keyboard.press("Escape");
+    // a menu closed in the same tick it opened must not leave its outside-click listener behind
+    await f.evaluate((i) => { document.querySelector(`#doc > .block:nth-child(${i + 1}) > .plus`).click();
+                              document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); }, b.idx);
+    await sleep(300);
+    await f.locator(plus).click();
+    await f.locator('.menu [role="menuitem"].has-sub').click();
+    const still = await waitFor(() => f.evaluate(() => !!document.querySelector(".menu.sub") && !!document.querySelector(".menu:not(.sub)")), 3000);
+    rec("B1c a menu closed as soon as it opened leaves nothing behind: the next menu stays open when clicked", !!still);
+    await app.page.keyboard.press("Escape"); await app.page.keyboard.press("Escape");
   });
 
   await step("3 library", async () => {
     const b = await blockAfter("3. Logic");
-    await f.locator(`${blockSel(b.idx)} >> .plus`).click();
-    await f.locator('.menu [role="menuitem"]').first().click();
+    await placeMenu(b.idx, "Add Existing Diagram");
     await f.waitForSelector(".tree li.item", { state: "attached", timeout: 20000 });
     const lib = await f.evaluate(() => ({
       cats: [...document.querySelectorAll(".tree > li.cat > .row .label")].map((x) => x.textContent),
@@ -132,7 +156,12 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     const search = f.locator('.dlg input[type="search"]');
     const visible = async (q) => { await search.fill(q); await sleep(150); return f.evaluate(() => [...document.querySelectorAll(".tree li.item")].filter((li) => li.offsetParent).map((li) => li.dataset.id)); };
     const byName = await visible("credential"), byOwner = await visible("FD-0002"), byDoc = await visible("etl-workflow.md");
+    const byAlias = await visible(CRED_ALIAS), byCategory = await visible("other condition");
+    const title = await f.locator(".dlg header").innerText();
     await snap("library");
+    rec("B2 Add Existing Diagram: titled so; a former catalog ID (alias) and a category also find a diagram",
+        title === "Add Existing Diagram" && JSON.stringify(byAlias) === `["${CRED}"]` && JSON.stringify(byCategory) === `["${OWNED}"]`,
+        { title, byAlias, byCategory });
     rec("3 library: two categories, 14 architecture diagrams, feature groups; search by name, owner and source document",
         JSON.stringify(lib.cats) === '["Main Branch — Architecture","Feature Documents"]' && lib.arch === 14 &&
         lib.feats.length === 2 && JSON.stringify(lib.owned) === `["${OWNED}"]` && JSON.stringify(byName) === `["${CRED}"]` &&
@@ -145,9 +174,7 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     await app.host("setGlobal", { section: "featureDesigner", key: "pythonPath", value: "C:sersxampleocumentspython.exe" });
     await sleep(500);
     const b = await blockAfter("3. Logic");
-    await app.page.mouse.move(...Object.values(center(await box(blockSel(b.idx)))), { steps: 3 });
-    await f.locator(`${blockSel(b.idx)} >> .plus`).click();
-    await f.locator('.menu [role="menuitem"]').first().click();
+    await placeMenu(b.idx, "Add Existing Diagram");
     const error = await waitFor(() => f.evaluate(() => { const e = document.querySelector(".tree .lib-error"); return e ? e.innerText : ""; }), 15000);
     const buttons = await f.evaluate(() => [...document.querySelectorAll(".tree .lib-actions button")].map((x) => x.textContent));
     const stuck = await f.evaluate(() => /Loading the diagram library/.test(document.querySelector(".tree").innerText));
@@ -171,8 +198,9 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     const b = await blockAfter("3. Logic");
     await app.page.mouse.move(...Object.values(center(await box(blockSel(b.idx)))), { steps: 3 });
     await f.locator(`${blockSel(b.idx)} >> .plus`).click();
+    await f.locator('.menu [role="menuitem"].has-sub').click();
     const t0 = Date.now();
-    await f.locator('.menu [role="menuitem"]').first().click();
+    await f.locator('.menu.sub [role="menuitem"]', { hasText: "Add Existing Diagram" }).click();
     const error = await waitFor(() => f.evaluate(() => { const e = document.querySelector(".tree .lib-error"); return e ? e.innerText : ""; }), 15000);
     const seconds = (Date.now() - t0) / 1000;
     const buttons = await f.evaluate(() => [...document.querySelectorAll(".tree .lib-actions button")].map((x) => x.textContent));
@@ -206,6 +234,11 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
         iOwned > 0 && iCred > 0 && iCred < iOwned && untouched && L[iOwned + 1].startsWith("**🔷 Proposed:") && L[iCred + 1].startsWith("**✅ Current architecture:"),
         { iCred, iOwned, untouched });
     rec("4b the document is dirty, not saved behind VS Code's back", (await doc()).isDirty === true && !fs.readFileSync(path.join(WS, FEATURE), "utf8").includes(OWNED));
+    const drawn = await waitFor(() => f.evaluate(([a, b]) => ["current"].includes((document.querySelector(`.gen[data-diagram="${a}"]`) || {}).dataset?.state) &&
+                                                             (document.querySelector(`.gen[data-diagram="${b}"]`) || {}).dataset?.state === "current", [OWNED, CRED]), 15000);
+    const sources = fs.readdirSync(path.join(WS, "designs/features/diagrams"));
+    rec("B2b the references use the stable IDs with fingerprints, render from their sources (state current), and no source file was copied",
+        /^<!-- diagram:start AD-0011 sha256:[0-9a-f]{16} -->$/.test(L[iCred]) && !!drawn && sources.length === 1, { marker: L[iCred], drawn: !!drawn, sources });
   });
 
   await step("5 stale insert refused", async () => {
@@ -240,12 +273,16 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
   });
 
   await step("8 edit source", async () => {
-    await f.locator(`.edit-source[data-id="${CRED}"]`).scrollIntoViewIfNeeded();
-    await f.locator(`.edit-source[data-id="${CRED}"]`).click();
+    await app.host("command", { id: "notifications.clearAll" });
+    await f.locator(`.edit-diagram[data-id="${CRED}"]`).scrollIntoViewIfNeeded();
+    await f.locator(`.edit-diagram[data-id="${CRED}"]`).click();
     const tab = await waitFor(async () => (await app.host("tabs")).find((t) => t.label === "system-architecture.md" && t.kind === "text"));
-    const line = await waitFor(() => app.page.locator(".line-numbers.active-line-number").allTextContents().then((x) => x.map((s) => s.trim()).filter(Boolean)));
+    const line = await waitFor(() => app.page.locator(".line-numbers.active-line-number").allTextContents().then((x) => { const n = x.map((s) => s.trim()).filter(Boolean); return n.length ? n : null; }), 10000) || [];
     const src = fs.readFileSync(path.join(WS, "docs/architecture/system-architecture.md"), "utf8").split(/\r?\n/);
-    rec("8 Edit source opens the authoritative Mermaid line", !!tab && line && line.some((n) => src[+n - 1] && src[+n - 1].startsWith("```mermaid")), { line });
+    const toast = await waitFor(() => app.page.locator(".notifications-toasts").innerText().catch(() => ""), 8000);
+    rec("8 / B6 the pencil on an architecture diagram opens the authoritative Mermaid line, with the technical-lead workflow notice",
+        !!tab && line && line.some((n) => src[+n - 1] && src[+n - 1].startsWith("```mermaid")) && /technical-lead's documentation workflow/.test(toast || ""),
+        { line, toast: (toast || "").slice(0, 140) });
     await snap("edit-source");
   });
 
@@ -313,9 +350,7 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     await snap("mark-sharp-side-by-side");
     // insert from the Designer: the modal warning names Mark Sharp
     const b = await blockAfter("4. Dependencies");
-    await app.page.mouse.move(...Object.values(center(await box(blockSel(b.idx)))), { steps: 3 });
-    await f.locator(`${blockSel(b.idx)} >> .plus`).click();
-    await f.locator('.menu [role="menuitem"]').first().click();
+    await placeMenu(b.idx, "Add Existing Diagram");
     await f.waitForSelector(".tree li.item", { state: "attached" });
     await f.locator('.dlg input[type="search"]').fill(OWNED); await sleep(150);
     const v = await version();
@@ -372,6 +407,8 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
           untouched, checkAfterReconcile: check2.trim().split("\n").pop() });
   });
 
+  await prB1Steps();
+
   await close(app); app = null;
 
   // workspace trust: the editor is not available in an untrusted workspace
@@ -394,6 +431,227 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
   console.log(`\n${results.length - failed.length} of ${results.length} checks passed`);
   process.exit(failed.length ? 1 : 0);
 })().catch(async (e) => { console.error(e); await close(app); process.exit(2); });
+
+// ---------------------------------------------------------------------------------------- PR B1
+const OWN_SRC = "designs/features/diagrams/road-pipe-intersections_process_pipe-flow.md";
+const SHARED_SRC = "designs/features/diagrams/condition-analysis_system-architecture_shared-condition-view.md";
+const registryText = () => fs.readFileSync(path.join(WS, "designs/diagrams/registry.yml"), "utf8");
+const stateOf = (id) => f.evaluate((x) => { const g = document.querySelector(`.gen[data-diagram="${x}"]`); return g ? g.dataset.state : ""; }, id);
+const statusText = () => f.evaluate(() => { const s = document.querySelector("#status"); return s && s.style.display !== "none" ? s.textContent : ""; });
+function archHash() {
+  const h = crypto.createHash("sha256");
+  const walk = (dir) => { for (const n of fs.readdirSync(dir).sort()) { const p = path.join(dir, n); if (fs.statSync(p).isDirectory()) walk(p); else h.update(n).update(fs.readFileSync(p)); } };
+  walk(path.join(WS, "docs/architecture"));
+  return h.digest("hex");
+}
+/** Undo/redo in Feature Designer: Edit Diagram leaves the keyboard focus in the source opened beside it. */
+async function designerKey(key) {
+  await app.host("command", { id: "workbench.action.focusFirstEditorGroup" });
+  await f.locator("h1").click(); await app.page.keyboard.press(key);
+}
+async function makeNew(heading, name, ownerId) {
+  const b = await blockAfter(heading);
+  await placeMenu(b.idx, "Make New Diagram");
+  await f.waitForSelector(".make-new", { timeout: 15000 });
+  const category = await f.locator(".dg-category").inputValue();
+  const ownerBefore = await waitFor(() => f.locator(".owner-text").innerText().then((t) => (/—/.test(t) ? t : "")), 15000) || await f.locator(".owner-text").innerText();
+  await f.locator(".dg-name").fill(name);
+  let confirmText = "";
+  if (ownerId) {
+    await f.locator(".change-owner").click();
+    await f.locator(".owner-select").selectOption(ownerId);
+    await f.locator(".use-owner").click();
+    confirmText = await f.locator(".confirm-text").innerText();
+    await f.locator(".confirm-owner").click();
+  }
+  const file = await waitFor(() => f.evaluate(() => { const e = document.querySelector(".dg-file"); return e && /^File: /.test(e.textContent) ? e.textContent : ""; }), 15000);
+  const ownerAfter = await f.locator(".owner-text").innerText();
+  const v = await version();
+  await f.locator(".dlg button.primary").click();
+  return { category, ownerBefore, ownerAfter, confirmText, file, v };
+}
+
+async function prB1Steps() {
+  const archBefore = archHash();
+  await step("B3 Make New Diagram", async () => {
+    // a clean start even if an earlier step failed: Mark Sharp closed, the fixture file saved (test data only)
+    await app.host("save", { path: FEATURE }); await sleep(500);
+    await app.host("closeAll"); await dialogDismissIfAny();
+    if ((await app.host("tabs")).length) { await app.host("revert", { path: FEATURE }); await app.host("closeAll"); await dialogDismissIfAny(); }
+    if ((await app.host("tabs")).length) throw new Error(`could not start from a clean state: ${JSON.stringify(await app.host("tabs"))}`);
+    await app.host("openWith", { path: FEATURE, viewType: "featureDesigner.editor", column: 1 });
+    f = await designerFrame(app.page);
+    const before = (await doc()).text;
+    const m = await makeNew("3. Logic", "Pipe flow");
+    await waitVersion(m.v);
+    const after = (await doc()).text, L = after.split(/\r?\n/), i = markerAt(L, "FD-0001-D1");
+    const logic = L.indexOf("## 3. Logic"), deps = L.indexOf("## 4. Dependencies");
+    const tab = await waitFor(async () => (await app.host("tabs")).find((t) => t.label === path.basename(OWN_SRC) && t.kind === "text"));
+    const line = await waitFor(() => app.page.locator(".line-numbers.active-line-number").allTextContents().then((x) => { const n = x.map((s) => s.trim()).filter(Boolean); return n.length ? n : null; }), 10000) || [];
+    const src = fs.readFileSync(path.join(WS, OWN_SRC), "utf8").split(/\r?\n/);
+    const reg = registryText();
+    await snap("make-new-created");
+    rec("B3 Make New: category preselected from section 3 (process), owner = this feature, one source file and one registry entry, the reference inserted at + with a fingerprint, its source opened at the Mermaid line",
+        m.category === "process" && /FD-0001 — Road pipe intersections \(the feature you are editing\)/.test(m.ownerBefore) && m.file === `File: ${OWN_SRC}` &&
+        fs.existsSync(path.join(WS, OWN_SRC)) && reg.split("diagram_id: FD-0001-D1").length === 2 && logic < i && i < deps &&
+        /^<!-- diagram:start FD-0001-D1 sha256:[0-9a-f]{16} -->$/.test(L[i]) && before.split(/\r?\n/).every((l) => L.includes(l)) &&
+        !!tab && line && line.some((n) => (src[+n - 1] || "").startsWith("```mermaid")),
+        { category: m.category, owner: m.ownerBefore, file: m.file, i, logic, deps, line });
+    rec("B3b the source content is not copied: the document holds only the generated reference block",
+        !after.includes("Question this diagram answers") && after.includes("road-pipe-intersections_process_pipe-flow.md"));
+    await designerKey("Control+Z"); await sleep(1000);
+    const undone = await text();
+    await designerKey("Control+Y"); await sleep(1000);
+    rec("B3c one Ctrl+Z removes exactly the inserted reference (the created source stays registered); Ctrl+Y restores it",
+        undone === before && (await text()) === after && fs.existsSync(path.join(WS, OWN_SRC)));
+    const b = await blockAfter("3. Logic");
+    await placeMenu(b.idx, "Add Existing Diagram");
+    await f.waitForSelector(".tree li.item", { state: "attached", timeout: 20000 });
+    await f.locator('.dlg input[type="search"]').fill("pipe flow"); await sleep(200);
+    const listed = await f.evaluate(() => [...document.querySelectorAll(".tree li.item")].filter((li) => li.offsetParent).map((li) => li.dataset.id));
+    rec("B3d the new diagram is listed in the library under its owner", JSON.stringify(listed) === '["FD-0001-D1"]', listed);
+    await app.page.keyboard.press("Escape");
+  });
+
+  await step("B4 Change owner", async () => {
+    const m = await makeNew("4. Dependencies", "Shared condition view", "FD-0002");
+    await waitVersion(m.v);
+    const L = (await text()).split(/\r?\n/), i = markerAt(L, "FD-0002-D2");
+    const resolved = JSON.parse(py(["-m", "tools.design", "resolve", "FD-0002-D2"]));
+    rec("B4 Change owner… is explicit and confirmed (names both features); the diagram is created and owned by FD-0002 and referenced here",
+        m.category === "system-architecture" && /FD-0002 — Condition analysis/.test(m.confirmText) && /not by FD-0001 — Road pipe intersections/.test(m.confirmText) &&
+        /does not change its owner/.test(m.confirmText) && /not the feature you are editing/.test(m.ownerAfter) && m.file === `File: ${SHARED_SRC}` &&
+        i > 0 && resolved.owner && resolved.owner.ref === "FD-0002" && resolved.path === SHARED_SRC,
+        { category: m.category, confirm: m.confirmText.slice(0, 160), owner: m.ownerAfter, file: m.file, i, owner2: resolved.owner });
+    const reg = registryText(), t = await text(), v = await version();
+    for (const owner of ["FD-0099", "FD-0001 --root x"]) {
+      await f.evaluate(([ver, o]) => window.FD_HOST.api.postMessage({ type: "makeNew", at: 30, version: ver, owner: o, title: "Not allowed", category: "other" }), [v, owner]);
+      await sleep(1500);
+    }
+    const msg = await waitFor(statusText, 5000);
+    rec("B4b an invalid owner is refused and nothing is created", registryText() === reg && (await text()) === t &&
+        !fs.readdirSync(path.join(WS, "designs/features/diagrams")).some((n) => /not-allowed/.test(n)) && /feature ID|no feature/.test(msg || ""), msg);
+  });
+
+  await step("B5 created but not inserted", async () => {
+    await app.host("command", { id: "notifications.clearAll" });
+    await app.host("designer", { fn: "failNextInsertion" });
+    const t = await text();
+    const m = await makeNew("1. Objective", "Later flow");
+    const note = await waitFor(() => f.evaluate(() => { const n = document.querySelector("#notice"); return n && !n.hidden ? n.innerText : ""; }), 20000);
+    const toast = await waitFor(() => app.page.locator(".notifications-toasts").innerText().catch(() => ""), 8000);
+    await snap("created-not-inserted");
+    rec("B5 when the insertion fails after creation, the stable ID is shown with an Add Existing Diagram action; the document is unchanged; the diagram stays registered",
+        /FD-0001-D2 was created and registered/.test(note || "") && /not inserted/.test(note || "") && /Add Existing Diagram/.test(note || "") &&
+        /FD-0001-D2/.test(toast || "") && (await text()) === t && registryText().includes("diagram_id: FD-0001-D2"),
+        { note: (note || "").slice(0, 160), toast: (toast || "").slice(0, 120) });
+    await f.locator("#notice .add-existing").click();
+    const prompt = await f.locator("#notice").innerText();
+    const b = await blockAfter("1. Objective");
+    await app.page.mouse.move(...Object.values(center(await box(blockSel(b.idx)))), { steps: 3 });
+    await f.locator(`${blockSel(b.idx)} >> .plus`).click();
+    await f.waitForSelector(".tree li.item", { state: "attached", timeout: 20000 });
+    const dlg = await f.locator(".dlg header").innerText();
+    const sel = await waitFor(() => f.evaluate(() => { const r = document.querySelector('.tree .row[aria-selected="true"]'); return r ? r.parentElement.dataset.id : ""; }), 5000);
+    const v = await version();
+    await app.page.keyboard.press("Enter");
+    await waitVersion(v);
+    const L = (await text()).split(/\r?\n/), i = markerAt(L, "FD-0001-D2"), obj = L.indexOf("## 1. Objective"), data = L.indexOf("## 2. Data contract");
+    const cleared = await waitFor(() => f.evaluate(() => document.querySelector("#notice").hidden), 5000);
+    rec("B5b Add Existing Diagram places it later: click + where it should go, the library opens with it selected, Enter inserts it, the notice clears",
+        /Click \+ where diagram FD-0001-D2 should go/.test(prompt) && dlg === "Add Existing Diagram — place FD-0001-D2" && sel === "FD-0001-D2" &&
+        obj < i && i < data && !!cleared, { prompt: prompt.slice(0, 80), dlg, sel, i, cleared: !!cleared });
+  });
+
+  await step("B6 Edit Diagram pencil", async () => {
+    const open = async (id) => {
+      await f.locator(`.edit-diagram[data-id="${id}"]`).first().scrollIntoViewIfNeeded();
+      await f.locator(`.edit-diagram[data-id="${id}"]`).first().click();
+    };
+    const otherSrc = JSON.parse(py(["-m", "tools.design", "resolve", OWNED])).path;
+    const activeIs = async (want) => (await waitFor(async () => { const t = (await app.host("tabs")).find((x) => x.active && x.kind === "text" && x.group === 2);
+                                                                  return t && t.label === want ? t.label : ""; }, 10000)) ||
+                                     ((await app.host("tabs")).find((x) => x.active && x.kind === "text" && x.group === 2) || {}).label;
+    await open("FD-0001-D1"); const own = await activeIs(path.basename(OWN_SRC));
+    await designerKey("Home"); await sleep(500);                       // focus back in the view, as a person would click
+    await open(OWNED); const other = await activeIs(path.basename(otherSrc));
+    await designerKey("Home");                                        // as a click on the pencil would: the view has the focus
+    await f.evaluate((id) => window.FD_HOST.api.postMessage({ type: "editDiagram", id }), CRED_ALIAS); const byAlias = await activeIs("system-architecture.md");
+    rec("B6 the pencil opens the authoritative source: this feature's, another feature's (no copy), and an architecture diagram by its former catalog ID",
+        own === path.basename(OWN_SRC) && other === path.basename(otherSrc) && byAlias === "system-architecture.md", { own, other, byAlias });
+  });
+
+  await step("B2c conflicts and changed sources are never hidden", async () => {
+    await app.host("replace", { path: FEATURE, find: 'B["New step (planned)"]', replace: 'B["Hand edited"]', after: "diagram:start FD-0001-D1 " });
+    const st = await waitFor(async () => ((await stateOf("FD-0001-D1")) === "conflict" ? "conflict" : ""), 15000);
+    const shown = await f.evaluate(() => {
+      const g = document.querySelector('.gen[data-diagram="FD-0001-D1"]');
+      return { warn: g.querySelector(".dg-notice.warn").innerText, labels: [...g.querySelectorAll(".dg-vlabel")].map((x) => x.innerText),
+               svgs: g.querySelectorAll(".dg-version .mermaid-out svg").length, diff: [...g.querySelectorAll("pre.diff .del")].map((x) => x.textContent).join("") };
+    });
+    const banner = await waitFor(() => f.evaluate(() => { const s = document.querySelector("#stale"); return s && !s.hidden ? s.textContent : ""; }), 8000);
+    await snap("conflict-both-versions");
+    rec("B2c a hand-edited copy is marked as a conflict, shows the authoritative source and the document copy side by side, and the differences can be inspected",
+        st === "conflict" && /edited by hand/.test(shown.warn) && /\(E15\)/.test(shown.warn) && shown.labels.length === 2 &&
+        shown.labels[0].startsWith(`Authoritative source · ${OWN_SRC}`) && /Copy in this document · differs/.test(shown.labels[1]) &&
+        shown.svgs === 2 && /Hand edited/.test(shown.diff) && /changed outside/.test(banner || ""), { st, ...shown, diff: shown.diff.slice(0, 80) });
+    await designerKey("Control+Z");
+    const back = await waitFor(async () => ((await stateOf("FD-0001-D1")) === "current" ? "current" : ""), 10000);
+    const t = await text();
+    await app.host("replace", { path: OWN_SRC, find: 'B["New step (planned)"]', replace: 'B["Source step"]' });
+    await app.host("save", { path: OWN_SRC });
+    const outdated = await waitFor(async () => ((await stateOf("FD-0001-D1")) === "outdated" ? "outdated" : ""), 15000);
+    const o = await f.evaluate(() => {
+      const g = document.querySelector('.gen[data-diagram="FD-0001-D1"]');
+      const info = window.FD_DEBUG.state.blocks.list.find((b) => b.id === "FD-0001-D1");
+      return { note: g.querySelector(".dg-notice").innerText, fromSource: info.generated.some((l) => l.includes("Source step")),
+               copyOld: info.embedded.some((l) => l.includes("New step (planned)")), copyShown: !!g.querySelector("details.dg-copy") };
+    });
+    rec("B2d after its source is saved, the block is drawn from the source and marked out of date; the document itself is not changed in B1",
+        !!back && outdated === "outdated" && /Out of date in this document/.test(o.note) && o.fromSource && o.copyOld && o.copyShown && (await text()) === t, o);
+    await app.host("replace", { path: OWN_SRC, find: 'B["Source step"]', replace: 'B["New step (planned)"]' });
+    await app.host("save", { path: OWN_SRC });
+    await waitFor(async () => ((await stateOf("FD-0001-D1")) === "current" ? "current" : ""), 15000);
+  });
+
+  await step("B10 retired and missing sources", async () => {
+    py(["-m", "tools.design", "registry", "retire", "FD-0001-D2", "--confirm"]);
+    const st = await waitFor(async () => ((await stateOf("FD-0001-D2")) === "retired" ? "retired" : ""), 15000);
+    const note = await f.evaluate(() => document.querySelector('.gen[data-diagram="FD-0001-D2"] .dg-notice').innerText);
+    await f.locator('.edit-diagram[data-id="FD-0001-D2"]').click();
+    const pencil = await waitFor(statusText, 8000);
+    const b = await blockAfter("3. Logic");
+    await placeMenu(b.idx, "Add Existing Diagram");
+    await f.waitForSelector(".tree li.item", { state: "attached", timeout: 20000 });
+    await f.locator('.dlg input[type="search"]').fill("FD-0001-D2"); await sleep(200);
+    const listed = await f.evaluate(() => [...document.querySelectorAll(".tree li.item")].filter((li) => li.offsetParent).length);
+    await app.page.keyboard.press("Escape");
+    const t = await text(), v = await version();
+    await f.locator('.gen[data-diagram="FD-0001-D2"] .remove-ref').click();
+    await waitVersion(v);
+    const removed = await text();
+    await designerKey("Control+Z"); await sleep(1000);
+    const restored = await text();
+    rec("B10 a retired diagram shows a placeholder (E11) with Remove reference; the pencil explains instead of opening; the library hides it; removal is one undoable edit",
+        st === "retired" && /retired on/.test(note) && /\(E11\)/.test(note) && /retired/.test(pencil || "") && listed === 0 &&
+        markerAt(removed.split(/\r?\n/), "FD-0001-D2") < 0 && restored === t, { st, note: note.slice(0, 100), pencil: (pencil || "").slice(0, 100), listed });
+    const src = path.join(WS, SHARED_SRC);
+    fs.renameSync(src, `${src}.moved`);
+    const missing = await waitFor(async () => ((await stateOf("FD-0002-D2")) === "missing" ? "missing" : ""), 15000);
+    const mnote = await f.evaluate(() => document.querySelector('.gen[data-diagram="FD-0002-D2"] .dg-notice').innerText);
+    await f.locator('.edit-diagram[data-id="FD-0002-D2"]').click();
+    const mpencil = await waitFor(async () => { const s = await statusText(); return /FD-0002-D2/.test(s || "") ? s : ""; }, 8000);
+    await snap("missing-source");
+    fs.renameSync(`${src}.moved`, src);
+    const again = await waitFor(async () => ((await stateOf("FD-0002-D2")) === "current" ? "current" : ""), 15000);
+    rec("B10b a missing source shows a placeholder with E7 and the fix; the pencil explains; it renders again when the source is back",
+        missing === "missing" && /\(E7\)/.test(mnote) && /cannot be opened/.test(mpencil || "") && !!again, { mnote: mnote.slice(0, 120), mpencil: (mpencil || "").slice(0, 100) });
+  });
+
+  await step("B12 safety", async () => {
+    rec("B12 docs/architecture/ unchanged byte for byte through every PR B1 step", archHash() === archBefore);
+  });
+}
 
 async function dialogDismissIfAny() {                       // "save changes?" prompts on close: keep the buffer
   await sleep(500);

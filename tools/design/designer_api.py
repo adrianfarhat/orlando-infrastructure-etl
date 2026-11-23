@@ -27,6 +27,22 @@ Requests (all carry "version": 1 and "op"):
 - {"op": "refresh", "path": ..., "text": ...}
     per-block edits that bring the diagram blocks of that text up to date with their sources
     (none when the file has a problem that `index` would refuse to touch).
+- {"op": "blocks", "path": ..., "text": ...}
+    the state of every diagram block in that text (T-97 PR B), so the editor can render each
+    block from its authoritative source: `state` is current, fingerprint (only the marker is
+    out of date), empty, outdated (the source changed, the copy was not edited), conflict
+    (E15; `conflict` says which case), retired (E11), missing (E6/E7), unknown (E1) or problem;
+    `generated` is what the source generates now ([] when it cannot be used), `embedded` the
+    copy in the text, `diff` a unified diff between them for outdated and conflicting blocks,
+    `source` the resolved source (as `resolve` describes it, null when unknown) and `message`
+    the problem `check` reports for that block. Also `blocking`, `conflicts` and `stale` (the
+    number of blocks `index` would refresh), as `refresh` reports them. Read only.
+- {"op": "diagram-name", "owner": <feature ID>, "title": ..., "category": ...}
+    the repository path `new diagram` would create for these values, and a problem ('' when
+    it can be created). Read only: nothing is created or reserved.
+- {"op": "remove-block", "path": ..., "text": ..., "line": <0-based start-marker line>}
+    the edit that removes a diagram block whose diagram was retired (E11), with one adjacent
+    blank line; refused for any other block.
 - {"op": "feature-index", "texts": {<feature path>: <unsaved text>, ...}}
     the complete text of designs/index/feature-index.md as `index` would write it, using the
     given unsaved texts instead of those files on disk; and, in `diagram_index`, the same for
@@ -43,6 +59,7 @@ code "refused"); 2 a malformed request or an internal error ("ok": false, other 
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import posixpath
@@ -242,11 +259,17 @@ def resolve(root: Path, ident: str) -> dict:
     """The authoritative source of one diagram (diagram library 6.2); read only."""
     from . import registry
     known = diagrams.sources(root)
-    reg = registry.load(root)
-    e = reg.lookup().get(ident)
+    described = _describe(ident, registry.load(root).lookup(), known)
+    if described is None:
+        raise Refused(f"{ident} is not in the registry as an ID or an alias, nor in the architecture catalog (E1)")
+    return described
+
+
+def _describe(ident: str, lookup: dict, known: dict) -> dict | None:
+    e = lookup.get(ident)
     s = known.get(ident)
     if e is None and s is None:
-        raise Refused(f"{ident} is not in the registry as an ID or an alias, nor in the architecture catalog (E1)")
+        return None
     if e is not None:
         canonical = known.get(e.diagram_id, s)
         return {"id": e.diagram_id, "aliases": list(e.aliases), "kind": canonical.kind if canonical else "missing",
@@ -257,6 +280,98 @@ def resolve(root: Path, ident: str) -> dict:
     return {"id": ident, "aliases": [], "kind": s.kind, "format": "mermaid-embedded", "path": s.path, "line": s.line,
             "title": s.title, "owner": None, "category": None, "status": "unregistered",
             "editor": "architecture-docs", "problem": s.problem}
+
+
+BLOCK_STATES = {"current": "current", "fp-only": "fingerprint", "empty": "empty", "case1": "outdated",
+                "case2": "conflict", "case3": "conflict", "legacy": "conflict"}
+
+
+def blocks(root: Path, rel: str, text: str) -> dict:
+    """Every diagram block of `text` with its state, its source and both versions (PR B)."""
+    from . import registry
+    known = diagrams.sources(root)
+    lookup = registry.load(root).lookup()
+    found, _ = diagrams.scan(text)
+    lines = text.replace("\r\n", "\n").split("\n")
+    messages: dict[int, str] = {}
+    for p in diagrams.file_problems(rel, text, known):
+        n = re.match(r"line (\d+): ", p.message)
+        if n:
+            messages.setdefault(int(n.group(1)) - 1, _LINE_PREFIX.sub("", p.message))
+    out = []
+    for b in found:
+        embedded = lines[b.start + 1:b.end]
+        s = known.get(b.diagram_id) if b.diagram_id else None
+        item = {"start": b.start, "end": b.end, "id": b.diagram_id, "marker": lines[b.start],
+                "embedded": embedded, "generated": [],
+                "diff": [], "conflict": None, "message": messages.get(b.start, ""),
+                "source": _describe(b.diagram_id, lookup, known) if b.diagram_id else None}
+        if not b.diagram_id:
+            item["state"] = "problem"
+        elif s is None:
+            item["state"] = "unknown"
+        elif s.kind == "retired":
+            item["state"] = "retired"
+        elif s.kind == "missing":
+            item["state"] = "missing"
+        elif s.problem or not s.closed:
+            item["state"] = "problem"
+        else:
+            expected = diagrams.render(s, rel)
+            kind = diagrams.classify(b, embedded, expected)
+            item["generated"] = expected
+            item["state"] = BLOCK_STATES[kind]
+            if item["state"] == "conflict":
+                item["conflict"] = kind
+            if item["state"] in ("conflict", "outdated"):
+                item["diff"] = list(difflib.unified_diff(embedded, expected, "copy in this document",
+                                                         f"generated from {s.path}", n=2, lineterm=""))
+        if not item["message"] and item["state"] in ("unknown", "retired", "missing", "problem") and s is not None:
+            item["message"] = f"diagram ID {b.diagram_id!r} {s.problem}" if s.problem else ""
+        out.append(item)
+    summary = refresh(root, rel, text)
+    return {"base": summary["base"], "blocks": out, "blocking": summary["blocking"],
+            "conflicts": summary["conflicts"], "stale": len(summary["edits"])}
+
+
+def diagram_name(root: Path, owner, title, category) -> dict:
+    """The path `new diagram` would create, and why it cannot be created ('' when it can)."""
+    from . import registry
+    from .ids import FEATURE_ID
+    try:
+        clean = ownership.validate_title(title)
+        if not isinstance(owner, str) or not FEATURE_ID.match(owner):
+            raise DesignError(f"the owner must be a feature ID such as FD-0001, not {owner!r}")
+        if category not in registry.CATEGORIES:
+            raise DesignError(f"the category must be one of {', '.join(registry.CATEGORIES)}")
+        features, _ = discover(root)
+        spec = next((f.path for f in features if f.feature_id == owner), None)
+        if spec is None:
+            raise DesignError(f"no feature has the ID {owner}")
+        rel = posixpath.join(posixpath.dirname(spec), "diagrams", ownership.source_name(spec, category, clean))
+    except DesignError as exc:
+        return {"path": "", "problem": str(exc)}
+    return {"path": rel, "problem": f"{rel} already exists; choose another name or category" if (root / rel).exists()
+            else ""}
+
+
+def remove_block(root: Path, rel: str, text: str, line: int) -> dict:
+    """The edit that removes one block whose diagram was retired (diagram library E11)."""
+    known = diagrams.sources(root)
+    block = next((b for b in diagrams.scan(text)[0] if b.start == line), None)
+    if block is None:
+        raise Refused(f"there is no diagram block starting at line {line + 1}")
+    s = known.get(block.diagram_id) if block.diagram_id else None
+    if s is None or s.kind != "retired":
+        raise Refused(f"only a block whose diagram was retired can be removed here; {block.diagram_id or 'this block'} "
+                      "is not retired")
+    lines = _lines(text)
+    start, end = block.start, block.end + 1
+    if end < len(lines) and not lines[end].strip() and (start == 0 or not lines[start - 1].strip()):
+        end += 1                                        # the blank line the insertion added after it
+    elif end == len(lines) and start > 0 and not lines[start - 1].strip():
+        start -= 1
+    return {"base": _base(text), "newline": _newline(text), "edits": [{"start": start, "end": end, "lines": []}]}
 
 
 def _generated(root: Path, rel: str, content: str) -> dict:
@@ -323,13 +438,23 @@ def handle(root: Path, request) -> tuple[dict, int]:
             if not isinstance(did, str) or not did:
                 raise BadRequest("`diagram_id` must be a diagram ID or alias")
             result = resolve(root, did)
+        elif op == "blocks":
+            result = blocks(root, _feature_path(root, request.get("path")), _text(request.get("text")))
+        elif op == "diagram-name":
+            result = diagram_name(root, request.get("owner"), request.get("title"), request.get("category"))
+        elif op == "remove-block":
+            line = request.get("line")
+            if not isinstance(line, int) or isinstance(line, bool):
+                raise BadRequest("`line` must be the 0-based line of the block's start marker (an integer)")
+            result = remove_block(root, _feature_path(root, request.get("path")), _text(request.get("text")), line)
         elif op == "feature-index":
             texts = request.get("texts", {})
             if not isinstance(texts, dict):
                 raise BadRequest("`texts` must map feature paths to their unsaved text")
             result = feature_index(root, {_feature_path(root, k): _text(v, k) for k, v in texts.items()})
         else:
-            raise BadRequest(f"unknown op {op!r} (library, insert, refresh, resolve, feature-index)")
+            raise BadRequest(f"unknown op {op!r} (library, insert, refresh, resolve, blocks, diagram-name, "
+                             "remove-block, feature-index)")
         return {"version": VERSION, "op": op, "ok": True, **result}, EXIT_OK
     except Refused as exc:
         return {"version": VERSION, "ok": False, "error": {"code": "refused", "message": str(exc)}}, EXIT_REFUSED

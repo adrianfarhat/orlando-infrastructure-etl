@@ -57,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
                                                "(the next diagram ID that was never used)")
     diagram.add_argument("--feature", required=True, help="the owning feature's ID, e.g. FD-0001")
     diagram.add_argument("--title", help="the diagram's readable name (asked for when missing)")
+    diagram.add_argument("--json", action="store_true", help="print the result as one JSON object (for the "
+                         "Feature Designer)")
     diagram.add_argument("--category", default="other", choices=registry.CATEGORIES,
                          help="the diagram's category (part of its file name): " + ", ".join(registry.CATEGORIES))
     reg = sub.add_parser("registry", help="change the diagram registry (designs/diagrams/registry.yml) under its lock")
@@ -249,6 +251,10 @@ def _new_diagram(args, root: Path, out: TextIO, ask: Callable[[str], str], inter
             raise DesignError("--title is required when not running interactively")
         title = ask("Diagram title: ")
     created = ownership.new_diagram(root, args.feature, title, args.category)
+    if getattr(args, "json", False):
+        print(json.dumps({"path": created.path, "diagram_id": created.diagram_id, "owner": created.owner,
+                          "category": created.category}, sort_keys=True), file=out)
+        return EXIT_OK
     print(f"created {created.path} ({created.diagram_id}, owned by {created.owner}, category {created.category}) "
           f"and registered it in {registry.REGISTRY}", file=out)
     print("Attach it to a feature with a diagram block (see designs/README.md). This is an uncommitted "

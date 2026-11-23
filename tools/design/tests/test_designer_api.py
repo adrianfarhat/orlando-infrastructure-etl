@@ -207,6 +207,122 @@ class Refresh(unittest.TestCase):
             self.assertTrue(any("no matching" in b or "end" in b for b in r["blocking"]), r["blocking"])
 
 
+class Placement(unittest.TestCase):
+    """PR B1: block states for source-based rendering, the Make New name preview, Remove reference."""
+
+    def setUp(self):
+        from tools.design import registry
+        self.registry = registry
+        self.ctx = Workspace(); self.ws = self.ctx.__enter__()
+        self.f = new_feature(self.ws.root, "A")
+        self.made = ownership.new_diagram(self.ws.root, "FD-0001", "Pipe flow", "process")
+        self.plain = (self.ws.root / self.f.path).read_text(encoding="utf-8")
+        text = self.plain
+        for prefix, ident in (("- **Desired outcome:**", ETL), ("## 3. Logic", self.made.diagram_id)):
+            at = after(text.split("\n"), prefix)
+            text = apply(text, request(self.ws, op="insert", path=self.f.path, text=text, at=at, diagram_id=ident)[0])
+        self.text = text
+
+    def tearDown(self):
+        self.ctx.__exit__(None, None, None)
+
+    def states(self, text=None):
+        r, code = request(self.ws, op="blocks", path=self.f.path, text=self.text if text is None else text)
+        self.assertEqual(code, 0, r)
+        return r, {b["id"]: b for b in r["blocks"]}
+
+    def test_current_blocks_resolve_to_their_sources_and_nothing_is_written(self):
+        before = snapshot(self.ws.root)
+        r, by = self.states()
+        self.assertEqual((r["stale"], r["conflicts"], r["blocking"]), (0, [], []))
+        arch, own = by[ETL], by[self.made.diagram_id]
+        self.assertEqual((arch["state"], own["state"]), ("current", "current"))
+        self.assertEqual(arch["generated"], arch["embedded"])
+        self.assertEqual((arch["source"]["id"], arch["source"]["editor"]), ("AD-0006", "architecture-docs"))
+        self.assertEqual((own["source"]["path"], own["source"]["editor"]), (self.made.path, "text"))
+        self.assertEqual(own["source"]["owner"], {"kind": "feature", "ref": "FD-0001"})
+        self.assertEqual(snapshot(self.ws.root), before)                                   # read only
+
+    def test_a_changed_source_is_outdated_and_rendered_from_the_source(self):
+        src = self.ws.root / self.made.path
+        src.write_text(src.read_text(encoding="utf-8").replace("```\n", "  Z[Added in the source]\n```\n", 1), encoding="utf-8")
+        r, by = self.states()
+        b = by[self.made.diagram_id]
+        self.assertEqual((b["state"], r["stale"]), ("outdated", 1))
+        self.assertTrue(any("Added in the source" in l for l in b["generated"]))
+        self.assertFalse(any("Added in the source" in l for l in b["embedded"]))                   # the copy is shown as it is
+        self.assertTrue(any(l.startswith("+") and "Added in the source" in l for l in b["diff"]))
+
+    def test_conflicts_keep_both_versions_and_say_which_case(self):
+        hand = self.text.replace("S1 --> S2", "S1 --> S2 %% mine")
+        r, by = self.states(hand)
+        b = by[ETL]
+        self.assertEqual((b["state"], b["conflict"]), ("conflict", "case2"))
+        self.assertIn("(E15)", b["message"])
+        self.assertNotEqual(b["embedded"], b["generated"])
+        self.assertTrue(any("%% mine" in l and l.startswith("-") for l in b["diff"]))
+        legacy = re.sub(r" sha256:[0-9a-f]{16} -->", " -->", hand)
+        self.assertEqual(self.states(legacy)[1][ETL]["conflict"], "legacy")
+
+    def test_retired_missing_and_unknown_blocks(self):
+        self.registry.retire(self.ws.root, self.made.diagram_id, True)
+        b = self.states()[1][self.made.diagram_id]
+        self.assertEqual((b["state"], b["generated"]), ("retired", []))
+        self.assertIn("(E11)", b["message"])
+        unknown = self.text.replace(f"diagram:start {ETL} ", "diagram:start FD-0001-D9 ")
+        self.assertEqual(self.states(unknown)[1]["FD-0001-D9"]["state"], "unknown")
+        self.assertIsNone(self.states(unknown)[1]["FD-0001-D9"]["source"])
+
+    def test_a_missing_source_is_reported(self):
+        (self.ws.root / self.made.path).unlink()
+        b = self.states()[1][self.made.diagram_id]
+        self.assertEqual(b["state"], "missing")
+        self.assertIn("(E7)", b["message"])
+
+    def test_diagram_name_previews_the_path_without_creating_anything(self):
+        before = snapshot(self.ws.root)
+        r, code = request(self.ws, op="diagram-name", owner="FD-0001", title="Pipe  flow 2", category="data-model")
+        self.assertEqual((code, r["problem"]), (0, ""))
+        self.assertEqual(r["path"], "designs/features/diagrams/a_data-model_pipe-flow-2.md")
+        self.assertEqual(snapshot(self.ws.root), before)
+        taken = request(self.ws, op="diagram-name", owner="FD-0001", title="Pipe flow", category="process")[0]
+        self.assertIn("already exists", taken["problem"])
+        for owner, title, category, why in (("FD-0099", "X", "process", "no feature has the ID FD-0099"),
+                                            ("FD-1", "X", "process", "feature ID"), ("FD-0001", " ", "process", "empty"),
+                                            ("FD-0001", "X", "drawing", "category"),
+                                            ("FD-0001", "a\u202eb", "process", "invisible")):
+            with self.subTest(why):
+                r, code = request(self.ws, op="diagram-name", owner=owner, title=title, category=category)
+                self.assertEqual((code, r["path"]), (0, ""))
+                self.assertIn(why, r["problem"])
+
+    def test_remove_reference_only_for_a_retired_diagram(self):
+        start = next(b["start"] for b in self.states()[0]["blocks"] if b["id"] == self.made.diagram_id)
+        r, code = request(self.ws, op="remove-block", path=self.f.path, text=self.text, line=start)
+        self.assertEqual(code, 1)
+        self.assertIn("is not retired", r["error"]["message"])
+        self.registry.retire(self.ws.root, self.made.diagram_id, True)
+        r, code = request(self.ws, op="remove-block", path=self.f.path, text=self.text, line=start)
+        self.assertEqual(code, 0, r)
+        removed = apply(self.text, r)
+        self.assertNotIn(self.made.diagram_id, removed)
+        self.assertIn(f"diagram:start {ETL} ", removed)
+        without_etl = removed
+        self.assertEqual(without_etl.count("\n\n\n"), self.text.count("\n\n\n"))         # no blank line left behind
+        self.assertEqual(request(self.ws, op="remove-block", path=self.f.path, text=self.text, line=start + 1)[1], 1)
+        self.assertEqual(request(self.ws, op="remove-block", path=self.f.path, text=self.text, line=True)[1], 2)
+
+    def test_new_diagram_json_output(self):
+        code, out, _ = cmd(self.ws.root, "new", "diagram", "--feature=FD-0001", "--title=--root elsewhere",
+                           "--category=state", "--json")
+        self.assertEqual(code, 0)
+        made = json.loads(out)
+        self.assertEqual(made["diagram_id"], "FD-0001-D2")
+        self.assertEqual(made["path"], "designs/features/diagrams/a_state_root-elsewhere.md")
+        self.assertTrue((self.ws.root / made["path"]).is_file())
+        self.assertIn("FD-0001-D2", self.registry.load(self.ws.root).lookup())
+
+
 class FeatureIndex(unittest.TestCase):
     def test_unsaved_texts_give_what_index_writes_after_saving(self):
         with Workspace() as ws:

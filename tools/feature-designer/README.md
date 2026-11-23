@@ -48,24 +48,51 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
   `pythonw.exe`); anything else is refused before it runs. If the interpreter cannot start the
   design tooling (for example it exits or never answers), the library shows the reason with
   **Retry** and **Change Interpreter…**.
-- **Insert a diagram:** hover beside a block, click **+**, **Insert Existing Diagram**, search
-  (by name, ID, source document or owning feature), then Enter or **Insert**. The block is
-  inserted below the block you hovered, as one undoable edit. Nothing is saved until you save.
+- **Place a diagram:** hover beside a block, click **+** → **Place Diagram** →
+  - **Add Existing Diagram…**: search the library (by name, stable ID, former catalog ID,
+    category, source document or owning feature; retired diagrams are not listed), then Enter
+    or **Insert**. Only a reference is inserted (the generated block with the stable ID); the
+    source is never copied and its owner never changes.
+  - **Make New Diagram…**: enter a name; the category is preselected from the section (1 other,
+    2 data-model, 3 process, 4 and 5 system-architecture, 6 other) and can be changed; the owner
+    is the feature you are editing (**Change owner…** picks another feature, after a
+    confirmation naming both). The file name it will get is shown before you create it.
+    **Create and Insert** runs `python -m tools.design new diagram` (the same command, lock and
+    checks as on the command line), which creates and registers one standalone Mermaid source;
+    the reference is then inserted and the source opens beside the view. If the document
+    changed meanwhile, the diagram stays created and registered, and a notice shows its ID with
+    **Add Existing Diagram…**: click **+** where it should go and it is preselected.
+
+  Insertions are one undoable edit, below the block you hovered. Nothing is saved until you save.
 - **Save** as usual (Ctrl+S). When a feature open in Feature Designer is saved,
   `designs/index/feature-index.md` (its Diagrams column) and `designs/index/diagram-index.md`
   (its Used by column) are brought up to date from the saved files, exactly as
   `python -m tools.design index` would write them — unless an index file has unsaved changes
   or cannot be computed, in which case it is left alone and you are told.
-- **Edit source** on a diagram opens its authoritative Mermaid source beside it, whether the
-  block names the diagram by its stable ID or by an alias (a former catalog ID).
-- **Generated blocks** carry a fingerprint in their start marker (diagram registry, T-97 PR A).
-  A block changed outside its source (for example reformatted by another editor) is shown in a
-  banner and never overwritten automatically; resolve it with `python -m tools.design reconcile`
-  (see [designs/README.md](../../designs/README.md#diagrams)).
+- **Edit Diagram (✎)** in a diagram's upper-right corner opens its authoritative source beside
+  the view, at its Mermaid block, whether the block names the diagram by its stable ID or by a
+  former catalog ID; another feature's diagram opens that feature's source. An architecture
+  diagram opens its document with a notice: changes there go through technical-lead's
+  documentation workflow, and Feature Designer never writes under `docs/architecture/`. A
+  retired or missing diagram is explained instead of opened.
+- **Diagrams are drawn from their sources**, as saved on disk (they are redrawn when a source,
+  an architecture document or the registry changes). When the copy in the document differs,
+  the block says so and nothing is hidden:
+  - *out of date* (the source changed, the copy was not edited): drawn from the source; the
+    old copy and the text differences can be shown; `python -m tools.design index` updates it;
+  - *changed outside its source* (edited by hand, reformatted by another editor, or made
+    before fingerprints and different): the authoritative source and the document copy are
+    shown side by side, with the text differences; it is never overwritten automatically;
+    resolve it with `python -m tools.design reconcile` (see
+    [designs/README.md](../../designs/README.md#diagrams));
+  - *retired* (E11): a placeholder with **Remove reference** (one undoable edit); *missing*
+    (E6/E7) or *unknown* (E1): a placeholder with the problem and its fix. The copy in the
+    document can still be shown.
 - **Restricted Mode:** in an untrusted workspace Feature Designer shows a notice only; it
   runs no scripts and no Python. (VS Code does not enforce the manifest's trust setting for
   development-mode extensions, so this is checked at runtime.)
-- **Feature Designer: Show Log** shows what it did (Python process, insertions, index updates).
+- **Feature Designer: Show Log** shows what it did (Python process, insertions, new diagrams,
+  index updates).
 
 `--isolated` opens the pinned VS Code test build with an empty profile instead
 (`tools/feature-designer/.toolchain/profile`), for a clean check without your extensions.
