@@ -116,7 +116,7 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     const after = await waitFor(async () => { await app.page.mouse.move(c.x + 2, c.y, { steps: 1 });   // hover is re-evaluated on movement
                                                const o = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity); return o === "1" ? o : null; }, 3000, 200) || "0";
     await app.page.mouse.move(...Object.values(center(await box(plus))), { steps: 4 }); await sleep(200);
-    const onIt = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity);
+    const onIt = await waitFor(async () => { const o = await f.locator(plus).evaluate((el) => getComputedStyle(el).opacity); return o === "1" ? o : null; }, 3000, 200) || "0";
     await f.locator(plus).click();
     const items = await f.locator('.menu:not(.sub) [role="menuitem"]').allTextContents();
     await f.locator('.menu [role="menuitem"].has-sub').hover();
@@ -268,7 +268,7 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     await f.locator(`.edit-diagram[data-id="${CRED}"]`).scrollIntoViewIfNeeded();
     await f.locator(`.edit-diagram[data-id="${CRED}"]`).click();
     const tab = await waitFor(async () => (await app.host("tabs")).find((t) => t.label === "system-architecture.md" && t.kind === "text"));
-    const line = await waitFor(() => app.page.locator(".line-numbers.active-line-number").allTextContents().then((x) => x.map((s) => s.trim()).filter(Boolean)));
+    const line = await waitFor(() => app.page.locator(".line-numbers.active-line-number").allTextContents().then((x) => { const n = x.map((s) => s.trim()).filter(Boolean); return n.length ? n : null; }), 10000) || [];
     const src = fs.readFileSync(path.join(WS, "docs/architecture/system-architecture.md"), "utf8").split(/\r?\n/);
     const toast = await waitFor(() => app.page.locator(".notifications-toasts").innerText().catch(() => ""), 8000);
     rec("8 / B6 the pencil on an architecture diagram opens the authoritative Mermaid line, with the technical-lead workflow notice",
@@ -465,8 +465,11 @@ async function makeNew(heading, name, ownerId) {
 async function prB1Steps() {
   const archBefore = archHash();
   await step("B3 Make New Diagram", async () => {
+    // a clean start even if an earlier step failed: Mark Sharp closed, the fixture file saved (test data only)
     await app.host("save", { path: FEATURE }); await sleep(500);
     await app.host("closeAll"); await dialogDismissIfAny();
+    if ((await app.host("tabs")).length) { await app.host("revert", { path: FEATURE }); await app.host("closeAll"); await dialogDismissIfAny(); }
+    if ((await app.host("tabs")).length) throw new Error(`could not start from a clean state: ${JSON.stringify(await app.host("tabs"))}`);
     await app.host("openWith", { path: FEATURE, viewType: "featureDesigner.editor", column: 1 });
     f = await designerFrame(app.page);
     const before = (await doc()).text;
@@ -475,7 +478,7 @@ async function prB1Steps() {
     const after = (await doc()).text, L = after.split(/\r?\n/), i = markerAt(L, "FD-0001-D1");
     const logic = L.indexOf("## 3. Logic"), deps = L.indexOf("## 4. Dependencies");
     const tab = await waitFor(async () => (await app.host("tabs")).find((t) => t.label === path.basename(OWN_SRC) && t.kind === "text"));
-    const line = await waitFor(() => app.page.locator(".line-numbers.active-line-number").allTextContents().then((x) => x.map((s) => s.trim()).filter(Boolean)));
+    const line = await waitFor(() => app.page.locator(".line-numbers.active-line-number").allTextContents().then((x) => { const n = x.map((s) => s.trim()).filter(Boolean); return n.length ? n : null; }), 10000) || [];
     const src = fs.readFileSync(path.join(WS, OWN_SRC), "utf8").split(/\r?\n/);
     const reg = registryText();
     await snap("make-new-created");

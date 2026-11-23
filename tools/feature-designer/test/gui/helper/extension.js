@@ -34,6 +34,12 @@ function activate(context) {
       e.replace(d.uri, new vscode.Range(d.positionAt(i), d.positionAt(i + find.length)), replace);
       return vscode.workspace.applyEdit(e);
     },
+    async revert({ path: rel }) {                                     // discard unsaved test edits in the fixture file
+      const d = docOf(rel); if (!d) return false;
+      await vscode.window.showTextDocument(d, { preview: false });
+      await vscode.commands.executeCommand("workbench.action.files.revert");
+      return true;
+    },
     async save({ path: rel }) { const d = docOf(rel); return d ? d.save() : false; },
     async command({ id, args }) { await vscode.commands.executeCommand(id, ...(args || [])); return true; },
     async closeAll() { await vscode.commands.executeCommand("workbench.action.closeAllEditors"); return true; },
