@@ -395,6 +395,16 @@ class Reconcile(unittest.TestCase):
         t3 = self.plan(self.hand, self.made.diagram_id, "discard")[0]["token"]
         self.assertEqual(len({t1, t2, t3}), 3)
 
+    def test_an_existing_conflict_below_does_not_block_an_insertion_above(self):
+        """A conflict's message names its line (also in its `reconcile --line N` fix); an insertion
+        above it moves that line, which must not count as a new problem (found in a GUI run)."""
+        at = after(self.hand.split("\n"), "- **Problem:**")
+        r, code = request(self.ws, op="insert", path=self.f.path, text=self.hand, at=at, diagram_id=ETL)
+        self.assertEqual(code, 0, r)
+        new_text = apply(self.hand, r)
+        self.assertEqual(new_text.count(f"diagram:start {ETL} "), 2)
+        self.assertIn('B["Edited by hand"]', new_text)                                # the conflict is kept as it was
+
     def test_refusals(self):
         hand_arch = self.fresh.replace("S1 --> S2", "S1 --> S2 %% mine")
         r, code = self.plan(hand_arch, ETL, "apply-to-source")

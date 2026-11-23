@@ -224,8 +224,13 @@ def position_problem(text: str, at: int) -> str:
 
 # --------------------------------------------------------------------------- operations
 
+_LINE_REF = re.compile(r"(--line |\bline )\d+")
+
+
 def _messages(rel: str, text: str, known) -> Counter:
-    return Counter(_LINE_PREFIX.sub("", p.message) for p in diagrams.file_problems(rel, text, known))
+    """The file's problems without line numbers, so that a problem moved by an insertion (its
+    message names the line, also in its fix, e.g. `reconcile --line 118`) is not a new one."""
+    return Counter(_LINE_REF.sub(r"\1N", _LINE_PREFIX.sub("", p.message)) for p in diagrams.file_problems(rel, text, known))
 
 
 def insert(root: Path, rel: str, text: str, at: int, diagram_id: str) -> dict:
