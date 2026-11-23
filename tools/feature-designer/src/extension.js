@@ -399,8 +399,9 @@ class DesignerEditor {
         panel.webview.postMessage({ type: "doc", text: document.getText(), version: document.version, rel,
                                     others: otherCustomEditors(document.uri) });
         panel.updateBlocks();
-        for (const r of listRecovery().filter((x) => x.root === root && x.document === rel && x.state === "partial"))
-          panel.webview.postMessage({ type: "partial", recovery: r.id, id: r.diagram, source: r.source, reason: r.reason });
+        for (const r of listRecovery().filter((x) => x.root === root && x.document === rel))   // partial, or interrupted
+          panel.webview.postMessage({ type: "partial", recovery: r.id, id: r.diagram, source: r.source,
+                                      reason: r.reason || "it was interrupted (for example the window closed)" });
         return;
       case "library":
         try { panel.webview.postMessage({ type: "library", data: await ask(root, "library", {}) }); }
@@ -421,7 +422,8 @@ class DesignerEditor {
         return;
       case "refreshNow": {                            // guarded manual refresh (B3): one undoable edit, not saved
         if (!Number.isInteger(msg.version)) return;
-        if (partialFor(root, rel)) throw refused("An Apply to source on this document did not complete: resolve it first (Update the block now, or Restore the original source).");
+        if (partialFor(root, rel)) throw refused("An Apply to source on this document did not complete: resolve it first (Update the block now or " +
+          "Restore the original source in the strip, or Feature Designer: Resolve Interrupted Apply to Source).");
         if (msg.version !== document.version) throw new StaleEditError("the document changed; nothing was refreshed (try again)");
         if (!(await confirmOtherEditors(document, "Refresh"))) return;
         const r = await ask(root, "refresh", { path: rel, text: document.getText() });
@@ -549,6 +551,7 @@ async function reconcileBlock(document, root, rel, msg) {
   const key = document.uri.toString();
   if (msg.version !== document.version) throw refused("The document changed since the review; nothing was changed. Review the block again.");
   if (!(await confirmOtherEditors(document, msg.action === "discard" ? "Discard" : "Apply"))) return;
+  if (busy.has(key)) throw refused("another change to this document is in progress; try again in a moment");
   busy.add(key);                                  // no automatic refresh of this document meanwhile
   try {
     const plan = await ask(root, "reconcile", { path: rel, text: document.getText(), line: msg.line, action: msg.action });
