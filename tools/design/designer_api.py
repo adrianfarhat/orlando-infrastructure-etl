@@ -43,6 +43,14 @@ Requests (all carry "version": 1 and "op"):
 - {"op": "remove-block", "path": ..., "text": ..., "line": <0-based start-marker line>}
     the edit that removes a diagram block whose diagram was retired (E11), with one adjacent
     blank line; refused for any other block.
+- {"op": "reconcile", "path": ..., "text": ..., "line": <0-based start-marker line>,
+   "action": "discard" | "apply-to-source"}
+    what reconciling that conflicting block would do to the given (possibly unsaved) text,
+    without writing anything (T-97 PR B2a): the state, a `token` (changes when the text or the
+    source changes), the `diff`, a `warning`, `replaces_source_changes` (applying would replace
+    changes made in the source, or that cannot be established), the document `edits` (against
+    `base`) and, for apply-to-source, `source` = {path, sha256 of the source text it was computed
+    from, text: the new source text}. Refused for architecture or document-owned sources.
 - {"op": "feature-index", "texts": {<feature path>: <unsaved text>, ...}}
     the complete text of designs/index/feature-index.md as `index` would write it, using the
     given unsaved texts instead of those files on disk; and, in `diagram_index`, the same for
@@ -374,6 +382,22 @@ def remove_block(root: Path, rel: str, text: str, line: int) -> dict:
     return {"base": _base(text), "newline": _newline(text), "edits": [{"start": start, "end": end, "lines": []}]}
 
 
+def reconcile(root: Path, rel: str, text: str, line: int, action: str) -> dict:
+    """The read-only plan for one conflicting block in unsaved text (the editor applies it)."""
+    if action not in ("discard", "apply-to-source"):
+        raise BadRequest("`action` must be discard or apply-to-source")
+    try:
+        plan = diagrams.plan_reconcile_text(root, rel, text, line + 1, action)
+    except ValueError as exc:
+        raise Refused(str(exc)) from None
+    return {"base": _base(text), "newline": _newline(text), "state": plan.state, "action": action,
+            "token": plan.token, "diff": plan.diff, "warning": plan.warning,
+            "replaces_source_changes": plan.replaces_source_changes, "id": plan.block.diagram_id,
+            "edits": [{"start": plan.block.start, "end": plan.block.end, "lines": list(plan.new_lines)}],
+            "source": ({"path": plan.source_path, "sha256": plan.source_sha, "text": plan.source_text}
+                       if plan.source_path else None)}
+
+
 def _generated(root: Path, rel: str, content: str) -> dict:
     path = root / rel
     disk = path.read_bytes() if path.is_file() else None
@@ -447,6 +471,12 @@ def handle(root: Path, request) -> tuple[dict, int]:
             if not isinstance(line, int) or isinstance(line, bool):
                 raise BadRequest("`line` must be the 0-based line of the block's start marker (an integer)")
             result = remove_block(root, _feature_path(root, request.get("path")), _text(request.get("text")), line)
+        elif op == "reconcile":
+            line = request.get("line")
+            if not isinstance(line, int) or isinstance(line, bool):
+                raise BadRequest("`line` must be the 0-based line of the block's start marker (an integer)")
+            result = reconcile(root, _feature_path(root, request.get("path")), _text(request.get("text")), line,
+                               request.get("action"))
         elif op == "feature-index":
             texts = request.get("texts", {})
             if not isinstance(texts, dict):
@@ -454,7 +484,7 @@ def handle(root: Path, request) -> tuple[dict, int]:
             result = feature_index(root, {_feature_path(root, k): _text(v, k) for k, v in texts.items()})
         else:
             raise BadRequest(f"unknown op {op!r} (library, insert, refresh, resolve, blocks, diagram-name, "
-                             "remove-block, feature-index)")
+                             "remove-block, reconcile, feature-index)")
         return {"version": VERSION, "op": op, "ok": True, **result}, EXIT_OK
     except Refused as exc:
         return {"version": VERSION, "ok": False, "error": {"code": "refused", "message": str(exc)}}, EXIT_REFUSED

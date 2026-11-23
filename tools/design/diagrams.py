@@ -564,6 +564,9 @@ class Reconciliation:
     source_path: str = ""     # apply-to-source: the source file and its new text
     source_text: str = ""
     warning: str = ""         # shown with the preview (for example: the source changed too)
+    new_lines: tuple = ()     # the block's new start marker and generated lines (its end marker stays)
+    source_sha: str = ""      # apply-to-source: SHA-256 of the source text the plan was computed from
+    replaces_source_changes: bool = False   # apply-to-source over changes made in the source (or unknown)
 
 
 def feature_document(root: Path, rel: str) -> str:
@@ -601,12 +604,17 @@ def _body_from_block(block_lines: list[str]) -> list[str]:
 
 
 def plan_reconcile(root: Path, rel: str, line: int, action: str) -> Reconciliation:
-    """What "Discard manual change" or "Apply to source" would do (nothing is written)."""
+    """What "Discard manual change" or "Apply to source" would do to the saved file (nothing is written)."""
+    root = Path(root)
+    rel = feature_document(root, rel)
+    return plan_reconcile_text(root, rel, (root / rel).read_bytes().decode("utf-8"), line, action)
+
+
+def plan_reconcile_text(root: Path, rel: str, text: str, line: int, action: str) -> Reconciliation:
+    """The same plan for a document's current (possibly unsaved) text; `line` is 1-based."""
     from . import registry
     root = Path(root)
     rel = feature_document(root, rel)
-    path = root / rel
-    text = path.read_bytes().decode("utf-8")
     known = sources(root)
     b = _block_at(text, line)
     if not _usable(b, known):
@@ -655,9 +663,18 @@ def plan_reconcile(root: Path, rel: str, line: int, action: str) -> Reconciliati
         diff += "".join(difflib.unified_diff(source_bytes.decode("utf-8").replace("\r\n", "\n").splitlines(True),
                                              source_text.replace("\r\n", "\n").splitlines(True),
                                              fromfile=source_path, tofile=source_path + " (after)"))
-    token = hashlib.sha256(text.encode("utf-8") + b"\0" + source_bytes + b"\0" + action.encode()).hexdigest()[:16]
+    # The token covers the document, the source file (apply-to-source) and the exact lines that will
+    # be written, so a change to the source after the preview also invalidates a Discard (T-97 PR B2a).
+    token = hashlib.sha256(text.encode("utf-8") + b"\0" + source_bytes + b"\0" + action.encode() + b"\0"
+                           + "\n".join(new_lines).encode("utf-8")).hexdigest()[:16]
     warning = ""
+    replaces = action == "apply-to-source" and state in ("case3", "legacy")
     if action == "apply-to-source" and state == "case3":
         warning = ("the source has also changed since this block was generated: applying replaces those source "
                    "changes with the block's content (see the diff)")
-    return Reconciliation(rel, b, action, state, diff, token, document_text, source_path, source_text, warning)
+    elif replaces:
+        warning = ("this block was generated before fingerprints, so whether the source changed since cannot be "
+                   "established: applying may replace changes in the source (see the diff)")
+    source_sha = hashlib.sha256(source_bytes).hexdigest() if source_path else ""
+    return Reconciliation(rel, b, action, state, diff, token, document_text, source_path, source_text, warning,
+                          tuple(new_lines), source_sha, replaces)
