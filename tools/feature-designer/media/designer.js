@@ -307,8 +307,11 @@
     const onDoc = (e) => { if (!menu.contains(e.target) && !(subMenu && subMenu.contains(e.target)) && e.target !== btn) closeMenu(); };
     menuKeys(menu, null);
     menu.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeMenu(); btn.focus(); e.preventDefault(); } });
-    setTimeout(() => document.addEventListener("mousedown", onDoc), 0);
-    menuState = { close: () => { document.removeEventListener("mousedown", onDoc); closeSub(); menu.remove(); btn.setAttribute("aria-expanded", "false");
+    // Registered on the next tick (the opening click must not close it). A menu closed before then must
+    // not register it at all: a leaked listener would close every later menu on its first click.
+    let closed = false;
+    setTimeout(() => { if (!closed) document.addEventListener("mousedown", onDoc); }, 0);
+    menuState = { close: () => { closed = true; document.removeEventListener("mousedown", onDoc); closeSub(); menu.remove(); btn.setAttribute("aria-expanded", "false");
                                  if (!dialogOpen) blockEl.classList.remove("insert-target"); } };
     place.focus();
   }

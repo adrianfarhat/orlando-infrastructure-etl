@@ -133,6 +133,15 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     const closed = await f.evaluate(() => !document.querySelector(".menu.sub") && document.activeElement.classList.contains("has-sub"));
     rec("B1b keyboard: ArrowRight opens the submenu on its first item; ArrowLeft returns to Place Diagram", focused === "Add Existing Diagram…" && closed, { focused, closed });
     await app.page.keyboard.press("Escape");
+    // a menu closed in the same tick it opened must not leave its outside-click listener behind
+    await f.evaluate((i) => { document.querySelector(`#doc > .block:nth-child(${i + 1}) > .plus`).click();
+                              document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); }, b.idx);
+    await sleep(300);
+    await f.locator(plus).click();
+    await f.locator('.menu [role="menuitem"].has-sub').click();
+    const still = await waitFor(() => f.evaluate(() => !!document.querySelector(".menu.sub") && !!document.querySelector(".menu:not(.sub)")), 3000);
+    rec("B1c a menu closed as soon as it opened leaves nothing behind: the next menu stays open when clicked", !!still);
+    await app.page.keyboard.press("Escape"); await app.page.keyboard.press("Escape");
   });
 
   await step("3 library", async () => {
