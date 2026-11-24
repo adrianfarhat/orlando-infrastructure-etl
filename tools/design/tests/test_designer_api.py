@@ -323,6 +323,105 @@ class Placement(unittest.TestCase):
         self.assertIn("FD-0001-D2", self.registry.load(self.ws.root).lookup())
 
 
+class Reconcile(unittest.TestCase):
+    """PR B2a: reconciliation planned on unsaved text; the editor applies it (nothing written here)."""
+
+    def setUp(self):
+        self.ctx = Workspace(); self.ws = self.ctx.__enter__()
+        self.f = new_feature(self.ws.root, "A")
+        self.made = ownership.new_diagram(self.ws.root, "FD-0001", "Pipe flow", "process")
+        text = (self.ws.root / self.f.path).read_text(encoding="utf-8")
+        for prefix, ident in (("- **Desired outcome:**", ETL), ("## 3. Logic", self.made.diagram_id)):
+            at = after(text.split("\n"), prefix)
+            text = apply(text, request(self.ws, op="insert", path=self.f.path, text=text, at=at, diagram_id=ident)[0])
+        self.fresh = text
+        self.hand = text.replace('B["New step (planned)"]', 'B["Edited by hand"]')
+        self.src = self.ws.root / self.made.path
+
+    def tearDown(self):
+        self.ctx.__exit__(None, None, None)
+
+    def start(self, text, ident):
+        r, _ = request(self.ws, op="blocks", path=self.f.path, text=text)
+        return next(b["start"] for b in r["blocks"] if b["id"] == ident)
+
+    def plan(self, text, ident, action):
+        return request(self.ws, op="reconcile", path=self.f.path, text=text, line=self.start(text, ident), action=action)
+
+    def test_discard_restores_the_generated_copy_in_unsaved_text_and_writes_nothing(self):
+        before = snapshot(self.ws.root)
+        r, code = self.plan(self.hand, self.made.diagram_id, "discard")
+        self.assertEqual((code, r["state"], r["source"]), (0, "case2", None))
+        self.assertEqual(apply(self.hand, r), self.fresh)
+        self.assertIn("Edited by hand", r["diff"])
+        self.assertEqual(snapshot(self.ws.root), before)
+
+    def test_apply_to_source_returns_the_new_source_and_the_revision_it_was_computed_from(self):
+        r, code = self.plan(self.hand, self.made.diagram_id, "apply-to-source")
+        self.assertEqual((code, r["replaces_source_changes"], r["warning"]), (0, False, ""))
+        src = self.src.read_bytes()
+        self.assertEqual(r["source"]["path"], self.made.path)
+        self.assertEqual(r["source"]["sha256"], hashlib.sha256(src).hexdigest())
+        self.assertIn('B["Edited by hand"]', r["source"]["text"])
+        self.assertNotIn('B["Edited by hand"]', src.decode("utf-8"))                  # nothing written
+        after_text = apply(self.hand, r)
+        self.assertIn('B["Edited by hand"]', after_text)
+        self.src.write_text(r["source"]["text"], encoding="utf-8")                   # as the editor would save it
+        self.assertEqual(self.states(after_text)[self.made.diagram_id], "current")
+
+    def states(self, text):
+        r, _ = request(self.ws, op="blocks", path=self.f.path, text=text)
+        return {b["id"]: b["state"] for b in r["blocks"]}
+
+    def test_replacing_changes_made_in_the_source_is_flagged(self):
+        self.src.write_text(self.src.read_text(encoding="utf-8").replace('A["Existing step"]', 'A["Changed in source"]'),
+                            encoding="utf-8")
+        r, _ = self.plan(self.hand, self.made.diagram_id, "apply-to-source")
+        self.assertEqual((r["state"], r["replaces_source_changes"]), ("case3", True))
+        self.assertIn("replaces those source changes", r["warning"])
+        legacy = re.sub(r" sha256:[0-9a-f]{16} -->", " -->", self.hand)
+        r, _ = self.plan(legacy, self.made.diagram_id, "apply-to-source")
+        self.assertEqual((r["state"], r["replaces_source_changes"]), ("legacy", True))
+        self.assertIn("cannot be established", r["warning"])
+        self.assertFalse(self.plan(legacy, self.made.diagram_id, "discard")[0]["replaces_source_changes"])
+
+    def test_the_token_changes_with_the_text_and_with_the_source(self):
+        t1 = self.plan(self.hand, self.made.diagram_id, "discard")[0]["token"]
+        t2 = self.plan(self.hand + "\nmore", self.made.diagram_id, "discard")[0]["token"]
+        self.src.write_text(self.src.read_text(encoding="utf-8") + "\n", encoding="utf-8")  # outside the diagram
+        self.assertEqual(self.plan(self.hand, self.made.diagram_id, "discard")[0]["token"], t1)
+        self.src.write_text(self.src.read_text(encoding="utf-8").replace('A["Existing step"]', 'A["Changed"]'),
+                            encoding="utf-8")                                          # what Discard would write
+        t3 = self.plan(self.hand, self.made.diagram_id, "discard")[0]["token"]
+        self.assertEqual(len({t1, t2, t3}), 3)
+
+    def test_an_existing_conflict_below_does_not_block_an_insertion_above(self):
+        """A conflict's message names its line (also in its `reconcile --line N` fix); an insertion
+        above it moves that line, which must not count as a new problem (found in a GUI run)."""
+        at = after(self.hand.split("\n"), "- **Problem:**")
+        r, code = request(self.ws, op="insert", path=self.f.path, text=self.hand, at=at, diagram_id=ETL)
+        self.assertEqual(code, 0, r)
+        new_text = apply(self.hand, r)
+        self.assertEqual(new_text.count(f"diagram:start {ETL} "), 2)
+        self.assertIn('B["Edited by hand"]', new_text)                                # the conflict is kept as it was
+
+    def test_refusals(self):
+        hand_arch = self.fresh.replace("S1 --> S2", "S1 --> S2 %% mine")
+        r, code = self.plan(hand_arch, ETL, "apply-to-source")
+        self.assertEqual(code, 1)
+        self.assertIn("technical-lead's documentation workflow", r["error"]["message"])
+        self.assertEqual(self.plan(hand_arch, ETL, "discard")[1], 0)                    # discard is fine for any
+        self.assertEqual(request(self.ws, op="reconcile", path=self.f.path, text=self.hand, line=0, action="discard")[1], 1)
+        self.assertEqual(request(self.ws, op="reconcile", path=self.f.path, text=self.hand, line=True, action="discard")[1], 2)
+        self.assertEqual(self.plan(self.hand, self.made.diagram_id, "both")[1], 2)
+        self.src.write_text(self.src.read_text(encoding="utf-8").replace('A["Existing step"]', 'A["Changed"]'),
+                            encoding="utf-8")                                          # QA M2: an out-of-date block
+        for action in ("apply-to-source", "discard"):                                 # is not a conflict: refused
+            r, code = self.plan(self.fresh, self.made.diagram_id, action)
+            self.assertEqual(code, 1, action)
+            self.assertIn("not in conflict", r["error"]["message"])
+
+
 class FeatureIndex(unittest.TestCase):
     def test_unsaved_texts_give_what_index_writes_after_saving(self):
         with Workspace() as ws:

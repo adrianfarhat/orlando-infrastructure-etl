@@ -524,3 +524,38 @@ and fingerprint rules, which are unchanged. Scope, order and acceptance tests ar
 10. **Insertion after creation.** If Make New creates and registers a diagram but inserting its
     reference fails (for example because the document changed), the stable ID is shown with an
     Add Existing Diagram action so it can be placed later; nothing is half-done.
+
+## 2026-11-23: T-97 PR B2 — synchronization and reconciliation (approved by the user)
+
+Mermaid only; the fingerprint rules (U13), source resolution, the registry lock and
+compare-and-swap, and the docs/architecture/ write guard are unchanged. T-98 (the "%%" line in
+generated copies) stays separate. Scope, order and acceptance tests are on the T-97 card.
+
+1. **C1 — which documents refresh automatically.** Only a document shown in a Feature Designer
+   view, with no unsaved changes, and open in no other editor (not Mark Sharp, not the text
+   editor). Every other document gets a guarded "Refresh now". Only blocks whose source changed
+   and whose copy was not edited are refreshed; conflicts never.
+2. **C2 — after an automatic refresh** a non-modal notice offers Undo, Show changes and Save. The
+   refresh is one undoable edit and is never saved automatically (decision B3).
+3. **C3 — Apply to source** writes the source through the editor and saves it, refused while the
+   source has unsaved changes. Added safeguards: the source and the document revisions are
+   verified immediately before applying; applying the copy over changes made in the source (or
+   when that cannot be established) needs an explicit confirmation; if the source is saved but
+   the document update fails, this is reported as partial completion with a guarded recovery
+   (update the block now, or restore the preserved original source); the original source content
+   is kept for recovery until the operation completes; success is reported only when both steps
+   succeeded; nothing suggests that one Ctrl+Z undoes both files.
+4. **C4 — closed documents:** the direction is approved, but the detailed design (detecting
+   interrupted multi-file updates, a durable transaction record or a justified alternative, safe
+   resume, rollback and conflict handling, crash-injection and restart-recovery tests) needs
+   approval before implementation.
+5. **C5 — event storms:** more than 5 sources changed within 2 seconds means no automatic
+   refresh; a summary offers a manual refresh instead.
+6. **C6 — renames:** VS Code renames of feature-owned sources in approved folders, one prompt per
+   batch (PR B2b).
+7. **C7 — new commands** `refresh-blocks` and `registry move` (PR B2b).
+8. **C8 — visibility:** a status strip that stays visible while scrolling, with counts and
+   Previous / Next navigation between affected blocks.
+9. **C9 — two PRs.** PR B2a: source-change detection and event storms, automatic and manual
+   refresh, conflict review with Discard manual change and Apply to source, the status strip.
+   PR B2b: closed documents (after the C4 design is approved), the rename hook and registry move.

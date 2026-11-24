@@ -79,15 +79,42 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
   an architecture document or the registry changes). When the copy in the document differs,
   the block says so and nothing is hidden:
   - *out of date* (the source changed, the copy was not edited): drawn from the source; the
-    old copy and the text differences can be shown; `python -m tools.design index` updates it;
+    old copy and the text differences can be shown (see the next item for how it is updated);
   - *changed outside its source* (edited by hand, reformatted by another editor, or made
     before fingerprints and different): the authoritative source and the document copy are
     shown side by side, with the text differences; it is never overwritten automatically;
-    resolve it with `python -m tools.design reconcile` (see
+    **Review…** resolves it (below), as does `python -m tools.design reconcile` (see
     [designs/README.md](../../designs/README.md#diagrams));
   - *retired* (E11): a placeholder with **Remove reference** (one undoable edit); *missing*
     (E6/E7) or *unknown* (E1): a placeholder with the problem and its fix. The copy in the
     document can still be shown.
+- **When a diagram source changes** (saved in VS Code or changed on disk), out-of-date copies in
+  open documents are updated as follows; conflicts are never touched:
+  - a document with **no unsaved changes**, shown **only in Feature Designer** (not also in
+    Mark Sharp or the text editor), is refreshed automatically as **one undoable edit that is
+    not saved**; the status strip offers **Undo**, **Show changes** (against the saved file) and
+    **Save**;
+  - any other open document is left alone; the status strip says why and offers **Refresh now**
+    (one undoable edit, computed on the text as it is then);
+  - when more than 5 sources change within 2 seconds (for example a branch switch), nothing is
+    refreshed automatically; **Refresh now** is offered instead;
+  - closed documents are updated by `python -m tools.design index`;
+  - **Feature Designer: Check Diagram Sources** checks again when a change was missed.
+- **Review…** on a conflicting block shows both versions and the differences, then:
+  - **Discard manual change** restores the generated copy here (one undoable edit; not saved;
+    the source is not changed);
+  - **Apply to source** (feature-owned diagrams only; never architecture diagrams) writes the
+    copy into its source and saves it, then updates the block (not saved). It is refused if the
+    source has unsaved changes, and if the document or the source changed since the review
+    (review again). When it would replace changes made in the source, you must tick that
+    explicitly. Ctrl+Z in the document reverts only the block; the saved source change is undone
+    in the source file. If the source is saved but the block cannot be updated, you are told
+    that it was only partly done, with **Update the block now** and **Restore the original
+    source**; the original is kept (outside the repository, in VS Code's storage for this
+    extension) until the operation is resolved, also across restarts (**Feature Designer:
+    Resolve Interrupted Apply to Source**).
+- **Status strip:** stays visible under the toolbar while you scroll: how many diagrams are out
+  of date, in conflict or have a problem, with **Previous** / **Next** to go to each.
 - **Restricted Mode:** in an untrusted workspace Feature Designer shows a notice only; it
   runs no scripts and no Python. (VS Code does not enforce the manifest's trust setting for
   development-mode extensions, so this is checked at runtime.)

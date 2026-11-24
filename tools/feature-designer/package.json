@@ -27,7 +27,9 @@
     ],
     "commands": [
       { "command": "featureDesigner.selectPython", "title": "Feature Designer: Select Python Interpreter" },
-      { "command": "featureDesigner.showLog", "title": "Feature Designer: Show Log" }
+      { "command": "featureDesigner.showLog", "title": "Feature Designer: Show Log" },
+      { "command": "featureDesigner.checkSources", "title": "Feature Designer: Check Diagram Sources" },
+      { "command": "featureDesigner.recovery", "title": "Feature Designer: Resolve Interrupted Apply to Source" }
     ],
     "configuration": {
       "title": "Feature Designer",
