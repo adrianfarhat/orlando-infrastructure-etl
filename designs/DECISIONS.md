@@ -559,3 +559,52 @@ generated copies) stays separate. Scope, order and acceptance tests are on the T
 9. **C9 — two PRs.** PR B2a: source-change detection and event storms, automatic and manual
    refresh, conflict review with Discard manual change and Apply to source, the status strip.
    PR B2b: closed documents (after the C4 design is approved), the rename hook and registry move.
+
+## 2026-11-25: T-97 PR B2b — closed documents, transactions and renames (approved by the user)
+
+PR B2b is split in two. **B2b-1**: closed-document updates, the transaction record and crash
+recovery (authorized). **B2b-2**: registry moves, source renames and reference synchronization
+(not started). The fingerprint rules, classification, generated text, the docs/architecture/
+write guard and T-98 are unchanged.
+
+1. **D1 — transaction records** live in `designs/diagrams/.transactions/`, ignored by Git with
+   one narrowly scoped `.gitignore` entry, so the command line, `check`, every VS Code window and
+   a restarted machine all see an interrupted update.
+2. **D2 — recovery is always an explicit action.** Neither Complete nor Undo is preselected. The
+   affected files, their current states and the consequences of each action are shown before
+   anything is confirmed.
+3. **D3 — one locking protocol for every cooperating writer.** All design-tool write paths are
+   audited; every one that writes takes the registry lock and refuses to write a file held by an
+   unresolved transaction. The lock is never waited for (no deadlock), and taking it again in the
+   same process is allowed (no self-deadlock).
+4. **D4 — Git operations.** An update or a recovery refuses to start while a Git operation is in
+   progress, and the repository state is checked again immediately before files are written.
+5. **D5 — folder renames:** approved for B2b-2 only.
+6. **D6 — documents open in other VS Code windows.** The registry lock says nothing about
+   another window's unsaved documents, so each Feature Designer window publishes the feature
+   documents it has open (and whether they are unsaved) in the transaction folder, with a
+   heartbeat. An update refuses any document listed by a window that may still be running. A
+   window that does not run Feature Designer (another VS Code installation, Restricted Mode, or
+   another editor) cannot be detected; this limitation is documented and shown in the
+   confirmation.
+7. **D7 — QA follow-ups from B2a:** the misplaced comment and the empty pane of an expired Show
+   changes snapshot are fixed in B2b-1; the path-normalisation nit and the order of overlapping
+   dialogs stay as follow-ups.
+8. **D8 — retention.** A record is removed only after a successful resolution or a separate,
+   explicit and informed abandonment. Dismissing a notification never removes it.
+9. **Transaction requirements:**
+   - each record holds the original and replacement bytes, their hashes, the source and
+     registry revisions and the transaction state;
+   - records, paths, checksums and manifest integrity are validated before use;
+   - path traversal, symbolic-link and junction escapes and unauthorized targets are rejected;
+   - recovery never overwrites a file with unexpected changes;
+   - the sources and the registry are revalidated before an interrupted transaction is
+     completed;
+   - Complete and Undo are idempotent, also after an interruption during recovery itself;
+   - durability is verified on Windows, with the process terminated during preparation,
+     replacement, rollback and clean-up;
+   - the remaining race between checking a file and replacing it is documented, and no
+     absolute atomicity against non-cooperating programs is claimed;
+   - the four protected files, the architecture documents and the unrelated `iot/` directory
+     are preserved;
+   - the B2a automatic and manual refreshes respect unresolved transactions.
