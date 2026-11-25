@@ -208,9 +208,9 @@ async function onPanelMessage(kind, m) {
     if (typeof m.root !== "string" || !["complete", "undo", "abandon"].includes(m.action)) return;
     try {
       const r = await runResolve(m.root, m.id, m.action, m.token);
-      if (p) p.webview.postMessage({ type: "result", ok: r.ok, message: r.message, files: r.files || [], note: r.note || "" });
+      if (views.get("recovery") === p) p.webview.postMessage({ type: "result", ok: r.ok, message: r.message, files: r.files || [], note: r.note || "" });
     } catch (err) {
-      if (p) p.webview.postMessage({ type: "result", ok: false, message: String(err.message || err) });
+      if (views.get("recovery") === p) p.webview.postMessage({ type: "result", ok: false, message: String(err.message || err) });
     }
     await showRecovery(true, false);
   }

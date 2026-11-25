@@ -662,6 +662,7 @@ def affected(root: Path, exclude_window: str = "") -> dict:
     known = diagrams.sources(root)
     hold, bad = held(root)
     opened, unknown = open_documents(root, exclude_window)
+    running = _other_holds_lock(root)                  # an update (or another diagram command) is in progress
     docs = []
     features, _ = discover(root)
     for f in features:
@@ -683,7 +684,8 @@ def affected(root: Path, exclude_window: str = "") -> dict:
         ids = [diagrams.START.match(new[0]).group("id") for _s, _e, new in todo]
         conflicts = [b.diagram_id for b in blocks if diagrams._usable(b, known) and diagrams.classify(
             b, lines[b.start + 1:b.end], diagrams.render(known[b.diagram_id], f.path)) in diagrams.CONFLICTS]
-        excluded = ("held by an interrupted update" if f.path in hold or bad else
+        excluded = (("being updated by another window or command" if running else "held by an interrupted update")
+                    if f.path in hold or bad else
                     "open in " + "; ".join(opened[_key(f.path)]) if _key(f.path) in opened else "")
         docs.append({"path": f.path, "sha256": _sha(data), "blocks": ids, "conflicts": conflicts, "excluded": excluded})
     return {"documents": docs, "sources_token": sources_token(root, known), "unknown_windows": unknown,
