@@ -22,3 +22,6 @@ tools/feature-designer/test/gui/.run/
 tools/feature-designer/*.vsix
 # The diagram registry's lock (tools/design/registry.py): exists only while a diagram command runs.
 designs/diagrams/.registry.lock
+# Records of updates of closed feature documents and the open-document lists of Feature Designer windows
+# (tools/design/transactions.py, T-97 PR B2b-1): local to this working tree, never committed.
+designs/diagrams/.transactions/

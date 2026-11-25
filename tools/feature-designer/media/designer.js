@@ -20,6 +20,8 @@
   let nameSeq = 0, nameView = null;
   state.syncNote = null;                           // PR B2a: what the last source change did to this document
   state.partial = null;                            // an Apply to source whose second step did not complete
+  state.held = false;                              // PR B2b-1: part of an interrupted update of closed documents
+  state.closed = null;                             // PR B2b-1: closed documents with out-of-date diagrams
   let navIndex = -1;
   const svgCache = new Map();
   let mermaidSeq = 0, menuState = null, dialogOpen = false, libraryView = null;
@@ -111,6 +113,8 @@
     else if (m.type === "partial") { state.partial = { recovery: m.recovery, id: m.id, source: m.source, reason: m.reason }; strip(); }
     else if (m.type === "reconciled") { state.syncNote = null; status(m.text); strip(); }
     else if (m.type === "review") openReview(m);
+    else if (m.type === "heldNote") { state.held = !!m.held; strip(); }
+    else if (m.type === "closedNote") { state.closed = m.count || m.elsewhere ? { count: m.count, elsewhere: m.elsewhere } : null; strip(); }
   });
 
   // ------------------------------------------------------------------ the status strip (PR B2a, C2, C8)
@@ -136,6 +140,15 @@
       h("span", { text: `Partly done: ${p.source} was updated and saved, but the ${p.id} block here was NOT updated (${p.reason}). The original source is preserved.` }),
       btn("finish", "Update the block now", () => post({ type: "recovery", recovery: p.recovery, kind: "finish" })),
       btn("restore", "Restore the original source", () => post({ type: "recovery", recovery: p.recovery, kind: "restore" }))));
+    if (state.held) parts.push(h("div", { class: "strip-row held", role: "alert" },
+      h("span", { text: "This document is part of an interrupted update of closed documents. Nothing refreshes its diagrams until " +
+                        "that update is completed, undone or abandoned; your own edits are unaffected." }),
+      btn("resolve-update", "Review…", () => post({ type: "resolveUpdate" }), "Show the interrupted update and decide what to do")));
+    if (state.closed && state.closed.count) parts.push(h("div", { class: "strip-row closed" },
+      h("span", { text: `${plural(state.closed.count, "other document", "other documents")} (not open) ${state.closed.count === 1 ? "has" : "have"} ` +
+                        "out-of-date diagrams." + (state.closed.elsewhere ? ` ${plural(state.closed.elsewhere, "more is", "more are")} open in another window and ` +
+                        "updated there." : "") }),
+      btn("update-closed", "Update…", () => post({ type: "updateClosed" }), "List them and update them together (all or none)")));
     if (n && n.kind === "auto") parts.push(h("div", { class: "strip-row auto" },
       h("span", { text: `Updated ${plural(n.ids.length, "diagram", "diagrams")} from ${n.ids.length === 1 ? "its source" : "their sources"} (${n.ids.join(", ")}) — not saved.` }),
       btn("undo-refresh", "Undo", () => { state.syncNote = null; strip(); post({ type: "undo" }); }, "Undo the refresh (one step)"),
@@ -148,11 +161,11 @@
       h("span", { text: n.reason === "storm"
         ? `Many diagram sources changed at once (${n.sources}); nothing was refreshed automatically. ${plural(n.ids.length, "diagram", "diagrams")} here ${n.ids.length === 1 ? "is" : "are"} out of date.`
         : `${plural(n.ids.length, "diagram is", "diagrams are")} out of date (${n.ids.join(", ")}); not refreshed automatically because ${REASONS[n.reason] || n.reason}${n.editors && n.editors.length ? ` (${n.editors.join(", ")})` : ""}.` }),
-      btn("refresh-now", "Refresh now", () => post({ type: "refreshNow", version: state.version }), "Refresh the out-of-date blocks (one undoable edit; not saved)")));
+      state.held ? null : btn("refresh-now", "Refresh now", () => post({ type: "refreshNow", version: state.version }), "Refresh the out-of-date blocks (one undoable edit; not saved)")));
     if (total) parts.push(h("div", { class: "strip-row counts" },
       h("span", { class: "count-text", text: [c.outdated && `${c.outdated} out of date`, c.conflict && plural(c.conflict, "conflict", "conflicts"),
                                               c.problem && plural(c.problem, "problem", "problems")].filter(Boolean).join(" · ") }),
-      c.outdated && !(n && n.kind === "manual") ? btn("refresh-now", "Refresh now", () => post({ type: "refreshNow", version: state.version }),
+      c.outdated && !(n && n.kind === "manual") && !state.held ? btn("refresh-now", "Refresh now", () => post({ type: "refreshNow", version: state.version }),
                                                          "Refresh the out-of-date blocks (one undoable edit; not saved)") : null,
       btn("prev", "Previous", () => navigate(-1), "Previous diagram that needs attention"),
       btn("next", "Next", () => navigate(1), "Next diagram that needs attention")));

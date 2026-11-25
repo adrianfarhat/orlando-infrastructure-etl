@@ -191,7 +191,7 @@ def new_diagram(root: Path, owner: str, title: str, category: str = "other") -> 
             if isinstance(exc, DesignError):
                 raise DesignError(f"{exc}; {rel} was not kept") from None
             raise
-    registry.write_diagram_index(root)                  # generated from the registry, like the feature index
+        registry.write_diagram_index(root)  # D3 (PR B2b-1): inside the lock, like every other write
     return CreatedDiagram(rel, diagram_id, owner, category)
 
 

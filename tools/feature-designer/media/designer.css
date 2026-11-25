@@ -135,3 +135,5 @@ body.placing .block > .plus { opacity: 1; color: var(--accent); }
 .review-action { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
 .review .undo-note { font-size: 12px; color: var(--muted); }
 .review label.replace-confirm { display: flex; flex-direction: row; gap: 8px; align-items: center; font-size: 13px; color: var(--fg); margin: 8px 0; }
+#strip .strip-row.held { border-left: 3px solid var(--vscode-editorWarning-foreground, #c80); }
+#strip .strip-row.closed { border-left: 3px solid var(--vscode-focusBorder, #08f); }

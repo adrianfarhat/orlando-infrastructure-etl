@@ -46,6 +46,8 @@ Other commands:
 | `python -m tools.design registry adopt\|adopt-architecture\|relink\|retire …` | Change the diagram registry under its lock: register a source, register the architecture diagrams in place, move or retitle a diagram, retire one (see [Diagrams](#diagrams)) |
 | `python -m tools.design resolve <ID or alias>` | Show a diagram's authoritative source (JSON); writes nothing |
 | `python -m tools.design reconcile --file F --line N --discard\|--apply-to-source` | Resolve a diagram block that was edited by hand: shows the change, applies it only with `--confirm <token>` |
+| `python -m tools.design refresh-blocks --file F --expect SHA256 [...] --sources-token T` | Refresh the out-of-date diagram blocks of several closed feature documents as one recoverable update: all of them or none; refused if any changed since it was listed (used by the Feature Designer; see [Interrupted updates](#interrupted-updates-of-closed-documents)) |
+| `python -m tools.design transaction status\|complete\|undo\|abandon [ID] [--confirm TOKEN]` | Show or resolve an interrupted update (E16): each action shows its effect first and acts only with the `--confirm` token it prints |
 | `python -m tools.design designer` | The Feature Designer's interface (T-97): one JSON request on stdin, one JSON response on stdout; it proposes edits and never writes a file (described in `tools/design/designer_api.py`) |
 
 Exit codes: 0 success; 1 problems found (`check`, `index --check`) or a refused Feature
@@ -356,6 +358,43 @@ told from a stale copy. `index` migrates such a block only when that loses nothi
 exactly what its source generates now, only its start marker gains the fingerprint. Any other
 content is preserved and reported as a conflict (E15, "generated before fingerprints"); resolve
 it with `reconcile` as above.
+
+#### Interrupted updates of closed documents
+
+`refresh-blocks` (the Feature Designer's **Update…** for closed documents) writes several
+feature documents as one update. Before changing anything it keeps, in
+`designs/diagrams/.transactions/<id>/` (ignored by Git), the exact original and updated bytes of
+every document, their SHA-256 hashes, the registry and source revisions they were computed from
+and the state of the update, each flushed to disk. Every document is checked again just before
+it is replaced; if one changed, the documents already replaced are put back and nothing is
+changed.
+
+If the update is interrupted (the process or the computer stopped), `check` reports E16 and
+nothing more is written to those documents until you decide:
+
+```text
+python -m tools.design transaction status
+python -m tools.design transaction complete tx-20261125T101500Z-0a1b2c3d
+python -m tools.design transaction undo tx-20261125T101500Z-0a1b2c3d
+python -m tools.design transaction abandon tx-20261125T101500Z-0a1b2c3d
+```
+
+Each shows every document's current state (updated, not updated, changed since, missing) and
+what it would do, and acts only when repeated with `--confirm <token>`; the token changes if
+anything changes meanwhile. **Complete** writes the updated text into the documents not yet
+updated (refused if the registry or a source changed since). **Undo** restores the originals of
+those already updated. Both are safe to repeat, also after an interruption of their own; a
+document that changed since, is missing, or is open in a Feature Designer window is never
+overwritten. **Abandon** removes the record and changes no document; a damaged record can only
+be abandoned, and until then no feature document is written by the design tooling.
+
+Every command that writes takes the registry lock (below) and leaves documents held by an
+unresolved update alone. The lock is never waited for, so two commands cannot deadlock. All
+commands refuse while a Git operation (merge, rebase, cherry-pick, revert, bisect) is in
+progress. **Limits:** a program that does not use this tooling can still change a document in the
+moment between its last check and its replacement, and that change is then replaced; Windows has
+no folder flush, so the record relies on the file system's journal; a VS Code window that does
+not run Feature Designer cannot report the documents it has open.
 
 **A stale registry lock.** Diagram commands hold `designs/diagrams/.registry.lock` while they run;
 a command that was killed can leave it behind, and every diagram command then refuses (E12). To

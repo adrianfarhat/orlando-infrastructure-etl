@@ -479,10 +479,32 @@ def _os_unlock(fd: int) -> None:
         pass
 
 
+_held: dict[str, int] = {}     # repository root -> how many times this process holds its lock
+
+
+def _lock_key(root: Path) -> str:
+    return os.path.normcase(str(Path(root).resolve()))
+
+
+def holds_lock(root: Path) -> bool:
+    """Whether this process holds the registry lock of `root`."""
+    return _held.get(_lock_key(root), 0) > 0
+
+
 @contextmanager
 def lock(root: Path):
     """The registry lock (E12): created exclusively and held, while the command runs, with an
-    operating-system lock that ends with the process; removed afterwards, never broken."""
+    operating-system lock that ends with the process; removed afterwards, never broken. Every
+    design-tool writer takes it (T-97 PR B2b-1, D3). It is never waited for, so two writers can
+    never deadlock; a writer that already holds it in this process may take it again."""
+    key = _lock_key(root)
+    if _held.get(key, 0) > 0:
+        _held[key] += 1
+        try:
+            yield
+        finally:
+            _held[key] -= 1
+        return
     path = Path(root) / LOCK
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -499,13 +521,20 @@ def lock(root: Path):
     try:
         os.write(fd, json.dumps({"pid": os.getpid(), "host": platform.node(), "time": time.time()}).encode("utf-8"))
         held = _os_lock(fd)
+        for _ in range(20):                         # a liveness check (`unlock`, `transaction status`) may hold
+            if held:                                # the operating-system lock for an instant: never run without it
+                break
+            time.sleep(0.05)
+            held = _os_lock(fd)
     except BaseException:
         os.close(fd)
         os.unlink(path)
         raise
+    _held[key] = 1
     try:
         yield
     finally:
+        _held.pop(key, None)
         if held:
             _os_unlock(fd)
         os.close(fd)
@@ -743,7 +772,7 @@ def adopt(root: Path, rel: str, category: str) -> Entry:
             raise DesignError(f"{rel} has no title")
         doc["diagrams"].append(entry_map(s.diagram_id, s.title, kind, ref, "mermaid-md", category, rel))
         save(root, doc, reg.sha)
-    write_diagram_index(root)                          # generated from the registry, like the feature index
+        write_diagram_index(root)  # D3 (PR B2b-1): inside the lock, like every other write
     return load(root).by_id()[s.diagram_id]
 
 
@@ -786,8 +815,7 @@ def adopt_architecture(root: Path) -> list[Entry]:
             doc["diagrams"].append(item)
         if new_items:
             save(root, doc, reg.sha)
-    if new_items:
-        write_diagram_index(root)
+            write_diagram_index(root)  # D3 (PR B2b-1): inside the lock, like every other write
     by_id = load(root).by_id()
     return [by_id[did] for _, did in new_items]
 
@@ -851,7 +879,7 @@ def relink(root: Path, ident: str, path: str | None = None, title: str | None = 
         if source_rewrite is not None:                   # the source first; the registry then names it
             ownership.write_atomically(*source_rewrite, root=root)
         save(root, doc, reg.sha)
-    write_diagram_index(root)
+        write_diagram_index(root)  # D3 (PR B2b-1): inside the lock, like every other write
     return load(root).by_id()[e.diagram_id]
 
 
@@ -898,7 +926,7 @@ def retire(root: Path, ident: str, confirm: bool) -> tuple[Entry, list[str], boo
         item["status"] = "retired"
         item.insert(list(item.keys()).index("status") + 1, "retired", _dt.date.today().isoformat())
         save(root, doc, reg.sha)
-    write_diagram_index(root)
+        write_diagram_index(root)  # D3 (PR B2b-1): inside the lock, like every other write
     return load(root).by_id()[e.diagram_id], refs, True
 
 

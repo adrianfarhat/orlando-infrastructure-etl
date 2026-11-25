@@ -98,7 +98,12 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
     (one undoable edit, computed on the text as it is then);
   - when more than 5 sources change within 2 seconds (for example a branch switch), nothing is
     refreshed automatically; **Refresh now** is offered instead;
-  - closed documents are updated by `python -m tools.design index`;
+  - **closed documents** (not open in any editor of this window) are offered in the status strip:
+    **Update…** lists each document, the diagrams refreshed and the conflicts left alone, and
+    the documents left out (open in this window, open in another Feature Designer window, or
+    part of an interrupted update). Confirming writes them on disk as **one update: all of them,
+    or none**. If anything changed since the list was shown, nothing is written and the new
+    list is shown. Also **Feature Designer: Update Closed Documents…**;
   - **Feature Designer: Check Diagram Sources** checks again when a change was missed.
 - **Review…** on a conflicting block shows both versions and the differences, then:
   - **Discard manual change** restores the generated copy here (one undoable edit; not saved;
@@ -113,6 +118,27 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
     source**; the original is kept (outside the repository, in VS Code's storage for this
     extension) until the operation is resolved, also across restarts (**Feature Designer:
     Resolve Interrupted Apply to Source**).
+- **An interrupted update** (for example VS Code or the computer stopped part-way) keeps a
+  record in `designs/diagrams/.transactions/` (ignored by Git) with every original and updated
+  copy. You are told at the next start, and **Feature Designer: Resolve Interrupted Update**
+  shows each document's current state and what each action would do; nothing is selected for
+  you:
+  - **Complete the update** writes the updated text into the documents not yet updated; it is
+    refused if a diagram source or the registry changed since (then use Undo and update again);
+  - **Undo the update** restores the original text of the documents already updated;
+  - **Abandon the record** removes the record and its copies and changes no document; it needs
+    its own acknowledgement. A record that cannot be trusted (damaged) can only be abandoned.
+  - A document that changed since, or is missing, is never overwritten; one open in an editor
+    must be closed first. Dismissing the notification or closing the panel keeps the record.
+    Until it is resolved, the documents it holds are not refreshed or edited by Feature
+    Designer or the design tooling (the strip says so), and `check` reports it (E16).
+- **Documents open in other windows.** Each Feature Designer window lists the feature documents
+  it has open (and whether they have unsaved changes) in
+  `designs/diagrams/.transactions/windows/`, every 5 seconds; an update never writes a document
+  a window that may still be running lists. A VS Code window that does not run Feature Designer
+  (another installation, Restricted Mode) or another editor cannot be detected: if one has the
+  file open with unsaved changes, it reports that the file changed on disk and asks before
+  saving over it.
 - **Status strip:** stays visible under the toolbar while you scroll: how many diagrams are out
   of date, in conflict or have a problem, with **Previous** / **Next** to go to each.
 - **Restricted Mode:** in an untrusted workspace Feature Designer shows a notice only; it

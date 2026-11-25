@@ -801,6 +801,8 @@ def check(root: Path) -> list[Problem]:
     problems += ownership.problems(root, features)
     from . import registry                        # T-97 PR A: the diagram registry
     problems += registry.problems(root, features)
+    from . import transactions                    # T-97 PR B2b-1: interrupted updates (E16)
+    problems += transactions.problems(root)
     if not index_is_fresh(root):
         problems.append(Problem(INDEX, "out of date or missing: run `python -m tools.design index`"))
     if not registry.diagram_index_is_fresh(root):

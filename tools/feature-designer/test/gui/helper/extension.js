@@ -60,6 +60,12 @@ function activate(context) {
       return { active: true, value: ext.exports[fn](root()) };
     },
     async trusted() { return vscode.workspace.isTrusted; },
+    async designerCall({ fn, args }) {                                // PR B2b-1: a test hook with arguments (may be async)
+      const ext = vscode.extensions.getExtension("orlando-infrastructure.feature-designer");
+      if (!ext || !ext.isActive) return { active: false };
+      const [obj, name] = fn.includes(".") ? [ext.exports[fn.split(".")[0]], fn.split(".")[1]] : [ext.exports, fn];
+      return { active: true, value: await obj[name](...(args || []).map((a) => (a === "$root" ? root() : a))) };
+    },
   };
   const seen = new Set();
   const timer = setInterval(async () => {

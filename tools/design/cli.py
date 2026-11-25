@@ -8,6 +8,9 @@
   python -m tools.design resolve ID
   python -m tools.design reconcile --file PATH --line N (--discard | --apply-to-source) [--confirm TOKEN]
   python -m tools.design index [--check] [--root DIR]
+  python -m tools.design refresh-blocks --file PATH --expect SHA256 [--file ... --expect ...] [--sources-token T] [--json]
+  python -m tools.design transaction status [--json]
+  python -m tools.design transaction (complete | undo | abandon) ID [--confirm TOKEN] [--json]
   python -m tools.design check [--root DIR]
   python -m tools.design designer [--root DIR]  < request.json   (the Feature Designer interface, T-97)
   python -m tools.design designer --serve [--root DIR]   (one JSON request per line until end of input)
@@ -28,7 +31,7 @@ import traceback
 from pathlib import Path
 from typing import Callable, TextIO
 
-from . import architecture, dependencies, designer_api, diagrams, ownership, registry, workspace
+from . import architecture, dependencies, designer_api, diagrams, ownership, registry, transactions, workspace
 from .workspace import DesignError
 
 EXIT_OK, EXIT_PROBLEMS, EXIT_FAILURE = 0, 1, 2
@@ -103,8 +106,21 @@ def build_parser() -> argparse.ArgumentParser:
                        help="only report whether the indexes, summary tables and Related features rows are up to "
                             "date (writes nothing)")
     sub.add_parser("check", help="check every feature specification and both indexes")
+    rb = sub.add_parser("refresh-blocks", help="refresh the out-of-date diagram blocks of closed feature documents as "
+                                               "one recoverable update: all listed documents, or none (T-97 PR B2b-1)")
+    rb.add_argument("--file", action="append", required=True, help="a feature document (repeat for each document)")
+    rb.add_argument("--expect", action="append", required=True,
+                    help="the SHA-256 of that document as listed (one per --file, in the same order)")
+    rb.add_argument("--sources-token", help="the sources token from the listing: refused if a source changed since")
+    rb.add_argument("--window", default="", help=argparse.SUPPRESS)      # the calling Feature Designer window
+    rb.add_argument("--json", action="store_true", help="print the result as JSON")
+    tx = sub.add_parser("transaction", help="show or resolve an interrupted update of closed documents (E16)")
+    tx.add_argument("action", choices=["status", "complete", "undo", "abandon"])
+    tx.add_argument("record", nargs="?", help="the record ID (tx-...), for complete, undo and abandon")
+    tx.add_argument("--confirm", metavar="TOKEN", help="carry out the action on exactly the state that was shown")
+    tx.add_argument("--json", action="store_true", help="print the result as JSON")
     for p in (feature, diagram, designer, index, sub.choices["check"], adopt, adopt_arch, relink, retire, unlock,
-              resolve, reconcile):
+              resolve, reconcile, rb, tx):
         p.add_argument("--root", type=Path, help="repository root (default: found from the current folder)")
     return parser
 
@@ -139,6 +155,10 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             return code
         if args.command == "reconcile":
             return _reconcile(args, root, out)
+        if args.command == "refresh-blocks":
+            return _refresh_blocks(args, root, out)
+        if args.command == "transaction":
+            return _transaction(args, root, out)
         if args.command == "index":
             if args.check:
                 fresh = workspace.index_is_fresh(root)
@@ -154,34 +174,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 for p in stale:
                     print(f"{p.path}: {p.message}", file=out)
                 return EXIT_OK if fresh and arch_fresh and diagram_fresh and not stale else EXIT_PROBLEMS
-            for p in diagrams.problems(root):                    # warn before those blocks are regenerated
-                if "inside a generated summary or Related features block" in p.message:
-                    print(f"design: warning: {p.path}: {p.message}", file=err)
-            for path in workspace.refresh_summaries(root):
-                print(f"refreshed the summary table in {path}", file=out)
-            for path in dependencies.refresh_related(root):
-                print(f"refreshed the Related features rows in {path}", file=out)
-            for path, count in diagrams.refresh(root):
-                print(f"refreshed {count} diagram block{'s' if count != 1 else ''} in {path}", file=out)
-            for p in diagrams.stale(root):                       # conflicts are never overwritten (U13)
-                if "(E15)" in p.message:
-                    print(f"design: warning: {p.path}: {p.message}", file=err)
-            for p in workspace.not_refreshable(root):           # one line per file; nothing is repaired
-                print(f"design: warning: {p.path}: {p.message}; run `python -m tools.design check`", file=err)
-            fresh = workspace.index_is_fresh(root)
-            path = workspace.write_index(root)
-            print(f"{path} is already up to date" if fresh else f"wrote {path}", file=out)
-            arch_fresh = architecture.architecture_index_is_fresh(root)
-            path = architecture.write_architecture_index(root)
-            if path is None:
-                print(f"no {workspace.ARCHITECTURE}/ folder, so there is no architecture index", file=out)
-            else:
-                print(f"{path} is already up to date" if arch_fresh else f"wrote {path}", file=out)
-            diagram_fresh = registry.diagram_index_is_fresh(root)
-            path = registry.write_diagram_index(root)
-            if path is not None:
-                print(f"{path} is already up to date" if diagram_fresh else f"wrote {path}", file=out)
-            return EXIT_OK
+            with registry.lock(root):                # D3: the same lock as every other writer
+                transactions.guard(root)                # never a document held by an interrupted update
+                return _index(root, out, err)
         problems = workspace.check(root)
         features, _ = workspace.discover(root)
         for p in problems:
@@ -200,6 +195,38 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         print("design: internal error; nothing more was done. Details:", file=err)
         print("\n".join(traceback.format_exc().splitlines()[-20:]), file=err)
         return EXIT_FAILURE
+
+
+def _index(root: Path, out: TextIO, err: TextIO) -> int:
+    """`index` (not --check), inside the registry lock."""
+    for p in diagrams.problems(root):                    # warn before those blocks are regenerated
+        if "inside a generated summary or Related features block" in p.message:
+            print(f"design: warning: {p.path}: {p.message}", file=err)
+    for path in workspace.refresh_summaries(root):
+        print(f"refreshed the summary table in {path}", file=out)
+    for path in dependencies.refresh_related(root):
+        print(f"refreshed the Related features rows in {path}", file=out)
+    for path, count in diagrams.refresh(root):
+        print(f"refreshed {count} diagram block{'s' if count != 1 else ''} in {path}", file=out)
+    for p in diagrams.stale(root):                       # conflicts are never overwritten (U13)
+        if "(E15)" in p.message:
+            print(f"design: warning: {p.path}: {p.message}", file=err)
+    for p in workspace.not_refreshable(root):           # one line per file; nothing is repaired
+        print(f"design: warning: {p.path}: {p.message}; run `python -m tools.design check`", file=err)
+    fresh = workspace.index_is_fresh(root)
+    path = workspace.write_index(root)
+    print(f"{path} is already up to date" if fresh else f"wrote {path}", file=out)
+    arch_fresh = architecture.architecture_index_is_fresh(root)
+    path = architecture.write_architecture_index(root)
+    if path is None:
+        print(f"no {workspace.ARCHITECTURE}/ folder, so there is no architecture index", file=out)
+    else:
+        print(f"{path} is already up to date" if arch_fresh else f"wrote {path}", file=out)
+    diagram_fresh = registry.diagram_index_is_fresh(root)
+    path = registry.write_diagram_index(root)
+    if path is not None:
+        print(f"{path} is already up to date" if diagram_fresh else f"wrote {path}", file=out)
+    return EXIT_OK
 
 
 def _designer(root: Path, out: TextIO) -> int:
@@ -270,7 +297,9 @@ def _new_feature(args, root: Path, out: TextIO, ask: Callable[[str], str], inter
         name = ask("Feature name: ")
         if args.parent is None:
             parent = ask("Parent feature ID or folder (Enter for a standalone feature): ")
-    created = workspace.new_feature(root, name, parent or None, args.convert_parent)
+    with registry.lock(root):                       # D3: the same lock as every other writer
+        transactions.guard(root)                    # it may move a feature and refresh others
+        created = workspace.new_feature(root, name, parent or None, args.convert_parent)
     if created.moved:
         print(f"moved {created.moved[0]} -> {created.moved[1]} (same feature ID; its relative links were "
               "adjusted)", file=out)
@@ -349,10 +378,85 @@ def _reconcile(args, root: Path, out: TextIO) -> int:
               "preview again (without --confirm)", file=out)
         return EXIT_PROBLEMS
     ownership.guard_write(root, root / rel)            # never docs/architecture/ (plan_reconcile also refuses it)
-    if plan.source_path:                               # the source first: a failure leaves the document as it was
-        ownership.write_atomically(root / plan.source_path, plan.source_text, root=root)
-    workspace.write_feature_text(root / rel, plan.document_text)
+    with registry.lock(root):                          # D3: the same lock as every other writer
+        transactions.guard(root, [rel])
+        again = diagrams.plan_reconcile(root, args.file, args.line, action)   # nothing changed while waiting
+        if again.token != args.confirm:
+            print("the document or the diagram source changed since the preview: nothing was changed; "
+                  "preview again (without --confirm)", file=out)
+            return EXIT_PROBLEMS
+        if plan.source_path:                           # the source first: a failure leaves the document as it was
+            ownership.write_atomically(root / plan.source_path, plan.source_text, root=root)
+        workspace.write_feature_text(root / rel, plan.document_text)
     print(f"{action}: updated {rel}" + (f" and {plan.source_path}" if plan.source_path else "")
           + ". Uncommitted working-tree changes: nothing was staged, committed or pushed.", file=out)
     return EXIT_OK
 
+
+def _refresh_blocks(args, root: Path, out: TextIO) -> int:
+    if len(args.file) != len(args.expect):
+        raise DesignError("give one --expect for every --file, in the same order")
+    result = transactions.update(root, list(zip(args.file, args.expect)), args.sources_token, args.window)
+    if args.json:
+        print(json.dumps(result, sort_keys=True, ensure_ascii=False), file=out)
+        return EXIT_OK
+    for f in result["files"]:
+        print(f"refreshed {', '.join(f['blocks'])} in {f['path']}", file=out)
+    print(f"updated {len(result['files'])} document(s). Uncommitted working-tree changes: nothing was staged, "
+          "committed or pushed.", file=out)
+    return EXIT_OK
+
+
+def _transaction(args, root: Path, out: TextIO) -> int:
+    if args.action == "status":
+        found = transactions.status(root)
+        if args.json:
+            print(json.dumps({"records": found}, sort_keys=True, ensure_ascii=False), file=out)
+            return EXIT_PROBLEMS if found else EXIT_OK
+        if not found:
+            print("no interrupted update", file=out)
+            return EXIT_OK
+        for r in found:
+            _print_record(r, out)
+        return EXIT_PROBLEMS
+    if not args.record:
+        raise DesignError(f"give the record ID: transaction {args.action} tx-...")
+    if args.confirm is None:
+        shown = [r for r in transactions.status(root) if r["id"] == args.record]
+        if not shown:
+            print(f"{args.record}: no such unresolved update; nothing to do", file=out)
+            return EXIT_OK
+        _print_record(shown[0], out)
+        print(f"Nothing was changed. To {args.action} exactly this, repeat with --confirm {shown[0]['token']}", file=out)
+        return EXIT_PROBLEMS
+    result = transactions.resolve(root, args.record, args.action, args.confirm)
+    if args.json:
+        print(json.dumps(result, sort_keys=True, ensure_ascii=False), file=out)
+    else:
+        if result.get("note"):
+            print(result["note"], file=out)
+        print(f"{args.record}: {result['message']}", file=out)
+        for f in result.get("files", []):
+            print(f"  {f['path']}: {f['state']}", file=out)
+    return EXIT_OK if result["ok"] else EXIT_PROBLEMS
+
+
+def _print_record(r: dict, out: TextIO) -> None:
+    if not r["valid"]:
+        print(f"{r['id']}: the record cannot be read ({r['problem']}). Only abandon is possible: "
+              f"{r['abandon']['effect']}", file=out)
+        return
+    print(f"{r['id']} (created {r['created']}, state {r['state']}{', last action ' + r['action'] if r['action'] else ''}"
+          f"{', STILL RUNNING' if r['live'] else ''}):", file=out)
+    for f in r["files"]:
+        print(f"  {f['path']}: {f['state']} ({', '.join(f['blocks'])})", file=out)
+    if r["source_changes"]:
+        print(f"  changed since it was prepared: {', '.join(r['source_changes'])}", file=out)
+    c, u = r["complete"], r["undo"]
+    print("  complete: " + (c["reason"] if not c["possible"] else
+                            f"writes the update into {len(c['writes'])} document(s)" +
+                            (f"; leaves {', '.join(c['left_alone'])} alone" if c["left_alone"] else "")), file=out)
+    print("  undo: " + (u["reason"] if not u["possible"] else
+                        f"restores the original of {len(u['restores'])} document(s)" +
+                        (f"; leaves {', '.join(u['left_alone'])} alone" if u["left_alone"] else "")), file=out)
+    print(f"  abandon: {r['abandon']['effect']}", file=out)
