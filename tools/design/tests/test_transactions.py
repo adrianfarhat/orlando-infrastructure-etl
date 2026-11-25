@@ -833,6 +833,31 @@ class Writers(unittest.TestCase):
                     self.assertIn("E12", err)
                     self.assertEqual(tree(), before)
 
+    def test_a_liveness_check_never_leaves_the_lock_behind(self):
+        """Found in a GUI run: a status check had the lock file open as the writer finished; Windows
+        refused the writer's delete and the stale file then refused every command (E12)."""
+        import threading
+        with Workspace() as ws:
+            lock = ws.root / registry.LOCK
+            opened = threading.Event()
+
+            def probe():
+                while not lock.exists():
+                    time.sleep(0.005)
+                fd = os.open(lock, os.O_RDWR)          # what a liveness check does
+                opened.set()
+                time.sleep(0.6)
+                os.close(fd)
+            t = threading.Thread(target=probe)
+            t.start()
+            with registry.lock(ws.root):
+                opened.wait(5)
+            t.join()
+            self.assertFalse(lock.exists())
+            self.assertFalse(transactions._other_holds_lock(ws.root))
+            with registry.lock(ws.root):                # the next command is not refused
+                pass
+
     def test_index_runs_under_the_registry_lock(self):
         with Workspace() as ws:
             build(ws, 1)

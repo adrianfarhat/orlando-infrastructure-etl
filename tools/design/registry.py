@@ -538,10 +538,14 @@ def lock(root: Path):
         if held:
             _os_unlock(fd)
         os.close(fd)
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+        for attempt in range(60):                   # a liveness check may have the file open for an instant, and
+            try:                                    # Windows refuses to delete an open file: never leave it behind
+                os.unlink(path)
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                time.sleep(0.05)
 
 
 @dataclass(frozen=True)
@@ -554,7 +558,7 @@ class LockState:
     reason: str = ""
 
 
-def unlock(root: Path, confirm: bool) -> LockState:
+def unlock(root: Path, confirm: bool, patient: bool = True) -> LockState:
     """Remove a stale registry lock only when it is verified that no process holds it: the
     command that created it holds an operating-system lock on it while it runs, which the
     system releases when that process ends. If that lock can be taken now, nobody owns the
@@ -584,7 +588,7 @@ def unlock(root: Path, confirm: bool) -> LockState:
         return LockState(True, pid, host, age, reason="the lock file is in use: a diagram command still holds it")
     try:
         taken = False
-        for _ in range(10):                             # the system may release a dead process's lock a moment late
+        for _ in range(10 if patient else 1):          # the system may release a dead process's lock a moment late
             taken = _os_lock(fd)
             if taken:
                 break
