@@ -521,9 +521,9 @@ def lock(root: Path):
     try:
         os.write(fd, json.dumps({"pid": os.getpid(), "host": platform.node(), "time": time.time()}).encode("utf-8"))
         held = _os_lock(fd)
-        for _ in range(20):                         # a liveness check (`unlock`, `transaction status`) may hold
-            if held:                                # the operating-system lock for an instant: never run without it
-                break
+        for _ in range(20):                         # a liveness check (`unlock`, `transaction status`) may hold the
+            if held:                                # operating-system lock for an instant; after 1 s the command runs
+                break                               # on the lock file alone, as before (the file still excludes others)
             time.sleep(0.05)
             held = _os_lock(fd)
     except BaseException:
@@ -599,7 +599,10 @@ def unlock(root: Path, confirm: bool) -> LockState:
                 _os_unlock(fd)
                 os.close(fd)
                 fd = -1
-                os.unlink(path)
+                try:
+                    os.unlink(path)
+                except OSError:                     # Windows: a command opened it meanwhile (POSIX would allow the unlink)
+                    return LockState(True, pid, host, age, reason="the lock file is in use; it was kept")
             return state
         finally:
             if fd != -1:

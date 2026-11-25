@@ -23,6 +23,7 @@ const views = new Map();             // "update" | "recovery" -> WebviewPanel
 const livePoll = new Set();          // roots being re-checked while an update runs elsewhere
 const dirtyState = new Map();        // document uri -> whether it had unsaved changes when last seen
 let deps = null;
+let recount = null;
 let heartbeat = null;
 
 const key = (rel) => (process.platform === "win32" ? rel.toLowerCase() : rel);
@@ -66,7 +67,7 @@ async function refreshHeld(root, { offer = true } = {}) {
     const rel = deps.relPath(root, vscode.Uri.parse(k));
     deps.postAll(k, { type: "heldNote", held: isHeld(root, rel), records: records.length });
   }
-  if (views.get("recovery")) showRecovery();
+  if (views.get("recovery")) showRecovery(false, false);
   // An update still running in another process leaves no file event when that process ends (it may be
   // terminated): look again until it is no longer running, so its end is noticed and offered.
   if (records.some((x) => x.live) && !livePoll.has(root)) {
@@ -110,12 +111,12 @@ async function offerClosed(root) {
     try { if (deps.rootOf(vscode.Uri.parse(k)) !== root) continue; } catch { continue; }
     deps.postAll(k, { type: "closedNote", ...note });
   }
-  if (views.get("update")) await showUpdate(root);
+  if (views.get("update")) await showUpdate(root, false, false);        // redrawn in place, never brought forward
 }
 
-function panel(kind, title) {
+function panel(kind, title, reveal = true) {
   let p = views.get(kind);
-  if (p) { p.reveal(vscode.ViewColumn.Active); return p; }
+  if (p) { if (reveal) p.reveal(vscode.ViewColumn.Active); return p; }
   const ext = deps.context.extensionUri;
   p = vscode.window.createWebviewPanel(`featureDesigner.${kind}`, title, vscode.ViewColumn.Active,
     { enableScripts: true, enableCommandUris: false, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(ext, "media")] });
@@ -134,9 +135,9 @@ function panel(kind, title) {
   return p;
 }
 
-async function showUpdate(root, force = false) {
+async function showUpdate(root, force = false, reveal = true) {
   const l = await listClosed(root);
-  const p = panel("update", "Update Closed Documents");
+  const p = panel("update", "Update Closed Documents", reveal);
   p.root = root;
   p.webview.postMessage({ type: "update", root, ...l, busy: updating.has(root), force });
 }
@@ -153,7 +154,7 @@ async function runUpdate(root, files, token) {
   updating.add(root);
   try {
     const bridge = await deps.bridgeFor(root);
-    const r = await commands.refreshBlocks({ python: bridge.python, root }, { files, token, window: windowId });
+    const r = await commands.refreshBlocks({ python: bridge.python, root }, { files, token });
     deps.log(`[updates] ${r.id}: updated ${r.files.map((f) => f.path).join(", ")}`);
     vscode.window.showInformationMessage(`Updated ${r.files.length} closed document${r.files.length === 1 ? "" : "s"} from their diagram sources ` +
       "(written on disk; not committed).");
@@ -169,8 +170,8 @@ async function runUpdate(root, files, token) {
 }
 
 // ------------------------------------------------------------------ recovery (D2, D8)
-async function showRecovery(force = false) {
-  const p = panel("recovery", "Resolve Interrupted Update");
+async function showRecovery(force = false, reveal = true) {
+  const p = panel("recovery", "Resolve Interrupted Update", reveal);
   const all = [];
   for (const root of roots()) {
     let r;
@@ -200,7 +201,7 @@ async function onPanelMessage(kind, m) {
     const files = m.files.map((f) => ({ path: String(f.path), sha256: String(f.sha256) }));
     const r = await runUpdate(p.root, files, m.token);
     p.webview.postMessage({ type: "result", ...r });
-    if (views.get("update") === p) await showUpdate(p.root, true);      // drawn again: the buttons work again
+    if (views.get("update") === p) await showUpdate(p.root, true, false);   // drawn again: the buttons work again
     return;
   }
   if (m.type === "resolve" && kind === "recovery") {
@@ -211,7 +212,7 @@ async function onPanelMessage(kind, m) {
     } catch (err) {
       if (p) p.webview.postMessage({ type: "result", ok: false, message: String(err.message || err) });
     }
-    await showRecovery(true);
+    await showRecovery(true, false);
   }
 }
 
@@ -227,7 +228,14 @@ function activate(context, d) {
   };
   context.subscriptions.push(
     watch, watch.onDidCreate(changed), watch.onDidChange(changed), watch.onDidDelete(changed),
-    vscode.window.tabGroups.onDidChangeTabs(publishSoon),
+    vscode.window.tabGroups.onDidChangeTabs(() => {                  // what is open changed: publish it, recount the strip
+      publishSoon();
+      clearTimeout(recount);
+      recount = setTimeout(() => {
+        if (![...deps.panels.values()].some((s) => s.size)) return;
+        for (const r of roots()) if (closed.has(r)) offerClosed(r).catch(() => {});
+      }, 1000);
+    }),
     vscode.workspace.onDidChangeTextDocument((e) => {                 // only when its unsaved state changes
       const k = e.document.uri.toString();
       if (dirtyState.get(k) !== e.document.isDirty) { dirtyState.set(k, e.document.isDirty); publishSoon(); }

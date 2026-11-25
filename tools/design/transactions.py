@@ -31,12 +31,18 @@ revalidates the registry and every source the replacement was computed from. A r
 only when every file is in the state the action leads to, or by an explicit abandonment (D8).
 
 Limits (stated, not hidden):
-- Between checking a file's bytes and renaming the replacement over it, another program that
-  does not take the registry lock can still write that file; such a write is then replaced.
-  The window is the duration of one rename. No absolute atomicity against non-cooperating
-  programs is claimed.
+- Between checking a file's bytes and renaming the replacement over it (a temporary file is
+  written and flushed, then renamed), another program that does not take the registry lock can
+  still write that file; such a write is then replaced. The window is short (milliseconds) but
+  real. No absolute atomicity against non-cooperating programs is claimed.
 - Windows has no directory flush; the renames rely on the file system's own metadata journal.
-- A VS Code window that does not run Feature Designer cannot report its open documents.
+- Open documents are known only from Feature Designer windows (decision D6): a VS Code window
+  without the extension (another installation, Restricted Mode, the repository opened as a
+  subfolder), another editor, or a window silent for more than WINDOW_LIVE seconds (asleep or
+  hung) is not seen; a document opened in the last moment before the check (a window publishes
+  within about 0.1 s of a change, and every 5 s) may be missed.
+- Git operations are checked by the update and by recovery (D4), not by `index`, `new feature`
+  or `reconcile`.
 """
 
 from __future__ import annotations
@@ -74,7 +80,8 @@ MAX_JOURNAL = 1 << 20
 WINDOW_FRESH = 20.0            # seconds: an unreadable window file this recent may belong to a running window
 WINDOW_LIVE = 120.0            # a window rewrites its file every 5 s; one silent for longer has ended (or hangs)
 WINDOW_OTHER_HOST = 600.0      # another computer's clock may differ: its window counts for longer
-GIT_MARKERS = ("index.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-merge", "rebase-apply")
+GIT_MARKERS = ("index.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-merge", "rebase-apply",
+               "sequencer")
 CODE = "E16"
 
 
@@ -124,10 +131,12 @@ def _clean_rel(rel) -> str:
 
 
 def safe_path(root: Path, rel, feature: bool = True) -> Path:
-    """`rel` inside the repository, with no symbolic link or junction on the way, and (feature)
-    a feature document under designs/features/ (never docs/architecture/ or any other file)."""
+    """`rel` inside the repository, with no symbolic link or junction on the way. With `feature`
+    (every document this module writes): a feature document under designs/features/, never
+    docs/architecture/ or any other file. Without it (a diagram source that is only read, which
+    may be an architecture document): any repository path."""
     rel = _clean_rel(rel)
-    if rel == "docs/architecture" or rel.startswith("docs/architecture/"):
+    if feature and (rel == "docs/architecture" or rel.startswith("docs/architecture/")):
         raise DesignError(f"{rel} is under docs/architecture/; nothing is written there")
     if feature and not (rel.startswith(FEATURES) and rel.endswith(".md")):
         raise DesignError(f"{rel} is not a feature document under {FEATURES}")
@@ -351,6 +360,8 @@ def _read_record(root: Path, folder: Path) -> Record:
         return bad("journal.json names another record, tool or an unknown state")
     if not isinstance(data.get("pid"), int) or not isinstance(data.get("host"), str):
         return bad("journal.json does not record its process")
+    if not isinstance(data.get("history", []), list) or not isinstance(data.get("action", ""), str):
+        return bad("journal.json has a malformed history")
     reg_sha = data.get("registry_sha")
     if reg_sha is not None and not (isinstance(reg_sha, str) and HEX64.match(reg_sha)):
         return bad("the registry revision is malformed")
@@ -376,9 +387,9 @@ def _read_record(root: Path, folder: Path) -> Record:
             safe_path(root, f.get("path"))
         except DesignError as exc:
             return bad(f"file {i + 1}: {exc}")
-        if f["path"] in seen:
+        if _key(f["path"]) in seen:
             return bad(f"{f['path']} is listed twice")
-        seen.add(f["path"])
+        seen.add(_key(f["path"]))
         for key in ("before_sha", "after_sha"):
             if not (isinstance(f.get(key), str) and HEX64.match(f[key])):
                 return bad(f"{f['path']}: {key} is malformed")
@@ -413,6 +424,8 @@ def records(root: Path) -> list[Record]:
     for name in sorted(os.listdir(tx)):
         p = tx / name
         if name == "windows" or name.endswith(".preparing") or name.endswith(".done") or name.startswith("."):
+            continue
+        if not ID_RE.match(name):                      # not a record this tooling made: never read or used
             continue
         if p.is_dir() or _is_link(p):
             r = _read_record(root, p)
@@ -487,7 +500,10 @@ def describe(root: Path, rec: Record, live: bool | None = None) -> dict:
     for f in files:
         f["open"] = "; ".join(opened.get(_key(f["path"]), []))
     if live:
-        complete = undo = {"possible": False, "reason": "the update is still running in another process"}
+        complete = undo = {"possible": False, "reason": "the registry lock is held by a process that may still be "
+                                                       "running (or cannot be verified from here: another computer, "
+                                                       "an unreadable lock file); wait for it, or check it with "
+                                                       "`python -m tools.design registry unlock`"}
     elif busy or unknown:
         why = (f"close {', '.join(busy)} first: open in " + "; ".join(sorted({w for p in busy for w in opened[_key(p)]}))
                if busy else "a Feature Designer window's list of open documents cannot be read; try again in a moment")
@@ -676,8 +692,7 @@ def affected(root: Path, exclude_window: str = "") -> dict:
 
 # --------------------------------------------------------------------------- the update
 
-def update(root: Path, requests: list[tuple[str, str]], expect_token: str | None = None,
-           exclude_window: str = "") -> dict:
+def update(root: Path, requests: list[tuple[str, str]], expect_token: str | None = None) -> dict:
     """Refresh the listed documents (path, expected SHA-256) as one transaction."""
     from . import diagrams, registry
     from .workspace import discover
@@ -698,7 +713,7 @@ def update(root: Path, requests: list[tuple[str, str]], expect_token: str | None
             safe_path(root, p)
             if p not in features or not features[p].meta_ok:
                 raise DesignError(f"{p} is not a feature specification with valid metadata; nothing was changed")
-        opened, unknown = open_documents(root, exclude_window)
+        opened, unknown = open_documents(root)          # every window, the caller's too (it may have opened one since)
         if unknown:
             raise DesignError("a Feature Designer window's list of open documents cannot be read "
                               f"({', '.join(unknown)}), so no document is updated now; try again in a moment")
@@ -771,15 +786,19 @@ def _prepare(root: Path, plan, src_revs: dict) -> Record:
     return rec
 
 
-def _write_file(root: Path, rec: Record, f: dict, want: str, blob: str) -> bool:
-    """Replace one document with `blob`, only if it currently has `want` (compare and swap)."""
+def _write_file(root: Path, rec: Record, f: dict, want: str, blob: str) -> str:
+    """Replace one document with `blob`, only if it currently has `want` (compare and swap).
+    "skipped": not written (it did not have `want`); "written": replaced and verified;
+    "unverified": replaced, but the file read back is not what was written."""
     _git_ready(root)
     p = safe_path(root, f["path"])
     if not p.is_file() or _sha(p.read_bytes()) != want:
-        return False
+        return "skipped"
     data = (rec.folder / f[blob]).read_bytes()
+    if _sha(data) != f["after_sha" if blob == "new" else "before_sha"]:
+        raise DesignError(f"the preserved copy {f[blob]} no longer matches its checksum; nothing was written to {f['path']}")
     _replace(p, data)
-    return _sha(p.read_bytes()) == _sha(data)
+    return "written" if _sha(p.read_bytes()) == _sha(data) else "unverified"
 
 
 def _commit(root: Path, rec: Record) -> dict:
@@ -793,10 +812,14 @@ def _commit(root: Path, rec: Record) -> dict:
                 with open(safe_path(root, f["path"]), "ab") as h:      # a concurrent external edit (tests only)
                     h.write(b"\nexternal edit\n")
             _fault(root, f"before-replace:{i + 1}")
-            if not _write_file(root, rec, f, f["before_sha"], "new"):
+            done = _write_file(root, rec, f, f["before_sha"], "new")
+            if done == "skipped":
                 failure = f"{f['path']} changed during the update"
                 break
             replaced.add(f["path"])
+            if done == "unverified":
+                failure = f"{f['path']} was replaced, but what is on disk now is not what was written"
+                break
             _fault(root, f"after-replace:{i + 1}")
         except (OSError, DesignError) as exc:
             failure = f"{f['path']} could not be written ({exc})"
@@ -824,9 +847,9 @@ def _commit(root: Path, rec: Record) -> dict:
     if not ours:
         _finish(root, rec)
         others = [p for p, st in states.items() if st != "original"]
-        raise DesignError(f"{failure}; every document this update wrote was put back as it was, so nothing was "
-                          "changed" + (f" ({', '.join(others)} was changed by another program, not by this update)"
-                                       if others else ""))
+        raise DesignError(f"{failure}; every document this update wrote is back to its original, so this update "
+                          "changed nothing" + (f" ({', '.join(others)} was changed by another program before this "
+                                               "update wrote it)" if others else ""))
     _set(root, rec, state="needs-attention")
     left = ", ".join(f"{p} ({states[p]})" for p in ours)
     raise DesignError(f"{failure}; PARTLY DONE: not every document could be put back ({left}). The record "
@@ -864,7 +887,8 @@ def resolve(root: Path, tx_id: str, action: str, token: str) -> dict:
         folder = tx / tx_id if tx is not None else None
         if folder is None or not (folder.is_dir() or _is_link(folder)):
             return {"ok": True, "id": tx_id, "action": action, "already": True, "note": note,
-                    "message": "this update was already resolved"}
+                    "message": "this update was already resolved (here or in another window, by Complete, Undo or "
+                               "Abandon); nothing was done now. Check the documents"}
         rec = _read_record(root, folder)
         now = describe(root, rec, live=False)
         if now["token"] != token:

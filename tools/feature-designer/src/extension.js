@@ -787,6 +787,7 @@ function activate(context) {
     // design tooling (DESIGN_TEST_FAULT, read by tools/design/transactions.py only for the named repository).
     updates: upd,
     setDesignFault: (point, root, mode) => {
+      if (!process.env.FD_TEST_CMD_DIR) return false;    // only under the GUI test launcher
       if (point) { process.env.DESIGN_TEST_FAULT = point; process.env.DESIGN_TEST_FAULT_ROOT = root; if (mode) process.env.DESIGN_TEST_FAULT_MODE = mode; else delete process.env.DESIGN_TEST_FAULT_MODE; }
       else for (const k of ["DESIGN_TEST_FAULT", "DESIGN_TEST_FAULT_ROOT", "DESIGN_TEST_FAULT_MODE"]) delete process.env[k];
       return true;

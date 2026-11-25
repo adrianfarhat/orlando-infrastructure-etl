@@ -28,7 +28,7 @@ const FEATURE_DOC = /^designs\/features\/(?:[^\\/\0:]+\/)*[^\\/\0:]+\.md$/;   //
 const HEX64 = /^[0-9a-f]{64}$/, HEX16 = /^[0-9a-f]{16}$/, RECORD_ID = /^tx-\d{8}T\d{6}Z-[0-9a-f]{8}$/;
 
 /** The arguments of `refresh-blocks` (T-97 PR B2b-1) for a confirmed list of closed documents. */
-function refreshBlocksArgs({ files, token, window } = {}) {
+function refreshBlocksArgs({ files, token } = {}) {
   if (!Array.isArray(files) || !files.length || files.length > 200) throw new Error("no documents to update");
   const args = ["refresh-blocks"];
   for (const f of files) {
@@ -38,8 +38,7 @@ function refreshBlocksArgs({ files, token, window } = {}) {
     args.push(`--file=${f.path}`, `--expect=${f.sha256}`);
   }
   if (typeof token !== "string" || !HEX16.test(token)) throw new Error("not a sources token");
-  if (typeof window !== "string" || !HEX16.test(window)) throw new Error("not a window ID");
-  return [...args, `--sources-token=${token}`, `--window=${window}`, "--json"];
+  return [...args, `--sources-token=${token}`, "--json"];
 }
 
 /** The arguments of `transaction complete|undo|abandon ID --confirm TOKEN` (an explicit decision, D2). */

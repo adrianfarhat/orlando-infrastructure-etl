@@ -112,7 +112,6 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--expect", action="append", required=True,
                     help="the SHA-256 of that document as listed (one per --file, in the same order)")
     rb.add_argument("--sources-token", help="the sources token from the listing: refused if a source changed since")
-    rb.add_argument("--window", default="", help=argparse.SUPPRESS)      # the calling Feature Designer window
     rb.add_argument("--json", action="store_true", help="print the result as JSON")
     tx = sub.add_parser("transaction", help="show or resolve an interrupted update of closed documents (E16)")
     tx.add_argument("action", choices=["status", "complete", "undo", "abandon"])
@@ -396,7 +395,7 @@ def _reconcile(args, root: Path, out: TextIO) -> int:
 def _refresh_blocks(args, root: Path, out: TextIO) -> int:
     if len(args.file) != len(args.expect):
         raise DesignError("give one --expect for every --file, in the same order")
-    result = transactions.update(root, list(zip(args.file, args.expect)), args.sources_token, args.window)
+    result = transactions.update(root, list(zip(args.file, args.expect)), args.sources_token)
     if args.json:
         print(json.dumps(result, sort_keys=True, ensure_ascii=False), file=out)
         return EXIT_OK

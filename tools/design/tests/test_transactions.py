@@ -80,10 +80,11 @@ def stop(proc, ws):
         if stream:
             stream.close()
     lock = ws.root / registry.LOCK
-    for _ in range(100):
+    for _ in range(200):                     # released when it can be renamed (opening it would succeed earlier)
         try:
-            with open(lock, "rb+"):
-                return
+            os.rename(lock, str(lock) + ".probe")
+            os.rename(str(lock) + ".probe", lock)
+            return
         except FileNotFoundError:
             return
         except PermissionError:
@@ -157,6 +158,35 @@ class Update(unittest.TestCase):
             p.write_bytes(p.read_bytes().replace(b"Existing step", b"Hand edit", 1))     # a conflict (case 3)
             a = transactions.affected(ws.root)
             self.assertEqual([d["path"] for d in a["documents"]], [docs[1]])
+
+    def test_documents_with_architecture_diagrams_are_updated_and_recovered(self):
+        """QA M1: an architecture source under docs/architecture/ is read (never written)."""
+        with Workspace() as ws:
+            docs = [new_feature(ws.root, f"Arch {i}").path for i in range(2)]
+            for d in docs:
+                text = ws.text(d)
+                at = after(text.split("\n"), "- **Desired outcome:**")
+                r, code = request(ws, op="insert", path=d, text=text, at=at, diagram_id="AD-0001")
+                self.assertEqual(code, 0, r)
+                (ws.root / d).write_bytes(apply(text, r).encode("utf-8"))
+            self.assertEqual(cmd(ws.root, "index")[0], 0)
+            src = diagrams.sources(ws.root)["AD-0001"].path
+            self.assertTrue(src.startswith("docs/architecture/"))
+            p = ws.root / src
+            text = p.read_bytes().decode("utf-8")
+            first = next(l for l in diagrams.sources(ws.root)["AD-0001"].lines if "-->" in l)
+            p.write_bytes(text.replace(first, first + " %% changed in this test copy", 1).encode("utf-8"))
+            before = snapshot(ws, docs)
+            reqs, token = listing(ws)
+            self.assertEqual(sorted(x for x, _ in reqs), sorted(docs))
+            self.assertEqual(run(ws, rb_args(reqs, token), fault="after-replace:1").returncode, 97)
+            rec = only_record(ws)
+            self.assertIn(src, transactions._read_record(ws.root, ws.root / transactions.TX_ROOT / rec["id"]).data["sources"])
+            self.assertEqual(rec["source_changes"], [])                         # read correctly: unchanged
+            self.assertTrue(rec["complete"]["possible"], rec["complete"])
+            self.assertTrue(transactions.resolve(ws.root, rec["id"], "complete", rec["token"])["ok"])
+            self.assertTrue(all(snapshot(ws, docs)[d] != before[d] for d in docs))
+            self.assertEqual(p.read_bytes().decode("utf-8"), text.replace(first, first + " %% changed in this test copy", 1))
 
     def test_refused_targets(self):
         with Workspace() as ws:
@@ -250,7 +280,11 @@ class OpenElsewhere(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("unsaved changes", err)
             self.assertEqual(snapshot(ws, docs), before)
-            self.assertEqual(transactions.update(ws.root, reqs, token, exclude_window="0123456789abcdef")["ok"], True)
+            # the caller's own window is checked too (it may have opened the document since it listed it: QA m2)
+            with self.assertRaises(DesignError):
+                transactions.update(ws.root, reqs, token)
+            (ws.root / transactions.WINDOWS / "0123456789abcdef.json").unlink()
+            self.assertEqual(transactions.update(ws.root, reqs, token)["ok"], True)
 
     def test_a_window_silent_too_long_no_longer_counts(self):
         with Workspace() as ws:
@@ -570,6 +604,46 @@ class UnexpectedChanges(unittest.TestCase):
             rec = only_record(ws)
             self.assertTrue(transactions.resolve(ws.root, rec["id"], "abandon", rec["token"])["ok"])
             self.assertEqual((ws.root / docs[2]).read_bytes(), ext)
+
+    def test_a_replacement_that_does_not_verify_keeps_the_record(self):
+        """QA M2: the file was replaced, then something else changed it before it was read back."""
+        with Workspace() as ws:
+            docs, _ = build(ws)
+            reqs, token = listing(ws)
+            before = snapshot(ws, docs)
+            real = transactions._replace
+            calls = []
+
+            def meddling(target, data, prefix=".feature."):
+                real(target, data, prefix)
+                calls.append(target)
+                if len(calls) == 2:                                             # a sync client rewrites it at once
+                    target.write_bytes(data + b"\nrewritten by another program\n")
+            transactions._replace = meddling
+            try:
+                with self.assertRaises(DesignError) as c:
+                    transactions.update(ws.root, reqs, token)
+            finally:
+                transactions._replace = real
+            self.assertIn("PARTLY DONE", str(c.exception))
+            self.assertNotIn("back to its original", str(c.exception))
+            rec = only_record(ws)                                                # the originals are kept
+            self.assertEqual(rec["state"], "needs-attention")
+            self.assertEqual((ws.root / docs[0]).read_bytes(), before[docs[0]])   # the first was put back
+            self.assertEqual([f["state"] for f in rec["files"]], ["original", "changed", "original"])
+            folder = ws.root / transactions.TX_ROOT / rec["id"]
+            self.assertEqual((folder / "1.orig").read_bytes(), before[docs[1]])
+
+    def test_a_folder_this_tooling_did_not_make_is_ignored(self):
+        """QA m1: a stray folder is neither a record nor a reason to refuse every writer."""
+        with Workspace() as ws:
+            docs, _ = build(ws, 1)
+            stray = ws.root / transactions.TX_ROOT / "stray"
+            stray.mkdir(parents=True)
+            (stray / "x.txt").write_bytes(b"x")
+            self.assertEqual(transactions.status(ws.root), [])
+            self.assertEqual(cmd(ws.root, "index")[0], 0)
+            self.assertTrue((stray / "x.txt").exists())
 
     def test_the_live_update_cannot_be_resolved(self):
         with Workspace() as ws:

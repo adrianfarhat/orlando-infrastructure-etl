@@ -389,12 +389,16 @@ overwritten. **Abandon** removes the record and changes no document; a damaged r
 be abandoned, and until then no feature document is written by the design tooling.
 
 Every command that writes takes the registry lock (below) and leaves documents held by an
-unresolved update alone. The lock is never waited for, so two commands cannot deadlock. All
-commands refuse while a Git operation (merge, rebase, cherry-pick, revert, bisect) is in
-progress. **Limits:** a program that does not use this tooling can still change a document in the
-moment between its last check and its replacement, and that change is then replaced; Windows has
-no folder flush, so the record relies on the file system's journal; a VS Code window that does
-not run Feature Designer cannot report the documents it has open.
+unresolved update alone. The lock is never waited for, so two commands cannot deadlock. An update
+and its recovery refuse while a Git operation (merge, rebase, cherry-pick, revert, bisect) is in
+progress, and check again before each document is written; `index`, `new feature` and
+`reconcile` do not check for Git operations. **Limits:** a program that does not use this tooling
+can still change a document in the short moment (milliseconds) between its last check and its
+replacement, and that change is then replaced; Windows has no folder flush, so the record relies
+on the file system's journal; open documents are known only from Feature Designer windows: a VS
+Code window without it (another installation, Restricted Mode, the repository opened as a
+subfolder), another editor, or a window asleep or unresponsive for more than two minutes is not
+seen.
 
 **A stale registry lock.** Diagram commands hold `designs/diagrams/.registry.lock` while they run;
 a command that was killed can leave it behind, and every diagram command then refuses (E12). To

@@ -135,10 +135,11 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
 - **Documents open in other windows.** Each Feature Designer window lists the feature documents
   it has open (and whether they have unsaved changes) in
   `designs/diagrams/.transactions/windows/`, every 5 seconds; an update never writes a document
-  a window that may still be running lists. A VS Code window that does not run Feature Designer
-  (another installation, Restricted Mode) or another editor cannot be detected: if one has the
-  file open with unsaved changes, it reports that the file changed on disk and asks before
-  saving over it.
+  a window that may still be running lists, including this one (checked again by the update
+  itself). Not detected: a VS Code window that does not run Feature Designer (another
+  installation, Restricted Mode, the repository opened as a subfolder of the workspace folder),
+  another editor, or a window asleep or unresponsive for more than two minutes. VS Code itself
+  reports that a file changed on disk and asks before saving over it; other editors may not.
 - **Status strip:** stays visible under the toolbar while you scroll: how many diagrams are out
   of date, in conflict or have a problem, with **Previous** / **Next** to go to each.
 - **Restricted Mode:** in an untrusted workspace Feature Designer shows a notice only; it

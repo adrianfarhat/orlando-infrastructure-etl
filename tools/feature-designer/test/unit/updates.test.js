@@ -71,15 +71,14 @@ test("open documents: tabs and unsaved documents under designs/features only", (
 });
 
 test("refresh-blocks arguments: validated feature paths, hashes, token and window", () => {
-  assert.deepStrictEqual(commands.refreshBlocksArgs({ files: [{ path: "designs/features/g/a b.md", sha256: SHA }], token: TOKEN, window: ID }),
-    ["refresh-blocks", "--file=designs/features/g/a b.md", `--expect=${SHA}`, `--sources-token=${TOKEN}`, `--window=${ID}`, "--json"]);
+  assert.deepStrictEqual(commands.refreshBlocksArgs({ files: [{ path: "designs/features/g/a b.md", sha256: SHA }], token: TOKEN }),
+    ["refresh-blocks", "--file=designs/features/g/a b.md", `--expect=${SHA}`, `--sources-token=${TOKEN}`, "--json"]);
   const bad = [
     { files: [] }, { files: [{ path: "designs/features/../x.md", sha256: SHA }] }, { files: [{ path: "docs/architecture/x.md", sha256: SHA }] },
     { files: [{ path: "designs/features/a\\b.md", sha256: SHA }] }, { files: [{ path: "designs/features/c:x.md", sha256: SHA }] },
     { files: [{ path: "designs/features/a.md", sha256: "x" }] }, { files: [{ path: "designs/features/a.md", sha256: SHA }], token: "--root=x" },
-    { files: [{ path: "designs/features/a.md", sha256: SHA }], token: TOKEN, window: "../../x" },
   ];
-  for (const b of bad) assert.throws(() => commands.refreshBlocksArgs({ token: TOKEN, window: ID, ...b }), undefined, JSON.stringify(b));
+  for (const b of bad) assert.throws(() => commands.refreshBlocksArgs({ token: TOKEN, ...b }), undefined, JSON.stringify(b));
 });
 
 test("transaction arguments: an explicit action, a record ID and the decision token", () => {
@@ -95,6 +94,6 @@ test("a partly possible recovery (exit code 1 with a JSON answer) is a result, n
                                               { action: "complete", id: "tx-20261125T010203Z-0123abcd", token: TOKEN });
   assert.deepStrictEqual([r.ok, r.message], [false, "partly done"]);
   await assert.rejects(commands.refreshBlocks({ python: "py", root: "/r", execFileImpl: (f, a, o, cb) => cb(Object.assign(new Error("x"), { code: 2 }), "", "design: error: changed since it was listed") },
-                                              { files: [{ path: "designs/features/a.md", sha256: SHA }], token: TOKEN, window: ID }),
+                                              { files: [{ path: "designs/features/a.md", sha256: SHA }], token: TOKEN }),
                        /changed since it was listed/);
 });

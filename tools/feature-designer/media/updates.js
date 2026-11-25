@@ -52,8 +52,8 @@
     if (m.unknown.length) main.append(h("p", { class: "warn", text: "A Feature Designer window's list of open documents cannot be read right now, " +
       "so the update would be refused; try again in a moment." }));
     main.append(h("p", { class: "limit", text: "Limitation: a document open with unsaved changes in a VS Code window that does not run " +
-      "Feature Designer (or in another editor) cannot be detected. If that happens, that editor reports that the file changed on disk " +
-      "and asks before saving over it; nothing is lost silently." }));
+      "Feature Designer, or in another editor, cannot be detected. VS Code reports that the file changed on disk and asks before " +
+      "saving over it; other editors may not, so close the document there first." }));
     const files = m.eligible.map((d) => ({ path: d.path, sha256: d.sha256 }));
     const go = h("button", { type: "button", class: "confirm-update", disabled: !files.length || m.busy,
                              text: files.length ? `Update ${files.length} document${files.length === 1 ? "" : "s"}` : "Update",
