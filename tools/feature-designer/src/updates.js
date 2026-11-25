@@ -200,7 +200,7 @@ async function onPanelMessage(kind, m) {
     if (!Array.isArray(m.files) || typeof m.token !== "string") return;
     const files = m.files.map((f) => ({ path: String(f.path), sha256: String(f.sha256) }));
     const r = await runUpdate(p.root, files, m.token);
-    p.webview.postMessage({ type: "result", ...r });
+    if (views.get("update") === p) p.webview.postMessage({ type: "result", ...r });    // unless it was closed meanwhile
     if (views.get("update") === p) await showUpdate(p.root, true, false);   // drawn again: the buttons work again
     return;
   }

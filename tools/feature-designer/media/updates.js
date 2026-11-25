@@ -57,7 +57,7 @@
     const files = m.eligible.map((d) => ({ path: d.path, sha256: d.sha256 }));
     const go = h("button", { type: "button", class: "confirm-update", disabled: !files.length || m.busy,
                              text: files.length ? `Update ${files.length} document${files.length === 1 ? "" : "s"}` : "Update",
-                             onclick: () => { go.disabled = true; go.textContent = "Updating…"; post({ type: "confirmUpdate", files, token: m.token }); } });
+                             onclick: () => { result = null; showResult(); go.disabled = true; go.textContent = "Updating…"; post({ type: "confirmUpdate", files, token: m.token }); } });
     main.append(h("div", { class: "actions" }, go, h("button", { type: "button", class: "cancel", text: "Close", onclick: () => post({ type: "close" }) })));
     showResult();
   }
@@ -107,7 +107,7 @@
     confirm.addEventListener("click", () => {
       const chosen = choices.find((x) => x.checked);
       if (!chosen) return;
-      confirm.disabled = true; confirm.textContent = "Working…";
+      result = null; showResult(); confirm.disabled = true; confirm.textContent = "Working…";   // the previous outcome is gone
       post({ type: "resolve", root: r.root, id: r.id, action: chosen.value, token: r.token });
     });
     sec.append(box, ackLabel, h("div", { class: "actions" }, confirm));
