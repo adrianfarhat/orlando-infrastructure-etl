@@ -1100,7 +1100,8 @@ async function openUpdatePanel(expectRow) {
   const row = await waitFor(async () => { const r = await stripRow("closed"); return r && (!expectRow || expectRow.test(r)) ? r : ""; }, 25000);
   await f.locator("#strip .update-closed").click();
   const pf = await panelFrame("update");
-  await waitFor(() => pf.evaluate(() => !!document.querySelector(".confirm-update")), 10000);
+  // the panel may still show the previous list: wait for the new one (enabled Update); GUI run fix3-1, S10b
+  await waitFor(() => pf.evaluate(() => { const b = document.querySelector(".confirm-update"); return !!b && !b.disabled; }), 15000);
   return { row, pf };
 }
 const listedIn = (pf) => pf.evaluate(() => [...document.querySelectorAll("table.docs tbody tr td:first-child")].map((td) => td.textContent));
