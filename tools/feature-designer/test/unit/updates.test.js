@@ -14,8 +14,8 @@ const SHA = "a".repeat(64), TOKEN = "0123456789abcdef";
 
 test("a window record lists its open documents, is replaced atomically and removed on close", () => {
   const root = tmp();
-  const r = presence.publish(root, ID, [{ path: "designs/features/a.md", dirty: true }], { now: 5000, pid: 42, host: "h" });
-  assert.deepStrictEqual(r, { format: presence.FORMAT, version: 1, window: ID, pid: 42, host: "h", heartbeat: 5,
+  const r = presence.publish(root, ID, [{ path: "designs/features/a.md", dirty: true }], { now: 5000, pid: 42, host: "h", platform: "win32" });
+  assert.deepStrictEqual(r, { format: presence.FORMAT, version: 1, window: ID, pid: 42, host: "h", platform: "win32", heartbeat: 5,
                               documents: [{ path: "designs/features/a.md", dirty: true }] });
   const file = path.join(root, "designs", "diagrams", ".transactions", "windows", `${ID}.json`);
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, "utf8")), r);
@@ -32,10 +32,16 @@ test("records of ended windows on this computer are swept; live, foreign and own
   presence.publish(root, OTHER, [], { pid: 2, host: "me" });
   presence.publish(root, "1111111111111111", [], { pid: 3, host: "elsewhere" });
   presence.publish(root, "2222222222222222", [], { pid: 4, host: "ME" });
+  presence.publish(root, "3333333333333333", [], { pid: 5, host: "me", platform: "linux-wsl" });   // other process IDs (QA)
+  const dir = path.join(root, "designs", "diagrams", ".transactions", "windows");
+  const old = JSON.parse(fs.readFileSync(path.join(dir, `${OTHER}.json`), "utf8"));
+  delete old.platform;
+  fs.writeFileSync(path.join(dir, "4444444444444444.json"), JSON.stringify({ ...old, window: "4444444444444444", pid: 6 }));  // no platform: kept
   const removed = presence.sweep(root, ID, { host: "me", isAlive: (pid) => pid === 4 });
   assert.deepStrictEqual(removed, [`${OTHER}.json`]);
-  const left = fs.readdirSync(path.join(root, "designs", "diagrams", ".transactions", "windows")).sort();
-  assert.deepStrictEqual(left, [`${ID}.json`, "1111111111111111.json", "2222222222222222.json"]);
+  const left = fs.readdirSync(dir).sort();
+  assert.deepStrictEqual(left, [`${ID}.json`, "1111111111111111.json", "2222222222222222.json", "3333333333333333.json",
+                                "4444444444444444.json"]);
 });
 
 test("the windows folder is never written through a symbolic link or junction", { skip: false }, () => {

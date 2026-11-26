@@ -43,9 +43,9 @@ function alive(pid) {
 }
 
 /** Write this window's record atomically (a temporary file renamed over it). */
-function publish(root, id, documents, { fsImpl = fs, now = Date.now(), pid = process.pid, host = os.hostname() } = {}) {
+function publish(root, id, documents, { fsImpl = fs, now = Date.now(), pid = process.pid, host = os.hostname(), platform = process.platform } = {}) {
   const dir = windowsDir(root, true, fsImpl);
-  const record = { format: FORMAT, version: 1, window: id, pid, host, heartbeat: now / 1000,
+  const record = { format: FORMAT, version: 1, window: id, pid, host, platform, heartbeat: now / 1000,
                    documents: documents.map((d) => ({ path: d.path, dirty: !!d.dirty })) };
   const file = path.join(dir, `${id}.json`), tmp = path.join(dir, `.${id}.${crypto.randomBytes(4).toString("hex")}.tmp`);
   fsImpl.writeFileSync(tmp, JSON.stringify(record));
@@ -58,7 +58,7 @@ function remove(root, id, fsImpl = fs) {
 }
 
 /** Remove the records of windows on this computer whose process has ended (never this window's). */
-function sweep(root, id, { fsImpl = fs, host = os.hostname(), isAlive = alive } = {}) {
+function sweep(root, id, { fsImpl = fs, host = os.hostname(), platform = process.platform, isAlive = alive } = {}) {
   let dir;
   try { dir = windowsDir(root, false, fsImpl); if (!fsImpl.existsSync(dir)) return []; } catch { return []; }
   const removed = [];
@@ -68,7 +68,9 @@ function sweep(root, id, { fsImpl = fs, host = os.hostname(), isAlive = alive } 
     try {
       if (isLink(p, fsImpl)) continue;
       const r = JSON.parse(fsImpl.readFileSync(p, "utf8"));
-      if (r && r.format === FORMAT && typeof r.host === "string" && r.host.toLowerCase() === host.toLowerCase() && !isAlive(r.pid)) {
+      // the same computer AND the same platform: a WSL window shares the computer name but not its process IDs (QA)
+      if (r && r.format === FORMAT && typeof r.host === "string" && r.host.toLowerCase() === host.toLowerCase() &&
+          r.platform === platform && !isAlive(r.pid)) {
         fsImpl.unlinkSync(p);
         removed.push(name);
       }

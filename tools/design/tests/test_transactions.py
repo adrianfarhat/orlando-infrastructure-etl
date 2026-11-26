@@ -364,6 +364,54 @@ class OpenElsewhere(unittest.TestCase):
             self.assertEqual(transactions.forget_window(ws.root, "0123456789abcdef", True)["removed"], True)
             self.assertFalse(q.exists())
 
+    def test_a_heartbeat_in_the_future_or_not_a_number_can_still_be_forgotten(self):
+        # QA (pre-merge): such a record looked "responding" forever and could never be forgotten
+        with Workspace() as ws:
+            docs, _ = build(ws, 1)
+            reqs, token = listing(ws)
+            for beat, state in (("1e300", "not responding"), ("NaN", "unreadable"), ("Infinity", "unreadable"),
+                                (str(time.time() + 3600), "not responding")):
+                with self.subTest(heartbeat=beat):
+                    raw = ('{"format": "feature-designer-window", "version": 1, "window": "0123456789abcdef", "pid": 4242, '
+                           '"host": "%s", "heartbeat": %s, "documents": [{"path": "%s", "dirty": true}]}'
+                           % (__import__("platform").node(), beat, docs[0])).encode()
+                    p = self.window(ws, docs, raw=raw)
+                    self.assertEqual([w["state"] for w in transactions.window_records(ws.root)], [state])
+                    with self.assertRaises(DesignError):                          # still protected
+                        transactions.update(ws.root, reqs, token)
+                    self.assertTrue(transactions.forget_window(ws.root, "0123456789abcdef", True)["removed"])
+                    self.assertFalse(p.exists())
+
+    def test_forget_window_does_not_remove_a_record_rewritten_since_the_check(self):
+        with Workspace() as ws:
+            docs, _ = build(ws, 1)
+            self.window(ws, docs, age=transactions.WINDOW_LIVE + 5)
+            real = transactions.window_records
+            calls = []
+
+            def rewritten(root):
+                out = real(root)
+                calls.append(1)
+                if len(calls) == 2:                   # the re-check under the lock; then the window rewrites its file
+                    self.window(ws, docs, age=transactions.WINDOW_LIVE + 4)
+                return out
+            transactions.window_records = rewritten
+            try:
+                with self.assertRaises(DesignError) as c:
+                    transactions.forget_window(ws.root, "0123456789abcdef", True)
+            finally:
+                transactions.window_records = real
+            self.assertIn("rewrote its record", str(c.exception))
+            self.assertTrue((ws.root / transactions.WINDOWS / "0123456789abcdef.json").exists())
+
+    def test_the_refusal_for_a_responding_window_says_how_long_to_wait(self):
+        with Workspace() as ws:
+            docs, _ = build(ws, 1)
+            self.window(ws, docs)
+            with self.assertRaises(DesignError) as c:
+                transactions.forget_window(ws.root, "0123456789abcdef", True)
+            self.assertIn("up to 120 s", str(c.exception))
+
     def test_forget_window_refuses_while_another_command_holds_the_lock(self):
         with Workspace() as ws:
             docs, _ = build(ws, 1)

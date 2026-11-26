@@ -56,6 +56,7 @@ Limits (stated, not hidden):
 from __future__ import annotations
 
 import hashlib
+import math
 import json
 import os
 import platform
@@ -87,6 +88,7 @@ MAX_BYTES = 8 << 20
 MAX_JOURNAL = 1 << 20
 WINDOW_LIVE = 120.0            # a window rewrites its file every 5 s; one silent for longer is "not responding"
 WINDOW_OTHER_HOST = 600.0      # another computer's clock may differ: its window is "responding" for longer
+WINDOW_FUTURE = 300.0          # a heartbeat further ahead than this is not believed (bad clock or damaged record)
 # A window record is never ignored because of its age (it may be suspended or hung with unsaved changes):
 # see window_records().
 GIT_MARKERS = ("index.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-merge", "rebase-apply",
@@ -280,8 +282,9 @@ def window_records(root: Path) -> list[dict]:
     """Every Feature Designer window record: {name, state, pid, host, age, documents, problem}.
 
     `state` is "responding" (a heartbeat within WINDOW_LIVE seconds, or WINDOW_OTHER_HOST for
-    another computer), "not responding" (older: the window may be suspended, asleep or hung, or
-    have ended without removing its record) or "unreadable". This package cannot tell whether a
+    another computer), "not responding" (older, or implausibly far in the future: the window may
+    be suspended, asleep or hung, or have ended without removing its record) or "unreadable"
+    (the record cannot be parsed, or its heartbeat is not a finite number). This package cannot tell whether a
     process is running (it runs no process API), so a record is never dropped because of its
     age: only its window removes it, a Feature Designer window removes the records of windows on
     the same computer whose process it verified has ended, or `forget_window` removes it on an
@@ -327,6 +330,8 @@ def window_records(root: Path) -> list[dict]:
                     and isinstance(data.get("pid"), int) and isinstance(data.get("host"), str)
                     and isinstance(data.get("heartbeat"), (int, float)) and isinstance(data.get("documents"), list)):
                 raise ValueError("not a window record")
+            if not math.isfinite(float(data["heartbeat"])):
+                raise ValueError("its heartbeat is not a valid time")
         except FileNotFoundError:
             continue
         except (OSError, ValueError, UnicodeDecodeError) as exc:
@@ -334,10 +339,15 @@ def window_records(root: Path) -> list[dict]:
             entry["age"] = max(0.0, now - st.st_mtime)
             out.append(entry)
             continue
-        age = max(0.0, now - max(float(data["heartbeat"]), st.st_mtime))
+        last = max(float(data["heartbeat"]), st.st_mtime)
         limit = WINDOW_OTHER_HOST if data["host"].lower() != me else WINDOW_LIVE
-        entry.update(state="responding" if age < limit else "not responding", pid=data["pid"], host=data["host"],
-                     age=age, other_host=data["host"].lower() != me,
+        # QA (pre-merge): a heartbeat far in the future would stay "responding" forever and could
+        # never be forgotten; it is not believed (the documents stay protected, the record can be forgotten).
+        future = last - now > WINDOW_FUTURE
+        age = max(0.0, now - last)
+        entry.update(state="not responding" if future or age >= limit else "responding", pid=data["pid"], host=data["host"],
+                     age=age, other_host=data["host"].lower() != me, future=future,
+                     stamp=(st.st_ino, st.st_size, st.st_mtime_ns),
                      documents=[{"path": d["path"], "dirty": bool(d.get("dirty"))} for d in data["documents"]
                                 if isinstance(d, dict) and isinstance(d.get("path"), str)])
         out.append(entry)
@@ -349,8 +359,9 @@ def _describe_window(w: dict, dirty: bool = False) -> str:
     if dirty:
         desc += " with unsaved changes"
     if w["state"] == "not responding":
-        desc += (f" that has not responded for {int(w['age'] // 60)} min (it may be suspended or hung; if it has "
-                 f"ended, see `python -m tools.design transaction windows`)")
+        when = "whose heartbeat is in the future" if w.get("future") else f"that has not responded for {int(w['age'] // 60)} min"
+        desc += (f" {when} (it may be suspended or hung; if it has ended, see "
+                 f"`python -m tools.design transaction windows`)")
     return desc
 
 
@@ -365,7 +376,7 @@ def open_documents(root: Path, exclude_window: str = "") -> tuple[dict[str, list
         if w["name"] == exclude_window:
             continue
         if w["state"] == "unreadable":
-            unknown.append(w["name"] + ".json")
+            unknown.append(w["name"])
             continue
         for d in w["documents"]:
             found.setdefault(_key(d["path"]), []).append(_describe_window(w, d["dirty"]))
@@ -384,8 +395,11 @@ def forget_window(root: Path, name: str, confirm: bool) -> dict:
         return {"ok": True, "removed": False, "message": f"{name}: no such window record; nothing to do"}
     w = match[0]
     if w["state"] == "responding":
+        limit = int(WINDOW_OTHER_HOST if w.get("other_host") else WINDOW_LIVE)
         raise DesignError(f"{name}: {_describe_window(w)} is still responding (heartbeat {int(w['age'])} s ago); "
-                          "its record is removed by the window itself when it closes. Nothing was changed")
+                          "its record is removed by the window itself when it closes. A window whose process has "
+                          f"just ended still shows as responding for up to {limit} s: wait until `transaction windows` "
+                          "shows it as not responding, then repeat. Nothing was changed")
     if not confirm:
         return {"ok": False, "removed": False, "window": w,
                 "message": f"{name}: nothing was changed. Remove this record only if no such window is open (check that "
@@ -399,6 +413,11 @@ def forget_window(root: Path, name: str, confirm: bool) -> dict:
         if again and again[0]["state"] == "responding":
             raise DesignError(f"{name}: the window has just responded again; nothing was changed")
         try:
+            st = os.lstat(p)
+            # QA (pre-merge): the window does not take the registry lock; a record it rewrote since the
+            # check (a new file renamed over it) is not removed
+            if again and again[0].get("stamp") and (st.st_ino, st.st_size, st.st_mtime_ns) != again[0]["stamp"]:
+                raise DesignError(f"{name}: the window rewrote its record just now; nothing was changed")
             os.unlink(p)
         except FileNotFoundError:
             pass
