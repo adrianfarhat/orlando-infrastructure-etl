@@ -6,7 +6,11 @@
 > component described here is `planned`; none is `unverified` or `verified`. The built
 > current state is described in the other `docs/architecture/` documents and in
 > [designs/README.md](../../designs/README.md). Where this page states what exists
-> today (section 2), it says so explicitly. Decisions U1–U14 were **approved on
+> today (section 2), it says so explicitly. Sections 6.3, 7.5, 8.1 and 9 also name the
+> move-related tooling that exists today (`registry relink`, E6 and the PR B2b-1
+> transaction records, E16) and mark the rest of the move design "planned".
+> Decisions G1–G12 for moves (PR B2b-2, approved 2026-11-26) are recorded in
+> [DECISIONS.md](../../designs/DECISIONS.md) and cited as "(Gn)". Decisions U1–U14 were **approved on
 > 2026-11-22** ([section 14](#14-decisions-u1u14-approved-2026-11-22)); U13 and U14
 > supersede T-96 decisions 2 and 3. Items deferred to stage M1 are listed in
 > [section 12.2](#122-stage-m1-extract-per-document). Statements that rest on a
@@ -98,7 +102,8 @@ state, not the design.
 One registry, `designs/diagrams/registry.yml`, is authoritative for identity, owner,
 format, category, title, path and lifecycle. It never holds diagram content. It is
 written only by `python -m tools.design` commands (new diagram, `registry relink`,
-`registry retire`, `registry adopt`).
+`registry retire`, `registry adopt`, and the planned `registry move` and
+`registry adopt-moves` with the recovery of their records; section 7.5).
 
 ```text
 version: 1
@@ -224,7 +229,8 @@ docs/architecture/
 
 - **Sources stay in their approved directories (U12):** document-owned sources in
   `docs/architecture/diagrams/`, feature-owned sources in a `diagrams/` folder under
-  `designs/features/`. `registry relink` refuses any other location.
+  `designs/features/`. `registry relink` refuses any other location, and so do the
+  planned `registry move` and `registry adopt-moves` (section 7.5).
 - Document-owned sources in `docs/architecture/diagrams/` are owned and edited by
   technical-lead, like the documents themselves.
 - **One write guard for architecture files.** Every file the diagram commands write
@@ -232,6 +238,10 @@ docs/architecture/
   `docs/architecture/diagrams/`. Changes there are made only through technical-lead's
   documentation workflow; any change to this restriction is deferred to M1
   (section 12.2).
+- **Moves add no exception.** The planned move tooling (section 7.5) is subject to the
+  same guard, with no general or move-specific exception: it never renames, writes or
+  adopts anything under `docs/architecture/`, as the source, the destination or an
+  intermediate path.
 
 ### 5.3 Reuse by several features
 
@@ -290,9 +300,26 @@ and fields are only added.
 
 ### 6.3 Keeping generated paths right after moves and renames
 
+A move or rename is handled in **two layers**, never as one transaction (G1 in
+[DECISIONS.md](../../designs/DECISIONS.md)):
+
+- **Identity**: the source files and `designs/diagrams/registry.yml`. They change
+  first, by `registry relink` (one entry, the file already moved) or, planned, by a
+  recorded move transaction (`registry move`, `registry adopt-moves`; section 7.5).
+- **Generated text**: the captions and links between diagram markers, and
+  `designs/index/diagram-index.md`. It is derived from the identity layer afterwards
+  (steps 2 to 4 below) and is always safe to redo. `diagram-index.md` is regenerated
+  under the lock, never journalled (G4).
+
+A failure in the generated-text layer leaves only stale generated text, which `check`
+reports (E14). It never reverses a completed identity change. Generated text is never
+derived from an identity change that is not complete: while an unresolved move record
+holds a diagram (section 7.5), no block of that diagram is refreshed by any path.
+
 1. `registry relink` changes one registry field, `path` (or `title` with `--title`),
    under the lock with compare-and-swap (section 8.1). No document is touched by this
-   step.
+   step. A planned move transaction changes `path` for each moved entry in the same
+   way, and also touches no document.
 2. Every block for that ID is now stale, because its generated content differs from
    what `resolve` produces. The registry fields that shape a block (title, path) count
    as part of the source, so an untouched block after a relink is case 1 of
@@ -306,7 +333,11 @@ and fields are only added.
    - **open documents with unsaved changes**: an "out of date" notice with a Refresh
      button; nothing is written until the user clicks;
    - **closed documents**: `python -m tools.design index`, which rewrites only the lines
-     between markers, in files without a structural problem (T-96 rule).
+     between markers, in files without a structural problem (T-96 rule), or the
+     explicitly confirmed `refresh-blocks` update with its own record
+     ([designs/README.md](../../designs/README.md#interrupted-updates-of-closed-documents)). For
+     a move, this is a separate update chained after the identity layer, never part of
+     the move record.
    - Only case 1 blocks are refreshed automatically. A block with a manual
      modification (cases 2 and 3) is never refreshed by any of these paths
      (section 6.5).
@@ -510,13 +541,185 @@ sources and `registry.yml`.
 ### 7.5 Rename or move (relink)
 
 - **References never break**, because documents reference IDs, not paths.
-- **Inside VS Code** (Explorer rename or move), Feature Designer asks "Update the diagram
-  registry?" each time. Yes runs `registry relink <ID> <new path>`, which checks that
-  the file's in-file identity equals the ID, updates `path` under the lock with
-  compare-and-swap, and refreshes generated links as in section 6.3.
+- **Two layers** (section 6.3). The commands below change only the identity layer: the
+  source files and the registry. Generated captions, links and the diagram index follow
+  afterwards and are never part of a move record.
+- **Scope.** Moves cover registered, active `mermaid-md` sources owned by features
+  (G12). The validation and the records are format-neutral, so `drawio-svg` can join
+  with the draw.io work. Decisions G1 to G12 are recorded in
+  [DECISIONS.md](../../designs/DECISIONS.md).
+
+**Commands.** Only `registry relink` exists today. The other two are planned for
+PR B2b-2a.
+
+| Command | When | What changes |
+|---|---|---|
+| `registry relink ID --path P` (exists today, unchanged) | One source was already moved, by hand | One entry's `path`, under the lock with compare-and-swap, after checking that the file at `P` holds the ID. No record is written |
+| `registry adopt-moves [--from A --to B ...]` (planned) | Sources were already renamed by VS Code, Git or another program (observed renames, G2) | The registry only, for a batch, after validating identity and content at each destination. Without arguments: every unambiguous E6 match |
+| `registry move ID\|PATH --to PATH [...]` (planned) | The tooling renames the files itself (tool-initiated) | The source files and the registry, as one recorded move transaction, for a batch |
+
+- `registry move` is command-line only in B2b-2 (G10). Moving files back after an
+  observed rename is a separate tool-initiated move (G2).
+- **`registry relink` keeps its behaviour and guarantees**: one entry, the approved
+  directory of the owner kind, `--title` and `--heading` as below, and no record. Its
+  only new refusal concerns a state that cannot exist today: while an unresolved move
+  record exists, it is refused like every other registry writer (section 8.1).
+- Feature Designer's JSON interface gains read-only `move-plan` (a batch → its plan and
+  a confirmation token) and `moved` (the E6 matches) operations (planned, B2b-2a). Its
+  response version stays 1 and fields are only added.
+
+**Validation of a batch.** The whole batch is validated before anything is written. Any
+problem refuses the whole batch, and nothing is changed.
+
+- Each old path or ID resolves to exactly one active registered entry, or is a folder
+  that contains some. Retired entries are listed and never moved (a folder move that
+  would have to carry one is refused; see Folders below).
+- **Identity and content are preserved.** Only `path` changes. The ID, owner, title,
+  category, aliases, `created_from` and the source bytes stay the same. A move never
+  creates an alias, because aliases are former IDs (U4).
+- **Identity and content at the destination are validated** before a rename is
+  adopted. The file must hold the ID and the owner the registry records (E3
+  otherwise), and must be a well-formed `mermaid-md` source. When the caller knows the
+  bytes from before the rename (as Feature Designer will), their SHA-256 must also
+  match. For `registry move`, each source must still have the bytes it was planned
+  with.
+- **Approved directory (U12).** A destination must be in a `diagrams/` folder under
+  `designs/features/`.
+- **Collisions.** Each of these is refused:
+  - an occupied destination (other than the file itself, in a case-only rename);
+  - two equal destinations;
+  - destinations equal when letter case is ignored, on every platform, because the
+    repository must work on Windows (G7);
+  - a destination equal to another entry's registered path;
+  - overlapping folder moves (a folder moved into itself, or into another folder of the
+    same batch);
+  - an ambiguous identity: the ID found at two or more unregistered paths. The
+    candidates are listed, and nothing is guessed (section 6.2).
+- **An unrelated destination is never overwritten.** Every rename fails if its
+  destination exists.
+- **Links.** There may be no symbolic link or junction on the way to either path, and
+  the moved item itself may not be a link.
+- **Concurrency.** The B2b-1 registry lock, the Git-busy check and the conservative
+  window presence are reused. For `registry move`, a source that is open with unsaved
+  changes in any Feature Designer window is refused. Destination paths are checked
+  too.
+
+**Folders (G8).** Registry operations cover registered sources only. A folder move
+never silently moves, overwrites, deletes or otherwise touches unrelated files.
+
+- **Adopting a folder rename** that the user already made: only the registry follows,
+  for the registered sources found under the new folder. Unregistered files there are
+  reported as today (E5), not adopted.
+- **Initiating a folder move** with `registry move FOLDER --to FOLDER`: only registered
+  sources are moved, one file at a time, through real directories only. The command is
+  refused when the folder holds anything else that would have to move with them, for
+  example an unregistered file, a retired entry's file or another folder. The old
+  folder is not deleted.
+- Renaming a feature document or a parent feature folder changes no diagram ID and no
+  owner, because owners are feature IDs. Sources inside a renamed `<parent>/diagrams/`
+  folder are part of the batch. Feature documents themselves are handled by `index`
+  (T-94, unchanged).
+
+**Case-only renames (G7)** (for example `A.md` → `a.md`). `registry move` renames
+through a recorded intermediate (temporary) path in the same folder, so an
+interruption between the two steps is recoverable. `registry adopt-moves` recognises
+a case-only rename made by another program as the same file. In both cases the
+registry takes the exact new case, so `check`'s exact-case rule passes.
+
+**Held paths (G9).** A source, destination or intermediate path, or a document, that
+is held by an unresolved record is protected:
+
+- **Prevented** wherever the tooling allows it. `registry move` and
+  `registry adopt-moves` refuse a held path and name the record. Feature Designer's
+  pre-rename mechanism will be used for the same purpose where VS Code allows it
+  (planned, B2b-2b).
+- **Where prevention is unavailable** (VS Code cannot cancel a rename, and Git and
+  other programs are not intercepted), the user is warned (planned, B2b-2b). The
+  missing path is then handled conservatively: recovery reports it as missing and never
+  writes it or its new path.
+- There is no "relocate record" action.
+
+**The move record (planned).** Both `registry move` and `registry adopt-moves` keep a
+durable record in `designs/diagrams/.transactions/`, which they share with the B2b-1
+`refresh-blocks` updates:
+
+- **Format.** Move records are version 2, with an explicit tool (`registry-move`) and
+  explicit operation types: `rename` (from, to, expected SHA-256) and `registry` (the
+  exact original and replacement registry bytes, with their SHA-256). `refresh-blocks`
+  keeps writing its existing version 1 records, unchanged. Both versions are read and
+  recovered independently.
+- **Write sets.** Each tool has a narrowly scoped write set. `registry-move` may touch
+  only feature-owned sources under `designs/features/**/diagrams/` and
+  `designs/diagrams/registry.yml`. `refresh-blocks` is unchanged and may touch feature
+  documents only. Neither may write under `docs/architecture/` (section 5.2).
+- **Version 1 records** (B2b-1) stay readable and recoverable, with their semantics
+  unchanged. Unknown versions and malformed records fail safely: they cannot be used,
+  only abandoned, and until then they block writers as in B2b-1.
+- **Order.** `registry move` records every rename, then the registry replacement, and
+  then carries them out in that order. Each rename is a compare-and-swap: the `from`
+  path must have the expected bytes, and the `to` path must be absent. Each rename is
+  verified afterwards. `registry adopt-moves` records the renames as facts that have
+  already happened and then replaces the registry. In both cases `diagram-index.md` is
+  regenerated afterwards.
+- **While a move record is unresolved,** no other command writes the registry, and no
+  generated text for its diagrams is refreshed. Recovery never overwrites a registry
+  change that it did not make.
+
+**Recovery.** `check` reports an unresolved move record as E16. It is resolved with the
+existing `transaction status|complete|undo|abandon` commands, which show the effect
+first and act only with the confirmation token they print.
+
+- **Per-rename states.** Each rename is judged only by what is on disk:
+  - at the old path;
+  - at the new path;
+  - at the temporary path;
+  - at both paths;
+  - at neither path;
+  - changed, when the bytes differ from the expected bytes.
+- **Registry states.** The registry is judged as the original, the replacement, or
+  changed.
+- **Complete** finishes the renames still at the old or temporary path with their
+  expected bytes, then writes the registry replacement. It is refused unless the
+  registry is still the original or already the replacement.
+- **Undo** renames back the files at the new or temporary path with their expected
+  bytes, when the old path is free, and restores the registry original only when the
+  registry is exactly the replacement. For an adopted (observed) move, Undo restores
+  only the registry. The files stay where they were put, and E6 is reported again.
+- Both actions are explicit, guarded (lock, Git check, presence, token) and idempotent,
+  and can be repeated after an interruption of their own. A file at both paths, at
+  neither path or changed is never overwritten or deleted. It is left alone, and the
+  move is reported as partly done.
+- A failed or refused reference refresh never reverses a completed identity move. The
+  stale text is reported as E14.
+- A record is kept until it is explicitly resolved.
+
+**No atomicity is claimed.** A move is a recoverable transaction, not an atomic
+multi-file operation. Partial states are possible, and they are always recorded and
+reported. Limits, as for B2b-1:
+
+- A program that does not use this tooling can still change a path between its last
+  check and the rename.
+- A rename can fail on Windows, for example when a file is locked by an antivirus or
+  an indexer. This is treated as a failed operation: the renames already done are
+  rolled back, or the move is reported as partly done.
+- The tooling never stages or commits, so Git shows a move as a delete and an add until
+  it is staged.
+
+**Architecture sources (G5).** Document-owned sources in `docs/architecture/diagrams/`
+are excluded from moves. They are never moved, adopted or prompted for, and a rename
+into, out of or within `docs/architecture/` never changes the registry. `check` keeps
+reporting E6 until technical-lead relinks the entry through the documentation workflow
+(M1). The write guard of section 5.2 is unchanged and has no exception for moves.
+
+- **Inside VS Code** (planned, PR B2b-2b): an Explorer rename or move of registered
+  feature-owned sources gives one prompt per batch (C6, R2), with nothing preselected.
+  Updating the registry runs the `registry adopt-moves` path. Other windows never
+  prompt; they see the registry change and refresh their open documents (section 6.3).
 - **Outside VS Code** (Git, file explorer), `check` and `resolve` match the missing
   registered path to the unregistered file with the same in-file ID and report it as
-  moved, with the exact `registry relink` command (E6).
+  moved (E6). Today the message gives the exact `registry relink` command; the planned
+  batch form gives `registry adopt-moves` and lists all candidates when there is more
+  than one. A missing source with no candidate (E7) is never relinked automatically.
 - **Title only**: `registry relink --title` updates the registry title (and the
   `mermaid-md` front matter of a feature-owned source); captions are refreshed as
   above. For document-owned diagrams the write guard of section 5.2 applies:
@@ -526,7 +729,8 @@ sources and `registry.yml`.
   - an **embedded diagram** (`mermaid-embedded`): only the registry changes.
 - The owner never changes on a move. `relink` accepts only the approved directory of
   the owner kind: `docs/architecture/diagrams/` for document-owned sources, a
-  `diagrams/` folder under `designs/features/` for feature-owned sources (U12).
+  `diagrams/` folder under `designs/features/` for feature-owned sources (U12). The
+  planned `registry move` and `registry adopt-moves` accept only the latter (G5).
 - A transitional `mermaid-embedded` entry whose heading was renamed is reported (E7)
   and re-pointed only by an explicit `registry relink` (U11).
 
@@ -584,6 +788,13 @@ steps 4 and 5 can leave an unregistered file, which `check` reports with
 `registry adopt <path>` as the fix. It never leaves a registry entry without its file.
 `relink` and `retire` use the same lock and compare-and-swap.
 
+The planned `registry move` and `registry adopt-moves` (section 7.5) use the same lock
+and the same registry compare-and-swap, and keep a durable record. Unlike `new diagram`,
+they are **not** all or nothing: they are recoverable, and partial states are reported.
+While a move record is unresolved, every other registry writer (`new diagram`,
+`relink`, `retire`, `adopt` and further moves) is refused and names the record. This
+way, recovery never meets a registry change that it did not make.
+
 ### 8.2 Never overwriting unsaved edits
 
 - **Feature Designer** edits a document only through a single, undoable WorkspaceEdit
@@ -619,7 +830,7 @@ unchanged from T-97 Phase 1 (decision 4 in [DECISIONS.md](../../designs/DECISION
 | E3 | The registered file's in-file identity differs | `…x.drawio.svg holds FD-0001-D4 but the registry maps FD-0001-D3 to it` |
 | E4 | Unregistered visual file whose ID belongs to another path | `…copy.drawio.svg is a copy of FD-0001-D3 (…original): create diagrams with Make New Diagram` |
 | E5 | Unregistered visual file with an unknown or no ID | `…x.drawio.svg is not registered: run registry adopt …` |
-| E6 | Registered path missing, file found elsewhere | `AD-0013 moved to …: run registry relink AD-0013 …` |
+| E6 | Registered path missing, file found elsewhere. Planned (B2b-2a): the batch form, and the ID found at several unregistered paths (ambiguous: all candidates are listed, and nothing is adopted). For a document-owned source, the fix is technical-lead's documentation workflow (G5) | `AD-0013 moved to …: run registry relink AD-0013 …` / planned: `FD-0001-D3 moved to …: run registry adopt-moves --from … --to …` / `FD-0001-D3 is at 2 unregistered paths (…, …): nothing is guessed; relink it explicitly` |
 | E7 | Registered path missing, not found (for `mermaid-embedded`: the block is not found at its owner document, heading and ordinal, for example after a heading rename; U11) | `FD-0001-D3's source … does not exist` / `AD-0013: no diagram at system-architecture.md#<anchor> (block 1); candidate: line …; run registry relink AD-0013 …` |
 | E8 | An ID and an alias collide (for example a former catalog ID issued or registered as an ID) | `… is both a registry ID and an alias of AD-0010` |
 | E9 | Owner does not exist, or the ID prefix does not match the owner kind | `FD-0002-D1 is owned by FD-0001 in the registry: the ID prefix must be the owner's` / `AD-0003 is owned by a feature: AD- IDs belong to document owners` |
@@ -629,6 +840,7 @@ unchanged from T-97 Phase 1 (decision 4 in [DECISIONS.md](../../designs/DECISION
 | E13 | Hand-written image link to a `.drawio.svg` outside a diagram block | `…md line 40 links …x.drawio.svg directly: use a diagram block (FD-0001-D3) so the reference survives moves` |
 | E14 | A generated path in a block no longer matches the registry | `stale image path in the FD-0001-D3 block of …md: expected …; run index or Refresh` |
 | E15 | Generated content changed by hand (U13): case 2, the block differs from its fingerprint and the source is unchanged; or case 3, the block and the source have both changed; or a block without a fingerprint that differs from what its source generates now ("generated before fingerprints") | Case 2: `…md line 52: the AD-0013 block was edited by hand (n lines changed: …); the source is unchanged; not refreshed. Choose Discard manual change or Apply to source` / Case 3: `…md line 52: the AD-0013 block was edited by hand and its source has also changed since the block was generated; not refreshed. Review both diffs, then choose Discard manual change or Apply to source` |
+| E16 | An unresolved or unreadable transaction record: an interrupted `refresh-blocks` update of closed documents (exists today, PR B2b-1); planned (B2b-2a): an interrupted move record, with each rename's state (section 7.5) | `an update of closed documents was interrupted (committing) and holds 2 document(s): …; nothing is written to those documents until it is resolved: run python -m tools.design transaction status` / planned: `a registry move was interrupted (committing) and holds FD-0001-D3 (… → …): no registry change until it is resolved: run python -m tools.design transaction status` |
 
 E15 also covers a block whose marker has no fingerprint yet and whose content differs
 from what its source generates now ("generated before fingerprints"): a hand edit

@@ -624,3 +624,65 @@ write guard and T-98 are unchanged.
    rollback and explicit recovery, never as an atomic or "all or none" multi-file write: a
    document changed by another program can prevent a complete rollback, and the update is then
    reported as partly done with the record kept.
+
+## 2026-11-26: T-97 PR B2b-2 — renames, registry moves and reference updates (approved by the user)
+
+B2b-2 is split in two. **B2b-2a**: transaction infrastructure and registry move tooling
+(authorized, after the S0 documentation gate). **B2b-2b**: Feature Designer rename integration and
+interface (not started). Plan: two layers. The *identity* layer (source files and
+`designs/diagrams/registry.yml`) is changed by a recorded move transaction. The *generated text*
+layer (block captions and links, `designs/index/diagram-index.md`) is derived from it and updated
+afterwards by the existing mechanisms (B2a for open documents, `refresh-blocks` for closed ones).
+
+1. **G1 — two layers.** A move transaction covers source files and the registry only. Reference
+   updates are a separate, explicitly confirmed `refresh-blocks` transaction (closed documents) or
+   the B2a refresh (open documents).
+2. **G2 — observed renames adopt the registry only.** When VS Code, Git or another program has
+   already renamed a source, only the registry follows. Moving the files back is a separate,
+   tool-initiated move.
+3. **G3 — "Not now" writes no record.** A declined adoption leaves E6 reported by `check` (and,
+   in B2b-2b, by the strip) until it is resolved; the state is derived from disk by in-file ID.
+4. **G4 — `diagram-index.md` is regenerated**, not journalled (it is derived).
+5. **G5 — architecture sources** (`docs/architecture/diagrams/`) are excluded from B2b-2: never
+   moved, adopted or prompted for; relinks there belong to M1 through technical-lead.
+6. **G6 — hand-written links** to a source path are reported by the link check, never rewritten.
+7. **G7 — case.** Destinations equal ignoring letter case collide on every platform; a case-only
+   rename is carried out through a recorded intermediate (temporary) path.
+8. **G8 — folders (with the user's clarification).** Registry operations cover registered sources
+   only. A physical folder move never silently moves, overwrites, deletes or otherwise touches
+   unrelated files. *Adopting* a folder rename the user already performed (only the registry
+   follows) is distinct from *initiating* a folder move through the tooling (which moves only
+   registered sources, file by file, and refuses when the folder holds anything else that would
+   have to move with them).
+9. **G9 — held paths (modified by the user).** Renaming a document or source held by an
+   unresolved transaction is prevented wherever the tooling or VS Code's pre-rename mechanism
+   allows it. Where prevention is unavailable, the user is warned and the resulting missing path is
+   handled conservatively (reported, never written). No "relocate record" action in this PR.
+10. **G10 — tool-initiated moves are command-line only** (`registry move`).
+11. **G11 — two PRs:** B2b-2a (S1–S2, tooling) then B2b-2b (S3–S4, extension).
+12. **G12 — formats:** `mermaid-md` only; the engine and validation are format-neutral so
+    `drawio-svg` can join with the draw.io work.
+13. **Additional requirements (user):**
+    - *Transaction compatibility:* version 1 (B2b-1) records stay readable and recoverable after
+      the upgrade; version 2 records carry explicit operation types and narrowly scoped write
+      permissions; unknown versions and malformed records fail safely; recovery of both versions is
+      tested.
+    - *Move integrity:* stable IDs, ownership, aliases and source contents are preserved; the whole
+      batch is validated before any change; occupied destinations, duplicate destinations,
+      case-insensitive collisions, overlapping folder moves and ambiguous source identities are
+      detected; an unrelated destination is never overwritten; intermediate paths are part of
+      recovery and crash testing.
+    - *Registry integrity:* exact original and replacement registry bytes and their revisions are
+      recorded; recovery never overwrites unrelated registry changes; a source's identity and
+      content at the destination are validated before a filesystem rename is adopted; the existing
+      `registry relink` behaviour and guarantees are preserved.
+    - *Recovery:* states distinguish old path, new path, temporary path, both paths, neither path
+      and unexpectedly changed contents; Complete and Undo stay explicit, guarded and idempotent; a
+      failed reference refresh never automatically reverses a successful identity move; unresolved
+      records are kept until explicitly resolved.
+    - *Concurrency:* the B2b-1 lock, Git-busy check and conservative window presence are reused;
+      source, destination and temporary paths and the affected registry state are protected; B2a
+      refreshes and B2b-1 transactions never consume a partially committed identity state.
+    - *Architecture protection:* S0 changes to the architecture specification follow the
+      technical-lead workflow and are approved before they are applied; no general exception to the
+      `docs/architecture/` write guard.
