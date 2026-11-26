@@ -23,7 +23,11 @@ function rec(name, ok, detail) {
 }
 async function snap(name) { await app.page.screenshot({ path: path.join(EV, `${String(++shot).padStart(2, "0")}-${name}.png`) }).catch(() => {}); }
 async function step(name, fn) {
-  try { await fn(); } catch (e) { rec(name, false, String(e.message || e).split("\n")[0]); await snap(`FAILED-${name.replace(/[^a-z0-9]+/gi, "-")}`); await app.page.keyboard.press("Escape").catch(() => {}); }
+  try { await fn(); } catch (e) {
+    rec(name, false, String(e.message || e).split("\n")[0]);
+    if (app && app.events && app.events.length) console.log(`  window events: ${app.events.join("; ")}`);   // a lost window (run 14)
+    await snap(`FAILED-${name.replace(/[^a-z0-9]+/gi, "-")}`); await app.page.keyboard.press("Escape").catch(() => {});
+  }
 }
 const text = () => f.evaluate(() => window.FD_DEBUG.state.text);
 const version = () => f.evaluate(() => window.FD_DEBUG.state.version);
@@ -1222,7 +1226,8 @@ async function prB2b1Steps() {
   await step("S14b a document another Feature Designer window has open is never written", async () => {
     await backToDesigner();
     const dir = path.join(WS, TX, "windows"), other = path.join(dir, "00000000000000ab.json");
-    const beat = () => fs.writeFileSync(other, JSON.stringify({ format: "feature-designer-window", version: 1, window: "00000000000000ab", pid: 999999,
+    // a live process on this computer (this test runner): the extension removes the records of ended processes
+    const beat = () => fs.writeFileSync(other, JSON.stringify({ format: "feature-designer-window", version: 1, window: "00000000000000ab", pid: process.pid,
       host: require("os").hostname(), heartbeat: Date.now() / 1000, documents: [{ path: CLOSED[2], dirty: true }] }));
     beat(); const keep = setInterval(beat, 3000);
     try {
@@ -1233,11 +1238,40 @@ async function prB2b1Steps() {
       await pf.locator(".confirm-update").click();
       const result = await resultOf(pf);
       rec("S14b a document listed as open (unsaved) by another window is excluded and never written; the strip says it is updated there",
-          skipped.some((s) => s.startsWith(CLOSED[2]) && /VS Code window \(process 999999\) with unsaved changes/.test(s)) && /result ok/.test(result || "") &&
+          skipped.some((s) => s.startsWith(CLOSED[2]) && s.includes(`VS Code window (process ${process.pid}) with unsaved changes`)) && /result ok/.test(result || "") &&
           readWs(CLOSED[2]) === disk2 && readWs(CLOSED[0]).includes(`B["${label}"]`), { row: (row || "").slice(0, 120), skipped, result: (result || "").slice(0, 300),
           disk2Same: readWs(CLOSED[2]) === disk2, c0: readWs(CLOSED[0]).includes(`B["${label}"]`) });
       await pf.locator(".cancel").click(); await sleep(400);
     } finally { clearInterval(keep); fs.rmSync(other, { force: true }); }
+    await indexNow();
+  });
+
+  await step("S14c a window that stopped responding keeps protecting its documents; an ended window's record is removed", async () => {
+    // pre-merge review: a suspended or hung window (process running, heartbeat old) may hold unsaved changes
+    await backToDesigner();
+    const dir = path.join(WS, TX, "windows"), hung = path.join(dir, "00000000000000ac.json"), ended = path.join(dir, "00000000000000ad.json");
+    const old = Date.now() / 1000 - 600;
+    const write = (file, id, pid, doc) => {
+      fs.writeFileSync(file, JSON.stringify({ format: "feature-designer-window", version: 1, window: id, pid,
+        host: require("os").hostname(), heartbeat: old, documents: [{ path: doc, dirty: true }] }));
+      fs.utimesSync(file, new Date(old * 1000), new Date(old * 1000));
+    };
+    write(hung, "00000000000000ac", process.pid, CLOSED[2]);        // this test runner: running, but silent for 10 min
+    write(ended, "00000000000000ad", 999999, CLOSED[1]);            // no such process: its record is swept
+    try {
+      const disk2 = readWs(CLOSED[2]);
+      const label = changeSource();
+      const { row, pf } = await openUpdatePanel(/1 more is open in another window/);
+      const skipped = await notIncluded(pf);
+      await pf.locator(".confirm-update").click();
+      const result = await resultOf(pf);
+      rec("S14c the silent window's document is excluded (not responding) and never written; the ended window's record is removed and its document updated",
+          skipped.some((s) => s.startsWith(CLOSED[2]) && /has not responded for 10 min/.test(s)) && /result ok/.test(result || "") &&
+          readWs(CLOSED[2]) === disk2 && readWs(CLOSED[1]).includes(`B["${label}"]`) && !fs.existsSync(ended) && fs.existsSync(hung),
+          { row: (row || "").slice(0, 120), skipped, result: (result || "").slice(0, 300), disk2Same: readWs(CLOSED[2]) === disk2,
+            c1: readWs(CLOSED[1]).includes(`B["${label}"]`), endedGone: !fs.existsSync(ended), hungKept: fs.existsSync(hung) });
+      await pf.locator(".cancel").click(); await sleep(400);
+    } finally { fs.rmSync(hung, { force: true }); fs.rmSync(ended, { force: true }); }
     await indexNow();
   });
 

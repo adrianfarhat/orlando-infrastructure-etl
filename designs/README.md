@@ -46,8 +46,9 @@ Other commands:
 | `python -m tools.design registry adopt\|adopt-architecture\|relink\|retire …` | Change the diagram registry under its lock: register a source, register the architecture diagrams in place, move or retitle a diagram, retire one (see [Diagrams](#diagrams)) |
 | `python -m tools.design resolve <ID or alias>` | Show a diagram's authoritative source (JSON); writes nothing |
 | `python -m tools.design reconcile --file F --line N --discard\|--apply-to-source` | Resolve a diagram block that was edited by hand: shows the change, applies it only with `--confirm <token>` |
-| `python -m tools.design refresh-blocks --file F --expect SHA256 [...] --sources-token T` | Refresh the out-of-date diagram blocks of several closed feature documents as one recoverable update: all of them or none; refused if any changed since it was listed (used by the Feature Designer; see [Interrupted updates](#interrupted-updates-of-closed-documents)) |
+| `python -m tools.design refresh-blocks --file F --expect SHA256 [...] --sources-token T` | Refresh the out-of-date diagram blocks of several closed feature documents as one recoverable update (not an atomic multi-file write: a failure rolls back what it wrote, an interruption leaves a record to complete or undo); refused if any changed since it was listed (used by the Feature Designer; see [Interrupted updates](#interrupted-updates-of-closed-documents)) |
 | `python -m tools.design transaction status\|complete\|undo\|abandon [ID] [--confirm TOKEN]` | Show or resolve an interrupted update (E16): each action shows its effect first and acts only with the `--confirm` token it prints |
+| `python -m tools.design transaction windows` / `transaction forget-window NAME [--confirm]` | List the Feature Designer window records (responding, not responding, unreadable) and the documents each protects; remove one that is not responding or unreadable, only with `--confirm` and only when that window is no longer open |
 | `python -m tools.design designer` | The Feature Designer's interface (T-97): one JSON request on stdin, one JSON response on stdout; it proposes edits and never writes a file (described in `tools/design/designer_api.py`) |
 
 Exit codes: 0 success; 1 problems found (`check`, `index --check`) or a refused Feature
@@ -366,8 +367,11 @@ feature documents as one update. Before changing anything it keeps, in
 `designs/diagrams/.transactions/<id>/` (ignored by Git), the exact original and updated bytes of
 every document, their SHA-256 hashes, the registry and source revisions they were computed from
 and the state of the update, each flushed to disk. Every document is checked again just before
-it is replaced; if one changed, the documents already replaced are put back and nothing is
-changed.
+it is replaced; if one changed, the documents already replaced are put back. This is a
+recoverable transaction, not an atomic multi-file write: partial states are possible and are
+always reported. If a document this update wrote is changed by another program before the
+rollback reaches it, that document is left alone, the update is reported as **partly done**, and
+the record (with every original) is kept for an explicit Complete or Undo.
 
 If the update is interrupted (the process or the computer stopped), `check` reports E16 and
 nothing more is written to those documents until you decide:
@@ -397,8 +401,15 @@ can still change a document in the short moment (milliseconds) between its last 
 replacement, and that change is then replaced; Windows has no folder flush, so the record relies
 on the file system's journal; open documents are known only from Feature Designer windows: a VS
 Code window without it (another installation, Restricted Mode, the repository opened as a
-subfolder), another editor, or a window asleep or unresponsive for more than two minutes is not
-seen.
+subfolder) or another editor is not seen.
+
+A Feature Designer window that stops responding (suspended, asleep or hung for more than two
+minutes) still protects the documents it listed, because it may hold unsaved changes: its record
+is never ignored because of its age. A record is removed by its window when it closes, by any
+Feature Designer window on the same computer once it has verified that the window's process has
+ended (at start, every minute and before listing closed documents), or explicitly with
+`transaction forget-window NAME --confirm` (refused while that window is responding). An
+unreadable window record blocks every update until it is replaced by its window or forgotten.
 
 **A stale registry lock.** Diagram commands hold `designs/diagrams/.registry.lock` while they run;
 a command that was killed can leave it behind, and every diagram command then refuses (E12). To

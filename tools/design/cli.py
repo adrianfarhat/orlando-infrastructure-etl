@@ -11,6 +11,8 @@
   python -m tools.design refresh-blocks --file PATH --expect SHA256 [--file ... --expect ...] [--sources-token T] [--json]
   python -m tools.design transaction status [--json]
   python -m tools.design transaction (complete | undo | abandon) ID [--confirm TOKEN] [--json]
+  python -m tools.design transaction windows [--json]
+  python -m tools.design transaction forget-window NAME [--confirm]
   python -m tools.design check [--root DIR]
   python -m tools.design designer [--root DIR]  < request.json   (the Feature Designer interface, T-97)
   python -m tools.design designer --serve [--root DIR]   (one JSON request per line until end of input)
@@ -107,16 +109,19 @@ def build_parser() -> argparse.ArgumentParser:
                             "date (writes nothing)")
     sub.add_parser("check", help="check every feature specification and both indexes")
     rb = sub.add_parser("refresh-blocks", help="refresh the out-of-date diagram blocks of closed feature documents as "
-                                               "one recoverable update: all listed documents, or none (T-97 PR B2b-1)")
+                                               "one recoverable update: every listed document, or rolled back; an interruption leaves a "
+                                               "record to complete or undo explicitly (T-97 PR B2b-1)")
     rb.add_argument("--file", action="append", required=True, help="a feature document (repeat for each document)")
     rb.add_argument("--expect", action="append", required=True,
                     help="the SHA-256 of that document as listed (one per --file, in the same order)")
     rb.add_argument("--sources-token", help="the sources token from the listing: refused if a source changed since")
     rb.add_argument("--json", action="store_true", help="print the result as JSON")
     tx = sub.add_parser("transaction", help="show or resolve an interrupted update of closed documents (E16)")
-    tx.add_argument("action", choices=["status", "complete", "undo", "abandon"])
-    tx.add_argument("record", nargs="?", help="the record ID (tx-...), for complete, undo and abandon")
-    tx.add_argument("--confirm", metavar="TOKEN", help="carry out the action on exactly the state that was shown")
+    tx.add_argument("action", choices=["status", "complete", "undo", "abandon", "windows", "forget-window"])
+    tx.add_argument("record", nargs="?", help="the record ID (tx-...), for complete, undo and abandon; the window "
+                                              "record name, for forget-window")
+    tx.add_argument("--confirm", metavar="TOKEN", nargs="?", const="",
+                    help="carry out the action on exactly the state that was shown (forget-window takes no token)")
     tx.add_argument("--json", action="store_true", help="print the result as JSON")
     for p in (feature, diagram, designer, index, sub.choices["check"], adopt, adopt_arch, relink, retire, unlock,
               resolve, reconcile, rb, tx):
@@ -407,6 +412,36 @@ def _refresh_blocks(args, root: Path, out: TextIO) -> int:
 
 
 def _transaction(args, root: Path, out: TextIO) -> int:
+    if args.action == "windows":
+        found = transactions.window_records(root)
+        if args.json:
+            print(json.dumps({"windows": found}, sort_keys=True, ensure_ascii=False), file=out)
+            return EXIT_OK
+        if not found:
+            print("no Feature Designer window record", file=out)
+        for w in found:
+            if w["state"] == "unreadable":
+                print(f"{w['name']}: {w['problem']}; it blocks every update of closed documents", file=out)
+                continue
+            print(f"{w['name']}: process {w['pid']} on {w['host']}, {w['state']} (heartbeat {int(w['age'])} s ago)", file=out)
+            for d in w["documents"]:
+                print(f"  {d['path']}" + (" (unsaved changes)" if d["dirty"] else ""), file=out)
+        if any(w["state"] != "responding" for w in found):
+            print("A record that is not responding or cannot be read keeps protecting its documents. Remove it only if "
+                  "that window is no longer open: transaction forget-window NAME --confirm", file=out)
+        return EXIT_OK
+    if args.action == "forget-window":
+        if not args.record:
+            raise DesignError("give the window record name: transaction forget-window NAME")
+        result = transactions.forget_window(root, args.record, args.confirm is not None)
+        w = result.get("window")
+        if w:
+            print(f"{w['name']}: " + (w["problem"] if w["state"] == "unreadable" else
+                                     f"process {w['pid']} on {w['host']}, not responding for {int(w['age'])} s"), file=out)
+            for d in w["documents"]:
+                print(f"  {d['path']}" + (" (unsaved changes)" if d["dirty"] else ""), file=out)
+        print(result["message"], file=out)
+        return EXIT_OK if result["ok"] else EXIT_PROBLEMS
     if args.action == "status":
         found = transactions.status(root)
         if args.json:

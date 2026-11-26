@@ -148,7 +148,7 @@
       h("span", { text: `${plural(state.closed.count, "other document", "other documents")} (not open) ${state.closed.count === 1 ? "has" : "have"} ` +
                         "out-of-date diagrams." + (state.closed.elsewhere ? ` ${plural(state.closed.elsewhere, "more is", "more are")} open in another window and ` +
                         "updated there." : "") }),
-      btn("update-closed", "Update…", () => post({ type: "updateClosed" }), "List them and update them together (all or none)")));
+      btn("update-closed", "Update…", () => post({ type: "updateClosed" }), "List them and update them together (recoverable: rolled back, or completed or undone later)")));
     if (n && n.kind === "auto") parts.push(h("div", { class: "strip-row auto" },
       h("span", { text: `Updated ${plural(n.ids.length, "diagram", "diagrams")} from ${n.ids.length === 1 ? "its source" : "their sources"} (${n.ids.join(", ")}) — not saved.` }),
       btn("undo-refresh", "Undo", () => { state.syncNote = null; strip(); post({ type: "undo" }); }, "Undo the refresh (one step)"),

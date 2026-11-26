@@ -2,8 +2,12 @@
 
 `python -m tools.design refresh-blocks` refreshes the out-of-date diagram blocks (case 1 only;
 never a conflict) of several feature documents that are not open in an editor. Every listed
-document is updated, or none is. A crash part-way through leaves a durable record from which
-the update can be completed or undone, by an explicit action only.
+document is updated, or the update is rolled back; this is a recoverable transaction, not an
+atomic multi-file write. A crash part-way through leaves a durable record from which the update
+can be completed or undone, by an explicit action only, and a rollback or recovery that meets a
+document changed by another program leaves that document alone and reports the update as
+partly done (the record and every original are kept), so partial states are possible and are
+always reported.
 
 The record (D1) is a folder `designs/diagrams/.transactions/<id>/` (ignored by Git):
   journal.json  the format, version, state, process, registry and source revisions, and for
@@ -21,7 +25,8 @@ Protocol (all under the registry lock, which every cooperating writer takes; D3)
   2. commit (state "committing"): for each file, check its bytes are still the original ones,
      replace it (a flushed temporary file renamed over it) and verify the result;
   3. state "committed", then the record is renamed `<id>.done/` and removed.
-A failure during step 2 undoes the files already replaced (only those still exactly as written).
+A failure during step 2 undoes the files already replaced (only those still exactly as written;
+one changed by another program meanwhile is left alone and reported, and the record is kept).
 
 Recovery judges every file only by its current bytes: the replacement (updated), the original
 (not updated), or anything else (changed by someone since: never overwritten). Complete writes
@@ -38,9 +43,12 @@ Limits (stated, not hidden):
 - Windows has no directory flush; the renames rely on the file system's own metadata journal.
 - Open documents are known only from Feature Designer windows (decision D6): a VS Code window
   without the extension (another installation, Restricted Mode, the repository opened as a
-  subfolder), another editor, or a window silent for more than WINDOW_LIVE seconds (asleep or
-  hung) is not seen; a document opened in the last moment before the check (a window publishes
-  within about 0.1 s of a change, and every 5 s) may be missed.
+  subfolder) or another editor is not seen; a document opened in the last moment before the
+  check (a window publishes within about 0.1 s of a change, and every 5 s) may be missed. A
+  window that stops responding (suspended, asleep, hung) keeps protecting the documents it
+  listed: its record is never ignored because of its age, only removed by its window, by a
+  Feature Designer window that verified its process has ended (same computer), or by an
+  explicit `transaction forget-window`.
 - Git operations are checked by the update and by recovery (D4), not by `index`, `new feature`
   or `reconcile`.
 """
@@ -77,9 +85,10 @@ STATES = ("prepared", "committing", "rolling-back", "completing", "undoing", "ne
 MAX_FILES = 200
 MAX_BYTES = 8 << 20
 MAX_JOURNAL = 1 << 20
-WINDOW_FRESH = 20.0            # seconds: an unreadable window file this recent may belong to a running window
-WINDOW_LIVE = 120.0            # a window rewrites its file every 5 s; one silent for longer has ended (or hangs)
-WINDOW_OTHER_HOST = 600.0      # another computer's clock may differ: its window counts for longer
+WINDOW_LIVE = 120.0            # a window rewrites its file every 5 s; one silent for longer is "not responding"
+WINDOW_OTHER_HOST = 600.0      # another computer's clock may differ: its window is "responding" for longer
+# A window record is never ignored because of its age (it may be suspended or hung with unsaved changes):
+# see window_records().
 GIT_MARKERS = ("index.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-merge", "rebase-apply",
                "sequencer")
 CODE = "E16"
@@ -267,29 +276,42 @@ def _key(rel: str) -> str:
     return rel.casefold() if sys.platform == "win32" else rel
 
 
-def open_documents(root: Path, exclude_window: str = "") -> tuple[dict[str, list[str]], list[str]]:
-    """Feature documents that Feature Designer windows that may still be running list as open:
-    {path: [description]}, and the windows whose file cannot be read but may be live (these
-    block every update, because what they have open is unknown)."""
+def window_records(root: Path) -> list[dict]:
+    """Every Feature Designer window record: {name, state, pid, host, age, documents, problem}.
+
+    `state` is "responding" (a heartbeat within WINDOW_LIVE seconds, or WINDOW_OTHER_HOST for
+    another computer), "not responding" (older: the window may be suspended, asleep or hung, or
+    have ended without removing its record) or "unreadable". This package cannot tell whether a
+    process is running (it runs no process API), so a record is never dropped because of its
+    age: only its window removes it, a Feature Designer window removes the records of windows on
+    the same computer whose process it verified has ended, or `forget_window` removes it on an
+    explicit, informed request. Until then the documents it lists are never written."""
     folder = Path(root) / WINDOWS
-    found: dict[str, list[str]] = {}
-    unknown: list[str] = []
+    out: list[dict] = []
     try:
         if not folder.is_dir() or _is_link(folder) or _is_link(folder.parent):
-            return found, unknown
+            return out
         names = sorted(os.listdir(folder))
     except OSError:
-        return found, unknown
+        return out
     now = time.time()
     me = platform.node().lower()
     for name in names:
-        p = folder / name
-        if not WINDOW_RE.match(name) or name[:-5] == exclude_window:
+        if not WINDOW_RE.match(name):
             continue
+        p = folder / name
+        entry = {"name": name[:-5], "state": "unreadable", "pid": None, "host": "", "age": None, "documents": [],
+                 "problem": ""}
         try:
             st = os.lstat(p)
-            age_file = now - st.st_mtime
-            if _is_link(p) or st.st_size > (256 << 10):
+        except FileNotFoundError:
+            continue                            # removed by its window (closed) since the folder was listed
+        except OSError as exc:
+            entry["problem"] = f"cannot be inspected ({exc.strerror or exc})"
+            out.append(entry)
+            continue
+        try:
+            if _is_link(p) or not stat.S_ISREG(st.st_mode) or st.st_size > (256 << 10):
                 raise ValueError("not a plain file")
             raw = None
             for attempt in range(5):           # the window may be replacing its file at this instant (Windows refuses the read)
@@ -305,20 +327,82 @@ def open_documents(root: Path, exclude_window: str = "") -> tuple[dict[str, list
                     and isinstance(data.get("pid"), int) and isinstance(data.get("host"), str)
                     and isinstance(data.get("heartbeat"), (int, float)) and isinstance(data.get("documents"), list)):
                 raise ValueError("not a window record")
-        except (OSError, ValueError, UnicodeDecodeError):
-            if age_file < WINDOW_FRESH:             # written moments ago by a window that may be running
-                unknown.append(name)
+        except FileNotFoundError:
             continue
-        age = now - max(float(data["heartbeat"]), st.st_mtime)
-        # Liveness by heartbeat only (this package runs no process API). The extension removes the files
-        # of windows whose process has ended; one that hangs longer than WINDOW_LIVE is not seen (stated).
-        if age >= (WINDOW_OTHER_HOST if data["host"].lower() != me else WINDOW_LIVE):
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            entry["problem"] = f"cannot be read ({exc})"
+            entry["age"] = max(0.0, now - st.st_mtime)
+            out.append(entry)
             continue
-        desc = f"a VS Code window (process {data['pid']}" + (f" on {data['host']}" if data["host"].lower() != me else "") + ")"
-        for d in data["documents"]:
-            if isinstance(d, dict) and isinstance(d.get("path"), str):
-                found.setdefault(_key(d["path"]), []).append(desc + (" with unsaved changes" if d.get("dirty") else ""))
+        age = max(0.0, now - max(float(data["heartbeat"]), st.st_mtime))
+        limit = WINDOW_OTHER_HOST if data["host"].lower() != me else WINDOW_LIVE
+        entry.update(state="responding" if age < limit else "not responding", pid=data["pid"], host=data["host"],
+                     age=age, other_host=data["host"].lower() != me,
+                     documents=[{"path": d["path"], "dirty": bool(d.get("dirty"))} for d in data["documents"]
+                                if isinstance(d, dict) and isinstance(d.get("path"), str)])
+        out.append(entry)
+    return out
+
+
+def _describe_window(w: dict, dirty: bool = False) -> str:
+    desc = f"a VS Code window (process {w['pid']}" + (f" on {w['host']}" if w.get("other_host") else "") + ")"
+    if dirty:
+        desc += " with unsaved changes"
+    if w["state"] == "not responding":
+        desc += (f" that has not responded for {int(w['age'] // 60)} min (it may be suspended or hung; if it has "
+                 f"ended, see `python -m tools.design transaction windows`)")
+    return desc
+
+
+def open_documents(root: Path, exclude_window: str = "") -> tuple[dict[str, list[str]], list[str]]:
+    """Feature documents that Feature Designer windows that may still be running list as open:
+    {path: [description]}, and the windows whose record cannot be read (these block every update,
+    because what they have open is unknown). A window that has stopped responding still counts
+    (conservative: it may be suspended or hung with unsaved changes)."""
+    found: dict[str, list[str]] = {}
+    unknown: list[str] = []
+    for w in window_records(root):
+        if w["name"] == exclude_window:
+            continue
+        if w["state"] == "unreadable":
+            unknown.append(w["name"] + ".json")
+            continue
+        for d in w["documents"]:
+            found.setdefault(_key(d["path"]), []).append(_describe_window(w, d["dirty"]))
     return found, unknown
+
+
+def forget_window(root: Path, name: str, confirm: bool) -> dict:
+    """Remove the record of a window that is not responding or cannot be read, only on an explicit
+    request (`confirm`). A responding window's record is never removed. Read only without `confirm`."""
+    from . import registry
+    root = Path(root).resolve()
+    if not WINDOW_RE.match(f"{name}.json"):
+        raise DesignError(f"{name!r} is not a window record name (16 hexadecimal characters)")
+    match = [w for w in window_records(root) if w["name"] == name]
+    if not match:
+        return {"ok": True, "removed": False, "message": f"{name}: no such window record; nothing to do"}
+    w = match[0]
+    if w["state"] == "responding":
+        raise DesignError(f"{name}: {_describe_window(w)} is still responding (heartbeat {int(w['age'])} s ago); "
+                          "its record is removed by the window itself when it closes. Nothing was changed")
+    if not confirm:
+        return {"ok": False, "removed": False, "window": w,
+                "message": f"{name}: nothing was changed. Remove this record only if no such window is open (check that "
+                           "the process has ended or close that VS Code window): the documents it lists may have unsaved "
+                           f"changes there. To remove it, repeat with --confirm"}
+    with registry.lock(root):
+        p = Path(root) / WINDOWS / f"{name}.json"
+        if _is_link(p.parent) or _is_link(p.parent.parent):
+            raise DesignError(f"{WINDOWS} goes through a symbolic link or junction; nothing was changed ({CODE})")
+        again = [x for x in window_records(root) if x["name"] == name]
+        if again and again[0]["state"] == "responding":
+            raise DesignError(f"{name}: the window has just responded again; nothing was changed")
+        try:
+            os.unlink(p)
+        except FileNotFoundError:
+            pass
+    return {"ok": True, "removed": True, "message": f"{name}: the window record was removed"}
 
 
 # --------------------------------------------------------------------------- reading records
@@ -716,7 +800,8 @@ def update(root: Path, requests: list[tuple[str, str]], expect_token: str | None
         opened, unknown = open_documents(root)          # every window, the caller's too (it may have opened one since)
         if unknown:
             raise DesignError("a Feature Designer window's list of open documents cannot be read "
-                              f"({', '.join(unknown)}), so no document is updated now; try again in a moment")
+                              f"({', '.join(unknown)}), so no document is updated now. Try again in a moment; if it "
+                              "stays unreadable, see `python -m tools.design transaction windows`")
         busy_docs = [f"{p} is open in {'; '.join(opened[_key(p)])}" for p in paths if _key(p) in opened]
         if busy_docs:
             raise DesignError("; ".join(busy_docs) + ". Documents open in an editor are updated there, not on disk; "

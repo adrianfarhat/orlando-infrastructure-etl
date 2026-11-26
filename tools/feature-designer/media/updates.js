@@ -38,8 +38,10 @@
     if (!m.eligible.length) main.append(h("p", { class: "none", text: "No closed document has an out-of-date diagram block." }));
     else {
       main.append(h("p", { text: "These feature documents are not open in this window. Their out-of-date diagram blocks are refreshed " +
-        "from their sources and written on disk as one update: all of them, or none. Conflicts are never changed. " +
-        "If the update is interrupted, a record keeps every original so it can be completed or undone." }));
+        "from their sources and written on disk as one recoverable update: if one cannot be written, the documents already " +
+        "written are put back. Conflicts are never changed. A record keeps every original until the update is finished: if the " +
+        "update is interrupted, or a document is changed by another program meanwhile (it is then left alone), the update is " +
+        "reported as partly done and can be completed or undone." }));
       main.append(h("table", { class: "docs" },
         h("thead", {}, h("tr", {}, h("th", { text: "Document" }), h("th", { text: "Diagrams refreshed" }), h("th", { text: "Conflicts left alone" }))),
         h("tbody", {}, m.eligible.map((d) => h("tr", {}, h("td", { text: d.path }), h("td", { text: d.blocks.join(", ") }),
@@ -50,10 +52,11 @@
       main.append(h("ul", { class: "excluded" }, m.excluded.map((d) => h("li", { text: `${d.path}: ${d.excluded}` }))));
     }
     if (m.unknown.length) main.append(h("p", { class: "warn", text: "A Feature Designer window's list of open documents cannot be read right now, " +
-      "so the update would be refused; try again in a moment." }));
+      "so the update would be refused; try again in a moment. If it stays unreadable: python -m tools.design transaction windows." }));
     main.append(h("p", { class: "limit", text: "Limitation: a document open with unsaved changes in a VS Code window that does not run " +
       "Feature Designer, or in another editor, cannot be detected. VS Code reports that the file changed on disk and asks before " +
-      "saving over it; other editors may not, so close the document there first." }));
+      "saving over it; other editors may not, so close the document there first. A Feature Designer window that stops responding " +
+      "keeps protecting its documents until it is closed." }));
     const files = m.eligible.map((d) => ({ path: d.path, sha256: d.sha256 }));
     const go = h("button", { type: "button", class: "confirm-update", disabled: !files.length || m.busy,
                              text: files.length ? `Update ${files.length} document${files.length === 1 ? "" : "s"}` : "Update",

@@ -286,12 +286,120 @@ class OpenElsewhere(unittest.TestCase):
             (ws.root / transactions.WINDOWS / "0123456789abcdef.json").unlink()
             self.assertEqual(transactions.update(ws.root, reqs, token)["ok"], True)
 
-    def test_a_window_silent_too_long_no_longer_counts(self):
+    def test_a_window_that_stopped_responding_still_protects_its_documents(self):
+        # pre-merge review: a suspended or hung window may hold unsaved changes; its age alone never drops it
+        with Workspace() as ws:
+            docs, _ = build(ws, 2)
+            reqs, token = listing(ws)
+            for age in (transactions.WINDOW_LIVE + 5, 86400.0 * 30):
+                with self.subTest(age=age):
+                    self.window(ws, [docs[0]], age=age)
+                    a = transactions.affected(ws.root)
+                    ex = [d for d in a["documents"] if d["path"] == docs[0]][0]["excluded"]
+                    self.assertTrue(ex.startswith("open in a VS Code window (process 4242) with unsaved changes "
+                                                  "that has not responded"), ex)
+                    before = snapshot(ws, docs)
+                    with self.assertRaises(DesignError) as c:
+                        transactions.update(ws.root, reqs, token)
+                    self.assertIn("not responded", str(c.exception))
+                    self.assertEqual(snapshot(ws, docs), before)
+                    self.assertEqual([w["state"] for w in transactions.window_records(ws.root)], ["not responding"])
+            # a window on another computer: the same, after its longer limit
+            old = time.time() - transactions.WINDOW_OTHER_HOST - 5
+            self.window(ws, [docs[0]], age=transactions.WINDOW_OTHER_HOST + 5, raw=json.dumps(
+                {"format": "feature-designer-window", "version": 1, "window": "0123456789abcdef", "pid": 7,
+                 "host": "elsewhere-pc", "heartbeat": old, "documents": [{"path": docs[0], "dirty": False}]}).encode())
+            self.assertEqual([w["state"] for w in transactions.window_records(ws.root)], ["not responding"])
+            with self.assertRaises(DesignError):
+                transactions.update(ws.root, reqs, token)
+
+    def test_recovery_is_refused_under_a_window_that_stopped_responding(self):
+        with Workspace() as ws:
+            docs, _ = build(ws, 3)
+            reqs, token = listing(ws)
+            self.assertEqual(run(ws, rb_args(reqs, token), fault="after-replace:1").returncode, 97)
+            unlock(ws)
+            self.window(ws, [docs[2]], age=transactions.WINDOW_LIVE + 5)
+            rec = only_record(ws)
+            self.assertFalse(rec["complete"]["possible"])
+            before = snapshot(ws, docs)
+            self.assertIn("not responded", rec["complete"]["reason"])
+            for action in ("complete", "undo"):
+                with self.assertRaises(DesignError):
+                    transactions.resolve(ws.root, rec["id"], action, rec["token"])
+            self.assertEqual(snapshot(ws, docs), before)
+            transactions.forget_window(ws.root, "0123456789abcdef", True)
+            rec = only_record(ws)
+            self.assertTrue(transactions.resolve(ws.root, rec["id"], "complete", rec["token"])["ok"])
+
+    def test_forget_window_is_explicit_and_never_removes_a_responding_window(self):
         with Workspace() as ws:
             docs, _ = build(ws, 1)
             reqs, token = listing(ws)
+            p = self.window(ws, docs)
+            with self.assertRaises(DesignError) as c:                              # responding: refused, kept
+                transactions.forget_window(ws.root, "0123456789abcdef", True)
+            self.assertIn("still responding", str(c.exception))
+            self.assertTrue(p.exists())
             self.window(ws, docs, age=transactions.WINDOW_LIVE + 5)
+            code, out, _ = cmd(ws.root, "transaction", "windows")
+            self.assertEqual(code, 0)
+            self.assertIn("not responding", out)
+            self.assertIn(docs[0], out)
+            code, out, _ = cmd(ws.root, "transaction", "forget-window", "0123456789abcdef")   # no --confirm: shows, keeps
+            self.assertEqual(code, 1)
+            self.assertIn("nothing was changed", out)
+            self.assertTrue(p.exists())
+            with self.assertRaises(DesignError):
+                transactions.update(ws.root, reqs, token)
+            code, _, _ = cmd(ws.root, "transaction", "forget-window", "../evil", "--confirm")
+            self.assertEqual(code, 2)
+            code, out, _ = cmd(ws.root, "transaction", "forget-window", "0123456789abcdef", "--confirm")
+            self.assertEqual(code, 0, out)
+            self.assertIn("removed", out)
+            self.assertFalse(p.exists())
             self.assertEqual(transactions.update(ws.root, reqs, token)["ok"], True)
+            # an unreadable record can be forgotten the same way
+            q = self.window(ws, docs, raw=b"{not json", age=3600)
+            self.assertEqual(transactions.forget_window(ws.root, "0123456789abcdef", True)["removed"], True)
+            self.assertFalse(q.exists())
+
+    def test_forget_window_refuses_while_another_command_holds_the_lock(self):
+        with Workspace() as ws:
+            docs, _ = build(ws, 1)
+            p = self.window(ws, docs, age=transactions.WINDOW_LIVE + 5)
+            holder = subprocess.Popen([sys.executable, "-c", (
+                "import sys, time\nfrom pathlib import Path\nfrom tools.design import registry\n"
+                "with registry.lock(Path(sys.argv[1])):\n    print('held', flush=True)\n    time.sleep(60)\n"), str(ws.root)],
+                cwd=str(REPO_ROOT), stdout=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual(holder.stdout.readline().strip(), "held")
+                with self.assertRaises(DesignError) as c:
+                    transactions.forget_window(ws.root, "0123456789abcdef", True)
+                self.assertIn("E12", str(c.exception))
+                self.assertTrue(p.exists())
+            finally:
+                holder.kill()
+                holder.wait()
+                holder.stdout.close()
+            unlock(ws)
+
+    def test_a_window_record_removed_while_it_is_read_is_skipped(self):
+        # pre-merge review: a window closing during the scan (lstat fails) must not crash the scan
+        with Workspace() as ws:
+            docs, _ = build(ws, 1)
+            p = self.window(ws, docs)
+            real = os.lstat
+
+            def gone(path, *a, **k):
+                if str(path) == str(p):
+                    raise FileNotFoundError(2, "gone", str(path))
+                return real(path, *a, **k)
+            transactions.os.lstat = gone
+            try:
+                self.assertEqual(transactions.open_documents(ws.root), ({}, []))
+            finally:
+                transactions.os.lstat = real
 
     def test_an_unreadable_recent_window_file_blocks_every_update(self):
         with Workspace() as ws:
@@ -301,8 +409,12 @@ class OpenElsewhere(unittest.TestCase):
             with self.assertRaises(DesignError) as c:
                 transactions.update(ws.root, reqs, token)
             self.assertIn("cannot be read", str(c.exception))
-            old = time.time() - 60
-            os.utime(p, (old, old))                                    # an old unreadable file is not a live window
+            old = time.time() - 86400
+            os.utime(p, (old, old))                                    # an old unreadable record still blocks (conservative)
+            with self.assertRaises(DesignError) as c:
+                transactions.update(ws.root, reqs, token)
+            self.assertIn("transaction windows", str(c.exception))
+            transactions.forget_window(ws.root, "0123456789abcdef", True)
             self.assertEqual(transactions.update(ws.root, reqs, token)["ok"], True)
 
 

@@ -608,3 +608,19 @@ write guard and T-98 are unchanged.
    - the four protected files, the architecture documents and the unrelated `iot/` directory
      are preserved;
    - the B2a automatic and manual refreshes respect unresolved transactions.
+
+## 2026-11-26: T-97 PR B2b-1 — pre-merge review (directed by the user)
+
+1. **Windows that stop responding are protected (D6, made conservative).** The user asked that a
+   window that may still be active is never dropped because it cannot be verified. A Feature
+   Designer window record is no longer ignored because its heartbeat is older than 120 seconds:
+   such a window (suspended, asleep or hung, possibly with unsaved changes) is reported as "not
+   responding" and its documents are still left out of every update and recovery. An unreadable
+   record blocks every update whatever its age. A record is removed only by its window, by a
+   Feature Designer window on the same computer after it verified that the window's process has
+   ended (at start, every minute and before listing closed documents), or by the explicit
+   `transaction forget-window NAME --confirm`, which is refused while the window is responding.
+2. **Wording.** Closed-document updates are described as recoverable transactions with guarded
+   rollback and explicit recovery, never as an atomic or "all or none" multi-file write: a
+   document changed by another program can prevent a complete rollback, and the update is then
+   reported as partly done with the record kept.

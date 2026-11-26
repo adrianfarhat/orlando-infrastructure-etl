@@ -4,8 +4,10 @@
 // Designer window publishes the feature documents it has open in a tab, and whether each has
 // unsaved changes, in designs/diagrams/.transactions/windows/<window>.json, rewritten every 5 s
 // (a heartbeat) and whenever a tab or a document's unsaved state changes. `refresh-blocks` never
-// writes a document a window that may still be running lists (tools/design/transactions.py):
-// liveness is the heartbeat; the files of windows whose process has ended are removed here.
+// writes a document listed by any window record (tools/design/transactions.py): a record is never
+// ignored because its heartbeat is old (the window may be suspended or hung with unsaved changes).
+// The records of windows on this computer whose process has ended are removed here (sweep); others
+// stay until their window removes them or `transaction forget-window` removes one explicitly.
 //
 // Not detectable (documented): a VS Code window that does not run Feature Designer (another
 // installation, the extension not loaded, Restricted Mode), and other editors.

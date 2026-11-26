@@ -48,8 +48,15 @@ function fixture() {
   return WS;
 }
 
+let profiles = 0;
 function profile({ trust, markSharp }) {
   const user = path.join(RUN, "user"), exts = path.join(RUN, "exts");
+  // Keep VS Code's own logs (main, renderer, extension host) of the previous session before the profile
+  // is replaced, so a window lost during a run can be diagnosed afterwards (pre-merge review of GUI run 14).
+  const logs = path.join(user, "logs");
+  if (profiles++ > 0 && fs.existsSync(logs)) {                                 // not a previous run's profile
+    try { fs.cpSync(logs, path.join(RUN, "evidence", `vscode-logs-session-${profiles - 1}`), { recursive: true }); } catch { /* best effort */ }
+  }
   fs.rmSync(user, { recursive: true, force: true }); fs.rmSync(exts, { recursive: true, force: true });
   fs.mkdirSync(path.join(user, "User"), { recursive: true }); fs.mkdirSync(exts, { recursive: true });
   fs.writeFileSync(path.join(user, "User", "settings.json"), JSON.stringify({
@@ -91,7 +98,13 @@ async function launch({ trust = false, markSharp = true } = {}) {
   }
   if (!page) throw new Error("no workbench window");
   await page.waitForSelector(".monaco-workbench", { timeout: 60000 });
-  const app = { proc, browser, page, markSharp: prof.markSharpCopied, seq: 0 };
+  const app = { proc, browser, page, markSharp: prof.markSharpCopied, seq: 0, events: [] };
+  // What ended a window that disappears during a run (the process exited, the renderer crashed, the page closed).
+  const note = (what) => app.events.push(`${new Date().toISOString()} ${what}`);
+  proc.on("exit", (code, signal) => note(`VS Code process exited (code ${code}, signal ${signal})`));
+  page.on("crash", () => note("the workbench renderer crashed"));
+  page.on("close", () => note("the workbench page closed"));
+  browser.on("disconnected", () => note("the debugging connection closed"));
   app.host = (op, fields = {}, timeout = 30000) => host(app, op, fields, timeout);
   for (let i = 0; i < 60; i++) { try { await app.host("trusted", {}, 2000); break; } catch { await sleep(500); } }
   return app;

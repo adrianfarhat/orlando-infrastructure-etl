@@ -2,7 +2,7 @@
 //
 // A document open in this window is only ever changed through the editor (PR B2a). Documents that
 // are not open are offered as one update, written by the design tooling's own `refresh-blocks`
-// command (src/commands.js): every listed document, or none, with a durable record from which an
+// command (src/commands.js): every listed document, or rolled back, with a durable record from which an
 // interrupted update is completed or undone. Recovery is always the person's explicit choice:
 // nothing is preselected, each file's current state and what each action would do are shown
 // first, and dismissing a notification or closing the panel never removes a record (D2, D8).
@@ -44,6 +44,22 @@ function publishAll() {
 }
 let soon = null;
 const publishSoon = () => { clearTimeout(soon); soon = setTimeout(publishAll, 100); };
+// Records of windows on this computer whose process has ended are removed here (the design tooling
+// cannot check processes, and never ignores a record because of its age: a window that stops
+// responding may be suspended or hung with unsaved changes). Done at the start, every minute and
+// before every listing, so a crashed window does not hold its documents for longer than needed.
+const SWEEP_EVERY = 12;                                           // heartbeats (5 s each)
+let beats = 0;
+function sweepAll() {
+  for (const root of roots()) {
+    try { const gone = presence.sweep(root, windowId); if (gone.length) deps.log(`[presence] removed the records of ended windows: ${gone.join(", ")}`); }
+    catch (err) { deps.log(`[presence] ${root}: records of ended windows not checked (${err.message})`); }
+  }
+}
+function heartbeatTick() {
+  publishAll();
+  if (++beats % SWEEP_EVERY === 0) sweepAll();
+}
 
 // ------------------------------------------------------------------ unresolved records (E16)
 function isHeld(root, rel) {
@@ -89,6 +105,7 @@ async function refreshHeld(root, { offer = true } = {}) {
 function openHere(root) { return new Set(presence.openDocuments(vscode, root).map((d) => key(d.path))); }
 
 async function listClosed(root) {
+  sweepAll();
   const r = await deps.ask(root, "affected", { window: windowId }, false);
   const here = openHere(root);
   const eligible = [], excluded = [];
@@ -254,9 +271,9 @@ function activate(context, d) {
     vscode.commands.registerCommand("featureDesigner.resolveUpdate", () => showRecovery()),
     { dispose: () => { clearInterval(heartbeat); for (const r of roots()) presence.remove(r, windowId); } },
   );
-  for (const r of roots()) presence.sweep(r, windowId);
+  sweepAll();
   publishAll();
-  heartbeat = setInterval(publishAll, presence.HEARTBEAT_MS);
+  heartbeat = setInterval(heartbeatTick, presence.HEARTBEAT_MS);
   setTimeout(() => { for (const r of roots()) refreshHeld(r).catch((err) => deps.log(`[updates] ${err.message}`)); }, 1500);
   return {
     windowId: () => windowId,

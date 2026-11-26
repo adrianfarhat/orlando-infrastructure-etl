@@ -101,9 +101,12 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
   - **closed documents** (not open in any editor of this window) are offered in the status strip:
     **Update…** lists each document, the diagrams refreshed and the conflicts left alone, and
     the documents left out (open in this window, open in another Feature Designer window, or
-    part of an interrupted update). Confirming writes them on disk as **one update: all of them,
-    or none**. If anything changed since the list was shown, nothing is written and the new
-    list is shown. Also **Feature Designer: Update Closed Documents…**;
+    part of an interrupted update). Confirming writes them on disk as **one recoverable
+    update**: if a document cannot be written, the documents already written are put back. It is
+    not an atomic multi-file write: if the update is interrupted, or another program changes a
+    document meanwhile (that document is then left alone), it is reported as partly done and the
+    record lets you complete or undo it. If anything changed since the list was shown, nothing is
+    written and the new list is shown. Also **Feature Designer: Update Closed Documents…**;
   - **Feature Designer: Check Diagram Sources** checks again when a change was missed.
 - **Review…** on a conflicting block shows both versions and the differences, then:
   - **Discard manual change** restores the generated copy here (one undoable edit; not saved;
@@ -137,9 +140,12 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
   `designs/diagrams/.transactions/windows/`, every 5 seconds; an update never writes a document
   a window that may still be running lists, including this one (checked again by the update
   itself). Not detected: a VS Code window that does not run Feature Designer (another
-  installation, Restricted Mode, the repository opened as a subfolder of the workspace folder),
-  another editor, or a window asleep or unresponsive for more than two minutes. VS Code itself
-  reports that a file changed on disk and asks before saving over it; other editors may not.
+  installation, Restricted Mode, the repository opened as a subfolder of the workspace folder)
+  or another editor. VS Code itself reports that a file changed on disk and asks before saving
+  over it; other editors may not. A Feature Designer window that stops responding (suspended,
+  asleep or hung) keeps protecting its documents (shown as "has not responded for N min") until
+  it closes, until a window on the same computer verifies its process has ended, or until
+  `python -m tools.design transaction forget-window NAME --confirm` removes its record.
 - **Status strip:** stays visible under the toolbar while you scroll: how many diagrams are out
   of date, in conflict or have a problem, with **Previous** / **Next** to go to each.
 - **Restricted Mode:** in an untrusted workspace Feature Designer shows a notice only; it
