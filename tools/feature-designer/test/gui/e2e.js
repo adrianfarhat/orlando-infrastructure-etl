@@ -1228,7 +1228,7 @@ async function prB2b1Steps() {
     const dir = path.join(WS, TX, "windows"), other = path.join(dir, "00000000000000ab.json");
     // a live process on this computer (this test runner): the extension removes the records of ended processes
     const beat = () => fs.writeFileSync(other, JSON.stringify({ format: "feature-designer-window", version: 1, window: "00000000000000ab", pid: process.pid,
-      host: require("os").hostname(), heartbeat: Date.now() / 1000, documents: [{ path: CLOSED[2], dirty: true }] }));
+      host: require("os").hostname(), platform: process.platform, heartbeat: Date.now() / 1000, documents: [{ path: CLOSED[2], dirty: true }] }));
     beat(); const keep = setInterval(beat, 3000);
     try {
       const disk2 = readWs(CLOSED[2]);
@@ -1253,7 +1253,7 @@ async function prB2b1Steps() {
     const old = Date.now() / 1000 - 600;
     const write = (file, id, pid, doc) => {
       fs.writeFileSync(file, JSON.stringify({ format: "feature-designer-window", version: 1, window: id, pid,
-        host: require("os").hostname(), heartbeat: old, documents: [{ path: doc, dirty: true }] }));
+        host: require("os").hostname(), platform: process.platform, heartbeat: old, documents: [{ path: doc, dirty: true }] }));
       fs.utimesSync(file, new Date(old * 1000), new Date(old * 1000));
     };
     write(hung, "00000000000000ac", process.pid, CLOSED[2]);        // this test runner: running, but silent for 10 min
