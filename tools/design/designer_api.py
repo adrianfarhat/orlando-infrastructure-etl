@@ -56,6 +56,17 @@ Requests (all carry "version": 1 and "op"):
     given unsaved texts instead of those files on disk; and, in `diagram_index`, the same for
     designs/index/diagram-index.md (from the files on disk; null when there is nothing to index).
 
+- {"op": "affected", "window": <this window's ID, optional>}
+    the closed-document update (T-97 PR B2b-1): every feature document on disk with diagram
+    blocks `refresh-blocks` would refresh, with its SHA-256, the IDs, the conflicts it leaves
+    alone and why it is excluded ('' when it can be updated: open in another Feature Designer
+    window, or held by an interrupted update); `sources_token`; windows whose list cannot be read.
+- {"op": "transactions"}
+    every unresolved update record (E16) with each file's current state, what Complete, Undo
+    and Abandon would do, and the token that confirms a decision on exactly that state.
+Requests that propose edits to a document (insert, refresh, remove-block, reconcile) are refused
+while that document is part of an unresolved update, or while an update record cannot be read.
+
 Edits are {"start": s, "end": e, "lines": [...]}: replace lines s..e-1 (0-based, counted by
 "\\n" exactly like the T-96 scanner; e == s inserts) with `lines` (no line endings; the
 editor uses the document's own line ending, also reported as `newline`). Edits in one
@@ -75,7 +86,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from . import diagrams, ownership
+from . import diagrams, ownership, transactions
 from .architecture import catalog, documents
 from .ids import DIAGRAM_ID
 from .workspace import (FEATURES, INDEX, SECTIONS, DesignError, _fence_step, discover, marker_span, render_index)
@@ -443,6 +454,17 @@ def _text(value, name: str = "text") -> str:
     return value
 
 
+def _not_held(root: Path, rel: str) -> None:
+    """Requirement 10: no edit is proposed for a document held by an unresolved update."""
+    hold, bad = transactions.held(root)
+    if bad:
+        raise Refused(f"an update record cannot be read ({', '.join(bad)}); resolve it first "
+                      "(Feature Designer: Resolve Interrupted Update) (E16)")
+    if transactions._key(rel) in {transactions._key(h) for h in hold}:
+        raise Refused(f"{rel} is part of an interrupted update of closed documents; resolve it first "
+                      "(Feature Designer: Resolve Interrupted Update) (E16)")
+
+
 def handle(root: Path, request) -> tuple[dict, int]:
     """(response, exit code) for one request."""
     try:
@@ -451,6 +473,8 @@ def handle(root: Path, request) -> tuple[dict, int]:
         if request.get("version") != VERSION:
             raise BadRequest(f"unsupported request version {request.get('version')!r} (this tool speaks {VERSION})")
         op = request.get("op")
+        if op in ("insert", "refresh", "remove-block", "reconcile"):
+            _not_held(root, _feature_path(root, request.get("path")))
         if op == "library":
             result = library(root)
         elif op == "insert":
@@ -487,9 +511,16 @@ def handle(root: Path, request) -> tuple[dict, int]:
             if not isinstance(texts, dict):
                 raise BadRequest("`texts` must map feature paths to their unsaved text")
             result = feature_index(root, {_feature_path(root, k): _text(v, k) for k, v in texts.items()})
+        elif op == "affected":
+            window = request.get("window", "")
+            if not isinstance(window, str) or not re.fullmatch(r"[0-9a-f]{16}|", window):
+                raise BadRequest("`window` must be a window ID")
+            result = transactions.affected(root, window)
+        elif op == "transactions":
+            result = {"records": transactions.status(root)}
         else:
             raise BadRequest(f"unknown op {op!r} (library, insert, refresh, resolve, blocks, diagram-name, "
-                             "remove-block, reconcile, feature-index)")
+                             "remove-block, reconcile, feature-index, affected, transactions)")
         return {"version": VERSION, "op": op, "ok": True, **result}, EXIT_OK
     except Refused as exc:
         return {"version": VERSION, "ok": False, "error": {"code": "refused", "message": str(exc)}}, EXIT_REFUSED

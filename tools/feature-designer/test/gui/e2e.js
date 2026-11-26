@@ -1,4 +1,4 @@
-// Feature Designer (T-97 Phase 2, PR B1) end-to-end test in the pinned VS Code 1.146 test build, with
+// Feature Designer (T-97 Phase 2, PR B1, B2a, B2b-1) end-to-end test in the pinned VS Code 1.146 test build, with
 // real pointer and keyboard input (Playwright over CDP). Writes evidence to test/gui/.run/.
 "use strict";
 const fs = require("fs");
@@ -23,7 +23,11 @@ function rec(name, ok, detail) {
 }
 async function snap(name) { await app.page.screenshot({ path: path.join(EV, `${String(++shot).padStart(2, "0")}-${name}.png`) }).catch(() => {}); }
 async function step(name, fn) {
-  try { await fn(); } catch (e) { rec(name, false, String(e.message || e).split("\n")[0]); await snap(`FAILED-${name.replace(/[^a-z0-9]+/gi, "-")}`); await app.page.keyboard.press("Escape").catch(() => {}); }
+  try { await fn(); } catch (e) {
+    rec(name, false, String(e.message || e).split("\n")[0]);
+    if (app && app.events && app.events.length) console.log(`  window events: ${app.events.join("; ")}`);   // a lost window (run 14)
+    await snap(`FAILED-${name.replace(/[^a-z0-9]+/gi, "-")}`); await app.page.keyboard.press("Escape").catch(() => {});
+  }
 }
 const text = () => f.evaluate(() => window.FD_DEBUG.state.text);
 const version = () => f.evaluate(() => window.FD_DEBUG.state.version);
@@ -66,6 +70,16 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
   fs.rmSync(EV, { recursive: true, force: true }); fs.mkdirSync(EV, { recursive: true });
   fixture();
   app = await launch({ trust: false, markSharp: true });
+  if (process.env.FD_GUI_ONLY === "b2b1") {               // a shorter run of the PR B2b-1 steps alone (diagnosis)
+    await app.host("setGlobal", { section: "featureDesigner", key: "pythonPath", value: PY });
+    py(["-m", "tools.design", "new", "diagram", "--feature", "FD-0001", "--title", "Pipe flow", "--category", "process"]);
+    await prB2b1Steps();
+    await saveLog();
+    await close(app);
+    const failed = results.filter((r) => !r.ok);
+    console.log(`\n${results.length - failed.length} of ${results.length} checks passed`);
+    process.exit(failed.length ? 1 : 0);
+  }
 
   // P2-A: no interpreter configured → the .venv interpreter is suggested; saved only after confirmation
   await step("P2-A interpreter suggestion and confirmation", async () => {
@@ -409,6 +423,7 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
 
   await prB1Steps();
   await prB2aSteps();
+  await prB2b1Steps();
 
   await close(app); app = null;
 
@@ -1017,6 +1032,375 @@ async function prB2aSteps() {
 
   await step("S15 safety", async () => {
     rec("S15 docs/architecture/ unchanged byte for byte through every PR B2a step", archHash() === archBefore);
+  });
+}
+
+/** Keep the Feature Designer log of this VS Code session in the evidence folder (the profile is replaced on relaunch). */
+async function saveLog() {
+  const logs = path.join(RUN, "user", "logs");
+  const found = [];
+  const walk = (d) => { for (const n of fs.existsSync(d) ? fs.readdirSync(d) : []) { const q = path.join(d, n); if (fs.statSync(q).isDirectory()) walk(q); else if (n.endsWith("Feature Designer.log")) found.push(q); } };
+  walk(logs);
+  for (const q of found) fs.appendFileSync(path.join(EV, "feature-designer.log"), `==== ${q}\n${fs.readFileSync(q, "utf8")}\n`);
+}
+// ---------------------------------------------------------------------------------------- PR B2b-1
+const { spawn } = require("child_process");
+const CLOSED = [];
+const TX = "designs/diagrams/.transactions";
+const readWs = (rel) => fs.readFileSync(path.join(WS, rel), "utf8");
+const SETUP_CLOSED = `
+import json, os, sys
+sys.path.insert(0, os.getcwd())
+from pathlib import Path
+from tools.design import designer_api
+from tools.design.workspace import new_feature
+root = Path(".").resolve()
+out = []
+for name in sys.argv[1:]:
+    f = new_feature(root, name)
+    text = (root / f.path).read_text(encoding="utf-8")
+    lines = text.split("\\n")
+    i = next(n for n, l in enumerate(lines) if l.startswith("- **Desired outcome:**"))
+    while lines[i].strip():
+        i += 1
+    r, _ = designer_api.handle(root, {"version": 1, "op": "insert", "path": f.path, "text": text, "at": i, "diagram_id": "FD-0001-D1"})
+    for e in reversed(r["edits"]):
+        lines[e["start"]:e["end"]] = e["lines"]
+    (root / f.path).write_bytes(r["newline"].join(lines).encode("utf-8"))
+    out.append(f.path)
+print(json.dumps(out))
+`;
+let srcLabel = 0;
+/** Change the owned source's second node label (the closed documents' FD-0001-D1 blocks become out of date). */
+function changeSource() {
+  const p = path.join(WS, OWN_SRC), s = fs.readFileSync(p, "utf8");
+  const label = `Closed ${++srcLabel}`;
+  const next = s.replace(/B\["[^"]*"\]/, `B["${label}"]`);
+  if (next === s) throw new Error("no B node in the source");
+  fs.writeFileSync(p, next);
+  return label;
+}
+const records = () => { try { return JSON.parse(py(["-m", "tools.design", "transaction", "status", "--json"])).records; } catch { return null; } };
+async function panelFrame(kind, timeout = 20000) {
+  return waitFor(async () => {
+    for (const fr of app.page.frames())
+      if (await fr.evaluate((k) => { const m = document.querySelector(`#main[data-kind="${k}"]`); return !!m && m.children.length > 0; }, kind).catch(() => false)) return fr;
+    return null;
+  }, timeout);
+}
+const resultOf = (pf) => waitFor(() => pf.evaluate(() => { const r = document.querySelector("#result"); return r ? `${r.className}|${r.innerText}` : ""; }), 60000);
+async function clearResult(pf) { await pf.evaluate(() => { const r = document.querySelector("#result"); if (r) r.remove(); }); }
+async function toast(re, ms = 15000) {
+  return waitFor(async () => {
+    const texts = await app.page.locator(".notification-toast .notification-list-item-message").allInnerTexts().catch(() => []);
+    return texts.find((t) => re.test(t)) || "";
+  }, ms);
+}
+async function openUpdatePanel(expectRow) {
+  const row = await waitFor(async () => { const r = await stripRow("closed"); return r && (!expectRow || expectRow.test(r)) ? r : ""; }, 25000);
+  await f.locator("#strip .update-closed").click();
+  const pf = await panelFrame("update");
+  // the panel may still show the previous list: wait for the new one (enabled Update); GUI run fix3-1, S10b
+  await waitFor(() => pf.evaluate(() => { const b = document.querySelector(".confirm-update"); return !!b && !b.disabled; }), 15000);
+  return { row, pf };
+}
+const listedIn = (pf) => pf.evaluate(() => [...document.querySelectorAll("table.docs tbody tr td:first-child")].map((td) => td.textContent));
+const notIncluded = (pf) => pf.evaluate(() => [...document.querySelectorAll("ul.excluded li")].map((li) => li.textContent));
+/** `index` on disk, with the open document saved first (never written under an unsaved buffer). */
+async function indexNow() { if ((await doc(CA)) && (await doc(CA)).isDirty) { await app.host("save", { path: CA }); await sleep(600); } py(["-m", "tools.design", "index"]); await sleep(600); }
+async function backToDesigner() {                          // condition analysis's view in front (a panel may cover it)
+  await app.host("openWith", { path: CA, viewType: "featureDesigner.editor", column: 1 }); await sleep(400);
+  f = await designerFrame(app.page);
+}
+async function crashUpdate(point) {
+  await app.host("designerCall", { fn: "setDesignFault", args: [point, "$root"] });
+  try {
+    changeSource();
+    const { pf } = await openUpdatePanel();
+    await clearResult(pf);
+    await pf.locator(".confirm-update").click();
+    const r = await resultOf(pf);
+    await pf.locator(".cancel").click(); await sleep(300);
+    return r;
+  } finally { await app.host("designerCall", { fn: "setDesignFault", args: [""] }); }
+}
+
+async function prB2b1Steps() {
+  const archBefore = archHash();
+  await step("B2b-1 setup", async () => {
+    if ((await doc(CA)) && (await doc(CA)).isDirty) await app.host("save", { path: CA });
+    await app.host("closeAll"); await dialogDismissIfAny();
+    if ((await app.host("tabs")).length) { await app.host("revert", { path: FEATURE }); await app.host("revert", { path: CA }); await app.host("closeAll"); await dialogDismissIfAny(); }
+    const script = path.join(RUN, "setup-closed.py");
+    fs.writeFileSync(script, SETUP_CLOSED);
+    const out = py([script, "Closed one", "Closed two", "Closed three"]);
+    CLOSED.push(...JSON.parse(out.trim().split(/\r?\n/).pop()));
+    py(["-m", "tools.design", "index"]);
+    await openCa();
+    const ok = CLOSED.length === 3 && CLOSED.every((c) => markerAt(readWs(c).split(/\r?\n/), "FD-0001-D1") > 0) && (records() || []).length === 0;
+    rec("B2b-1 setup: three closed feature documents with a block of FD-0001-D1, all current; condition analysis open in Feature Designer", ok, CLOSED);
+  });
+
+  await step("S10 update closed documents", async () => {
+    const caDisk = readWs(CA);
+    const label = changeSource();
+    const { row, pf } = await openUpdatePanel(/3 other documents/);
+    const listed = await listedIn(pf), skipped = await notIncluded(pf);
+    await snap("b2b1-update-panel");
+    await pf.locator(".confirm-update").click();
+    const result = await resultOf(pf);
+    await snap("b2b1-updated");
+    const after = CLOSED.map(readWs);
+    rec("S10 the strip offers the closed documents; Update lists each one and writes all of them (one update); the open document is left to the editor; no record is left",
+        /3 other documents \(not open\) have out-of-date diagrams/.test(row || "") && JSON.stringify([...listed].sort()) === JSON.stringify([...CLOSED].sort()) &&
+        (markerAt(caDisk.split(/\r?\n/), "FD-0001-D1") < 0 || skipped.some((s) => s.startsWith(CA) && /open in this window/.test(s))) && /result ok/.test(result || "") &&
+        after.every((t) => t.includes(`B["${label}"]`)) && readWs(CA) === caDisk && (records() || [1]).length === 0,
+        { row: (row || "").slice(0, 100), listed, skipped, result: (result || "").slice(0, 120) });
+    await pf.locator(".cancel").click(); await sleep(500);
+  });
+
+  await step("S10b a document changed between listing and confirming: nothing is written", async () => {
+    await backToDesigner();
+    const label = changeSource();
+    const { pf } = await openUpdatePanel();
+    const before = CLOSED.map(readWs);
+    fs.appendFileSync(path.join(WS, CLOSED[0]), "\nA hand edit made after the list was shown.\n");
+    const edited = readWs(CLOSED[0]);
+    await pf.locator(".confirm-update").click();
+    const result = await resultOf(pf);
+    const unchanged = readWs(CLOSED[0]) === edited && readWs(CLOSED[1]) === before[1] && readWs(CLOSED[2]) === before[2];
+    await clearResult(pf);
+    await waitFor(() => pf.evaluate(() => { const b = document.querySelector(".confirm-update"); return b && !b.disabled; }), 10000);
+    await pf.locator(".confirm-update").click();                              // the new list, confirmed again
+    const again = await resultOf(pf);
+    rec("S10b a document changed after the list was shown: nothing is written and the new list is shown; confirming it updates every document and keeps the hand edit",
+        /result fail/.test(result || "") && /changed since the list was shown/.test(result || "") && unchanged &&
+        /result ok/.test(again || "") && CLOSED.every((c) => readWs(c).includes(`B["${label}"]`)) && readWs(CLOSED[0]).includes("A hand edit made after"),
+        { result: (result || "").slice(0, 140), again: (again || "").slice(0, 80) });
+    await pf.locator(".cancel").click(); await sleep(500);
+  });
+
+  await step("S10c a document open in this window is updated in the editor, not on disk", async () => {
+    await backToDesigner();
+    await app.host("openText", { path: CLOSED[1], column: 2 }); await sleep(800);
+    await backToDesigner();
+    const disk1 = readWs(CLOSED[1]);
+    const label = changeSource();
+    const { pf } = await openUpdatePanel(/2 other documents/);
+    const listed = await listedIn(pf), skipped = await notIncluded(pf);
+    await pf.locator(".confirm-update").click();
+    const result = await resultOf(pf);
+    rec("S10c a document open in a text editor tab of this window is not included (disk unchanged); the others are updated",
+        JSON.stringify(listed.sort()) === JSON.stringify([CLOSED[0], CLOSED[2]].sort()) && skipped.some((s) => s.startsWith(CLOSED[1]) && /open in this window/.test(s)) &&
+        /result ok/.test(result || "") && readWs(CLOSED[1]) === disk1 && readWs(CLOSED[0]).includes(`B["${label}"]`) && readWs(CLOSED[2]).includes(`B["${label}"]`),
+        { listed, skipped, result: (result || "").slice(0, 300), disk1Same: readWs(CLOSED[1]) === disk1, label,
+          c0: readWs(CLOSED[0]).includes(`B["${label}"]`), c2: readWs(CLOSED[2]).includes(`B["${label}"]`) });
+    await pf.locator(".cancel").click(); await sleep(400);
+    await indexNow();                                                         // bring the one left out up to date again
+    await openCa();
+  });
+
+  await step("S14 the registry lock held by a command-line command", async () => {
+    const holder = spawn(PY, ["-B", "-c", "import sys\nfrom pathlib import Path\nfrom tools.design import registry\nwith registry.lock(Path(sys.argv[1])):\n print('held', flush=True)\n sys.stdin.read()", WS],
+                         { cwd: WS, stdio: ["pipe", "pipe", "ignore"] });
+    try {
+      await new Promise((res, rej) => { holder.stdout.once("data", res); setTimeout(() => rej(new Error("the lock holder did not start")), 15000); });
+      const label = changeSource();
+      const { pf } = await openUpdatePanel();
+      const before = CLOSED.map(readWs);
+      await pf.locator(".confirm-update").click();
+      const result = await resultOf(pf);
+      const unchanged = CLOSED.every((c, i) => readWs(c) === before[i]);
+      holder.stdin.end();
+      await new Promise((res) => holder.once("exit", res));
+      await clearResult(pf);
+      await waitFor(() => pf.evaluate(() => { const b = document.querySelector(".confirm-update"); return b && !b.disabled; }), 10000);
+      await pf.locator(".confirm-update").click();
+      const again = await resultOf(pf);
+      rec("S14 while another diagram command holds the registry lock the update is refused (E12) and nothing is written; afterwards it succeeds",
+          /result fail/.test(result || "") && /E12/.test(result || "") && unchanged && /result ok/.test(again || "") && CLOSED.every((c) => readWs(c).includes(`B["${label}"]`)),
+          { result: (result || "").slice(0, 140) });
+      await pf.locator(".cancel").click(); await sleep(400);
+    } finally { try { holder.kill(); } catch { /* ended */ } }
+  });
+
+  await step("S14b a document another Feature Designer window has open is never written", async () => {
+    await backToDesigner();
+    const dir = path.join(WS, TX, "windows"), other = path.join(dir, "00000000000000ab.json");
+    // a live process on this computer (this test runner): the extension removes the records of ended processes
+    const beat = () => fs.writeFileSync(other, JSON.stringify({ format: "feature-designer-window", version: 1, window: "00000000000000ab", pid: process.pid,
+      host: require("os").hostname(), platform: process.platform, heartbeat: Date.now() / 1000, documents: [{ path: CLOSED[2], dirty: true }] }));
+    beat(); const keep = setInterval(beat, 3000);
+    try {
+      const disk2 = readWs(CLOSED[2]);
+      const label = changeSource();
+      const { row, pf } = await openUpdatePanel(/1 more is open in another window/);
+      const skipped = await notIncluded(pf);
+      await pf.locator(".confirm-update").click();
+      const result = await resultOf(pf);
+      rec("S14b a document listed as open (unsaved) by another window is excluded and never written; the strip says it is updated there",
+          skipped.some((s) => s.startsWith(CLOSED[2]) && s.includes(`VS Code window (process ${process.pid}) with unsaved changes`)) && /result ok/.test(result || "") &&
+          readWs(CLOSED[2]) === disk2 && readWs(CLOSED[0]).includes(`B["${label}"]`), { row: (row || "").slice(0, 120), skipped, result: (result || "").slice(0, 300),
+          disk2Same: readWs(CLOSED[2]) === disk2, c0: readWs(CLOSED[0]).includes(`B["${label}"]`) });
+      await pf.locator(".cancel").click(); await sleep(400);
+    } finally { clearInterval(keep); fs.rmSync(other, { force: true }); }
+    await indexNow();
+  });
+
+  await step("S14c a window that stopped responding keeps protecting its documents; an ended window's record is removed", async () => {
+    // pre-merge review: a suspended or hung window (process running, heartbeat old) may hold unsaved changes
+    await backToDesigner();
+    const dir = path.join(WS, TX, "windows"), hung = path.join(dir, "00000000000000ac.json"), ended = path.join(dir, "00000000000000ad.json");
+    const old = Date.now() / 1000 - 600;
+    const write = (file, id, pid, doc) => {
+      fs.writeFileSync(file, JSON.stringify({ format: "feature-designer-window", version: 1, window: id, pid,
+        host: require("os").hostname(), platform: process.platform, heartbeat: old, documents: [{ path: doc, dirty: true }] }));
+      fs.utimesSync(file, new Date(old * 1000), new Date(old * 1000));
+    };
+    write(hung, "00000000000000ac", process.pid, CLOSED[2]);        // this test runner: running, but silent for 10 min
+    write(ended, "00000000000000ad", 999999, CLOSED[1]);            // no such process: its record is swept
+    try {
+      const disk2 = readWs(CLOSED[2]);
+      const label = changeSource();
+      const { row, pf } = await openUpdatePanel(/1 more is open in another window/);
+      const skipped = await notIncluded(pf);
+      await pf.locator(".confirm-update").click();
+      const result = await resultOf(pf);
+      rec("S14c the silent window's document is excluded (not responding) and never written; the ended window's record is removed and its document updated",
+          skipped.some((s) => s.startsWith(CLOSED[2]) && /has not responded for 10 min/.test(s)) && /result ok/.test(result || "") &&
+          readWs(CLOSED[2]) === disk2 && readWs(CLOSED[1]).includes(`B["${label}"]`) && !fs.existsSync(ended) && fs.existsSync(hung),
+          { row: (row || "").slice(0, 120), skipped, result: (result || "").slice(0, 300), disk2Same: readWs(CLOSED[2]) === disk2,
+            c1: readWs(CLOSED[1]).includes(`B["${label}"]`), endedGone: !fs.existsSync(ended), hungKept: fs.existsSync(hung) });
+      await pf.locator(".cancel").click(); await sleep(400);
+    } finally { fs.rmSync(hung, { force: true }); fs.rmSync(ended, { force: true }); }
+    await indexNow();
+  });
+
+  await step("S16 an update interrupted part-way: explicit recovery, nothing preselected", async () => {
+    await backToDesigner();
+    const before = CLOSED.map(readWs);
+    const result = await crashUpdate("after-replace:1");
+    const recs = records() || [];
+    const offer = await toast(/update of closed feature documents was interrupted/);
+    await snap("b2b1-interrupted");
+    await app.host("command", { id: "notifications.clearAll" }); await sleep(800);    // dismissing keeps the record (D8)
+    const kept = (records() || []).length === 1;
+    // requirement 10: a document held by the record is not refreshed, even clean and open only in Feature Designer
+    const heldDoc = recs.length ? recs[0].files.find((x) => x.state === "original").path : CLOSED[1];
+    await app.host("openWith", { path: heldDoc, viewType: "featureDesigner.editor", column: 2 });
+    const fh = await waitFor(async () => {                                        // the view of that document (not condition analysis)
+      for (const fr of app.page.frames()) if (await fr.evaluate((r) => !!window.FD_DEBUG && window.FD_DEBUG.state.rel === r, heldDoc).catch(() => false)) return fr;
+      return null;
+    }, 20000);
+    f = fh;
+    const heldRow = await waitFor(() => stripRow("held"), 15000);
+    const noRefreshNow = await f.evaluate(() => !document.querySelector("#strip .refresh-now"));
+    await app.host("command", { id: "featureDesigner.checkSources" });           // a sync that would refresh a clean document
+    await sleep(2500);
+    const notRefreshed = (await doc(heldDoc)).text === readWs(heldDoc) && !(await doc(heldDoc)).isDirty;
+    await snap("b2b1-held");
+    await app.host("command", { id: "featureDesigner.resolveUpdate" });
+    let pf = await panelFrame("recovery");
+    await waitFor(() => pf.evaluate(() => !!document.querySelector(".record")), 10000);
+    const blockedOpen = await pf.evaluate(() => !!document.querySelector(".choice-complete") && document.querySelector(".choice-complete").disabled &&
+                                                /close .* first/.test(document.querySelector(".decide").innerText));
+    await pf.locator(".cancel").last().click(); await sleep(300);
+    await openCa();                                                               // the held document is closed again
+    await sleep(1500);                                                            // this window's open-document list is published
+    await app.host("command", { id: "featureDesigner.resolveUpdate" });
+    pf = await panelFrame("recovery");
+    await waitFor(() => pf.evaluate(() => !!document.querySelector(".record") && !document.querySelector(".choice-complete").disabled), 15000);
+    const ui = await pf.evaluate(() => ({ checked: [...document.querySelectorAll('input[type="radio"]')].filter((x) => x.checked).length,
+      confirmDisabled: document.querySelector(".confirm").disabled, states: [...document.querySelectorAll("table.files tbody tr td:last-child")].map((td) => td.textContent),
+      ackDisabled: document.querySelector(".abandon-ack").disabled }));
+    await snap("b2b1-recovery-panel");
+    await pf.locator(".choice-complete").check();
+    const label = await pf.evaluate(() => ({ text: document.querySelector(".confirm").textContent, disabled: document.querySelector(".confirm").disabled }));
+    await pf.locator(".confirm").click();
+    const done = await resultOf(pf);
+    const known = before.map((b, i) => readWs(CLOSED[i]));
+    rec("S16 interrupted update: reported as such; dismissing the notification keeps the record; a held document is not refreshed; recovery is refused while one of its documents is open",
+        /result fail/.test(result || "") && recs.length === 1 && !!offer && kept && /interrupted update of closed documents/.test(heldRow || "") && noRefreshNow && notRefreshed && blockedOpen,
+        { result: (result || "").slice(0, 100), files: recs.length && recs[0].files.map((x) => x.state), offer: (offer || "").slice(0, 80),
+          kept, heldRow: (heldRow || "").slice(0, 80), noRefreshNow, notRefreshed, blockedOpen });
+    rec("S16b the recovery panel shows every file's state with nothing selected; Confirm stays disabled until an action is chosen; Complete finishes the update and removes the record",
+        ui.checked === 0 && ui.confirmDisabled && ui.ackDisabled && ui.states.filter((s) => /^Updated/.test(s)).length === 1 && ui.states.filter((s) => /^Not updated/.test(s)).length === 2 &&
+        label.text === "Complete the update" && !label.disabled && /result ok/.test(done || "") && (records() || [1]).length === 0 &&
+        known.every((t) => t.includes(`B["Closed ${srcLabel}"]`)), { ui, done: (done || "").slice(0, 80) });
+    await pf.locator(".cancel").last().click(); await sleep(400);
+  });
+
+  await step("S17 a corrupted record: never used, only an informed Abandon", async () => {
+    await backToDesigner();
+    await crashUpdate("after-replace:2");
+    const recs = records() || [];
+    const now = CLOSED.map(readWs);
+    const jp = path.join(WS, TX, recs[0].id, "journal.json");
+    const damaged = fs.readFileSync(jp, "utf8").replace('"state": "committing"', '"state": "prepared"');
+    if (!damaged.includes('"state": "prepared"')) throw new Error("the record has no committing state to damage");
+    fs.writeFileSync(jp, damaged);                                                // damaged: the checksum no longer matches
+    await app.host("command", { id: "notifications.clearAll" });
+    await app.host("command", { id: "featureDesigner.resolveUpdate" });
+    const pf = await panelFrame("recovery");
+    await waitFor(() => pf.evaluate(() => /cannot be trusted/.test(document.body.innerText)), 15000);
+    const ui = await pf.evaluate(() => ({ complete: document.querySelector(".choice-complete").disabled, undo: document.querySelector(".choice-undo").disabled,
+                                         abandon: document.querySelector(".choice-abandon").disabled }));
+    await pf.locator(".choice-abandon").check();
+    const beforeAck = await pf.evaluate(() => document.querySelector(".confirm").disabled);
+    await pf.locator(".abandon-ack").check();
+    const afterAck = await pf.evaluate(() => document.querySelector(".confirm").disabled);
+    await snap("b2b1-corrupt-abandon");
+    py(["-m", "tools.design", "registry", "unlock", "--confirm"]);                 // the ended update's lock, as a person would
+    const blocked = py(["-m", "tools.design", "index"]);
+    await pf.locator(".confirm").click();
+    const done = await resultOf(pf);
+    rec("S17 a damaged record cannot be completed or undone; every writer refuses meanwhile; Abandon needs its own acknowledgement and changes no document",
+        ui.complete && ui.undo && !ui.abandon && beforeAck && !afterAck && /cannot be read/.test(blocked) && /result ok/.test(done || "") &&
+        (records() || [1]).length === 0 && CLOSED.every((c, i) => readWs(c) === now[i]), { ui, blocked: blocked.trim().slice(0, 120) });
+    await pf.locator(".cancel").last().click(); await sleep(400);
+    await indexNow();
+  });
+
+  await step("S16c restart recovery: an update interrupted by ending VS Code is offered at the next start; Undo restores every original", async () => {
+    await backToDesigner();
+    const before = CLOSED.map(readWs);
+    await app.host("designerCall", { fn: "setDesignFault", args: ["after-replace:2", "$root", "sleep"] });   // waits there
+    changeSource();
+    const { pf } = await openUpdatePanel();
+    const can = await waitFor(() => pf.evaluate(() => { const b = document.querySelector(".confirm-update"); return b && !b.disabled; }), 15000);
+    if (!can) console.log(`DEBUG S16c update panel: ${(await pf.evaluate(() => document.body.innerText)).slice(0, 800).replace(/\n/g, " | ")}`);
+    await pf.locator(".confirm-update").click();
+    const running = await waitFor(() => { const r = records(); return r && r.length && r[0].live ? r : null; }, 30000);
+    await saveLog();
+    await close(app); app = null;                                                  // VS Code ended hard, with the update in flight
+    for (const line of execFileSync("powershell", ["-NoProfile", "-Command",       // and the update process with it
+      "(Get-CimInstance Win32_Process -Filter \"name='python.exe'\" | Where-Object { $_.CommandLine -like '*refresh-blocks*' }).ProcessId"], { encoding: "utf8" }).split(/\s+/).filter(Boolean))
+      try { process.kill(Number(line)); } catch { /* gone */ }
+    await sleep(1500);
+    const mid = CLOSED.map(readWs);
+    app = await launch({ trust: false, markSharp: true });
+    await app.host("setGlobal", { section: "featureDesigner", key: "pythonPath", value: PY });
+    const offer = await toast(/update of closed feature documents was interrupted/, 30000);
+    await snap("b2b1-after-restart");
+    const review = app.page.locator(".notification-toast .monaco-button").filter({ hasText: "Review" }).first();
+    const clicked = await review.click({ timeout: 10000 }).then(() => true, () => false);
+    if (!clicked) { console.log(`DEBUG S16c toast buttons: ${await app.page.locator(".notifications-toasts").innerHTML().catch(() => "").then((h) => h.slice(0, 800))}`);
+                    await app.host("command", { id: "featureDesigner.resolveUpdate" }); }
+    const rf = await panelFrame("recovery");
+    await waitFor(() => rf.evaluate(() => !!document.querySelector(".record") && !document.querySelector(".choice-undo").disabled), 20000);
+    const checked = await rf.evaluate(() => [...document.querySelectorAll('input[type="radio"]')].filter((x) => x.checked).length);
+    await rf.locator(".choice-undo").check();
+    await rf.locator(".confirm").click();
+    const done = await resultOf(rf);
+    rec("S16c the update was running when VS Code ended; after the restart the interrupted update is offered; nothing is preselected; Undo restores every original exactly",
+        !!running && clicked && mid.every((t, i) => t === before[i] || t.includes("Closed ")) && !!offer && checked === 0 && /result ok/.test(done || "") &&
+        CLOSED.every((c, i) => readWs(c) === before[i]) && (records() || [1]).length === 0, { offer: (offer || "").slice(0, 80), done: (done || "").slice(0, 80), running: !!running, clicked, checked, midOk: mid.every((t, i) => t === before[i] || t.includes("Closed ")) });
+    await rf.locator(".cancel").last().click(); await sleep(300);
+    await app.host("designerCall", { fn: "setDesignFault", args: [""] });
+  });
+
+  await step("S15b safety", async () => {
+    rec("S15b docs/architecture/ unchanged byte for byte through every PR B2b-1 step", archHash() === archBefore);
   });
 }
 

@@ -24,19 +24,48 @@ function newDiagramArgs({ owner, title, category } = {}) {
   return ["new", "diagram", `--feature=${owner}`, `--title=${title}`, `--category=${category}`, "--json"];
 }
 
-/** Run `python -B -E -m tools.design <args> --root <root>` once and parse its JSON output. */
-function run({ python, root, args, timeoutMs = TIMEOUT_MS, execFileImpl = execFile }) {
+const FEATURE_DOC = /^designs\/features\/(?:[^\\/\0:]+\/)*[^\\/\0:]+\.md$/;   // no backslash, NUL or colon
+const HEX64 = /^[0-9a-f]{64}$/, HEX16 = /^[0-9a-f]{16}$/, RECORD_ID = /^tx-\d{8}T\d{6}Z-[0-9a-f]{8}$/;
+
+/** The arguments of `refresh-blocks` (T-97 PR B2b-1) for a confirmed list of closed documents. */
+function refreshBlocksArgs({ files, token } = {}) {
+  if (!Array.isArray(files) || !files.length || files.length > 200) throw new Error("no documents to update");
+  const args = ["refresh-blocks"];
+  for (const f of files) {
+    if (!f || typeof f.path !== "string" || !FEATURE_DOC.test(f.path) || f.path.split("/").some((x) => x === ".." || x === "."))
+      throw new Error("not a feature document path");
+    if (typeof f.sha256 !== "string" || !HEX64.test(f.sha256)) throw new Error("not a SHA-256");
+    args.push(`--file=${f.path}`, `--expect=${f.sha256}`);
+  }
+  if (typeof token !== "string" || !HEX16.test(token)) throw new Error("not a sources token");
+  return [...args, `--sources-token=${token}`, "--json"];
+}
+
+/** The arguments of `transaction complete|undo|abandon ID --confirm TOKEN` (an explicit decision, D2). */
+function transactionArgs({ action, id, token } = {}) {
+  if (!["complete", "undo", "abandon"].includes(action)) throw new Error("the action must be complete, undo or abandon");
+  if (typeof id !== "string" || !RECORD_ID.test(id)) throw new Error("not an update record ID");
+  if (typeof token !== "string" || !HEX16.test(token)) throw new Error("not a decision token");
+  return ["transaction", action, id, `--confirm=${token}`, "--json"];
+}
+
+/** Run `python -B -E -m tools.design <args> --root <root>` once and parse its JSON output. Exit code 1
+ *  with a JSON answer (a recovery that was only partly possible) resolves when `jsonOnProblems` is set. */
+function run({ python, root, args, timeoutMs = TIMEOUT_MS, execFileImpl = execFile, jsonOnProblems = false,
+               unsure = "it may or may not have created the diagram: run python -m tools.design check" }) {
   if (typeof python !== "string" || !python) return Promise.reject(new Error("no Python interpreter is configured"));
   if (typeof root !== "string" || !root) return Promise.reject(new Error("no repository root"));
   const argv = ["-B", "-E", "-m", "tools.design", ...args, "--root", root];
   const options = { cwd: root, windowsHide: true, shell: false, timeout: timeoutMs, maxBuffer: 1 << 20, encoding: "utf8" };
   return new Promise((resolve, reject) => {
     execFileImpl(python, argv, options, (err, stdout, stderr) => {
+      if (err && jsonOnProblems && err.code === 1) {
+        try { resolve(JSON.parse(String(stdout))); return; } catch { /* reported below */ }
+      }
       if (err) {
         const said = String(stderr || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() || "";
         const overflow = err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
         const stopped = !overflow && (err.killed || err.signal);
-        const unsure = "it may or may not have created the diagram: run python -m tools.design check";
         const message = overflow ? `the design tooling printed more output than expected and was stopped; ${unsure}`
           : stopped ? `the design tooling did not finish within ${Math.round(timeoutMs / 1000)} s and was stopped; ${unsure}`
           : said.replace(/^design: error: /, "") || `the design tooling failed (${err.code ?? err.message})`;
@@ -61,4 +90,21 @@ async function newDiagram(opts, fields) {
   return made;
 }
 
-module.exports = { newDiagram, newDiagramArgs, run, CATEGORIES, TIMEOUT_MS };
+const UNSURE_UPDATE = "it may or may not have updated documents: run python -m tools.design transaction status";
+
+/** Update the listed closed documents as one transaction; resolves to {ok, id, files}. */
+async function refreshBlocks(opts, fields) {
+  const r = await run({ ...opts, args: refreshBlocksArgs(fields), timeoutMs: 120000, unsure: UNSURE_UPDATE });
+  if (!r || r.ok !== true || !Array.isArray(r.files)) throw new Error("the design tooling returned an unexpected result");
+  return r;
+}
+
+/** Complete, Undo or Abandon one interrupted update; resolves to {ok, message, files, ...}. */
+async function resolveTransaction(opts, fields) {
+  const r = await run({ ...opts, args: transactionArgs(fields), timeoutMs: 120000, jsonOnProblems: true, unsure: UNSURE_UPDATE });
+  if (!r || typeof r.ok !== "boolean" || typeof r.message !== "string") throw new Error("the design tooling returned an unexpected result");
+  return r;
+}
+
+module.exports = { newDiagram, newDiagramArgs, refreshBlocks, refreshBlocksArgs, resolveTransaction, transactionArgs, run,
+                   CATEGORIES, TIMEOUT_MS };

@@ -27,8 +27,10 @@ const acknowledged = new Set();                  // document uris whose "also op
 const testFaults = { failNextInsertion: false, failNextReconcileDocument: false, autoRefreshDelayMs: 0 };
 const storm = new sync.StormGuard();             // C5: many sources changed at once
 const busy = new Set();                          // document uris being reconciled: never refreshed meanwhile
-let recoveryDir = null;
-const snapshots = new Map();                     // Show changes: read-only copies of the text, by id                          // durable records of Apply to source until it completes (C3)
+let recoveryDir = null;                          // durable records of Apply to source until it completes (C3)
+const snapshots = new Map();                     // Show changes: read-only copies of the text, by id
+const updates = require("./updates");            // PR B2b-1: closed documents and their recovery
+let upd = null;
 
 const log = (s) => output && output.appendLine(`${new Date().toISOString()} ${s}`);
 
@@ -172,6 +174,7 @@ async function syncOpenDocuments(root, { manual = false } = {}) {
     if (docRoot !== root) continue;
     await refreshOpenDocument(doc, { storm: isStorm, sources: count }).catch((err) => log(`[sync] ${relPath(root, doc.uri)}: ${err.message}`));
   }
+  if (upd) await upd.offerClosed(root);          // PR B2b-1: documents that are not open are offered, never written unasked
 }
 
 /** C1: automatic only for a clean document shown exclusively in Feature Designer, as one undoable
@@ -179,12 +182,15 @@ async function syncOpenDocuments(root, { manual = false } = {}) {
 async function refreshOpenDocument(doc, { storm: isStorm = false, sources = 0 } = {}) {
   const key = doc.uri.toString(), root = rootOf(doc.uri), rel = relPath(root, doc.uri);
   const version = doc.version;
+  // Requirement 10 (PR B2b-1): a document held by an interrupted update of closed documents is never refreshed
+  // (the design tooling refuses it too) until that update is completed, undone or abandoned.
+  if (upd && upd.isHeld(root, rel)) { postAll(key, { type: "heldNote", held: true }); log(`[sync] ${rel}: held by an interrupted update; not refreshed`); return "skip"; }
   const r = await ask(root, "refresh", { path: rel, text: doc.getText() }, false);
   if (!r.edits.length) { postAll(key, { type: "syncNote", note: null, kinds: ["manual"] }); return "none"; }
   const ids = sync.idsOfEdits(r.edits);
   // An unresolved partial Apply to source on this document is left for the user to resolve: an automatic
   // refresh would complete or, after a restore, overwrite the copy they wanted to apply (found in a GUI run).
-  const now = () => ({ busy: busy.has(key) || partialFor(root, rel), storm: isStorm, dirty: doc.isDirty, otherEditors: otherCustomEditors(doc.uri),
+  const now = () => ({ busy: busy.has(key) || partialFor(root, rel) || (!!upd && upd.isHeld(root, rel)), storm: isStorm, dirty: doc.isDirty, otherEditors: otherCustomEditors(doc.uri),
                        textEditor: textEditorOpen(doc.uri), designerViews: (panels.get(key) || new Set()).size });
   let d = sync.decide(now());
   if (d.action === "skip") return "skip";
@@ -403,6 +409,17 @@ class DesignerEditor {
         for (const r of listRecovery().filter((x) => x.root === root && x.document === rel))   // partial, or interrupted
           panel.webview.postMessage({ type: "partial", recovery: r.id, id: r.diagram, source: r.source,
                                       reason: r.reason || "it was interrupted (for example the window closed)" });
+        if (upd) {                                      // PR B2b-1: an interrupted update, and closed documents to update
+          if (upd.isHeld(root, rel)) panel.webview.postMessage({ type: "heldNote", held: true });
+          const note = upd.closedNote(root);
+          if (note) panel.webview.postMessage({ type: "closedNote", ...note });
+        }
+        return;
+      case "updateClosed":                            // PR B2b-1: the confirmation lists every document first
+        await upd.showUpdate(root);
+        return;
+      case "resolveUpdate":
+        await upd.showRecovery();
         return;
       case "library":
         try { panel.webview.postMessage({ type: "library", data: await ask(root, "library", {}) }); }
@@ -425,6 +442,8 @@ class DesignerEditor {
         if (!Number.isInteger(msg.version)) return;
         if (partialFor(root, rel)) throw refused("An Apply to source on this document did not complete: resolve it first (Update the block now or " +
           "Restore the original source in the strip, or Feature Designer: Resolve Interrupted Apply to Source).");
+        if (upd && upd.isHeld(root, rel)) throw refused("This document is part of an interrupted update of closed documents: resolve it first " +
+          "(Review… in the strip, or Feature Designer: Resolve Interrupted Update). Nothing was refreshed.");
         if (msg.version !== document.version) throw new StaleEditError("the document changed; nothing was refreshed (try again)");
         if (!(await confirmOtherEditors(document, "Refresh"))) return;
         const r = await ask(root, "refresh", { path: rel, text: document.getText() });
@@ -726,7 +745,9 @@ function activate(context) {
       if (answer) await recoveryAction(pick.id, choices[answer]).catch((e) => vscode.window.showErrorMessage(e.message));
     }),
     vscode.workspace.registerTextDocumentContentProvider("featuredesigner-now",         // Show changes: the text when it was asked for
-      { provideTextDocumentContent: (uri) => snapshots.get(uri.query) || "" }),
+      { provideTextDocumentContent: (uri) => (snapshots.has(uri.query) ? snapshots.get(uri.query)
+          : "This snapshot is no longer available: Feature Designer keeps the last 20, until the window closes.\n" +
+            "Nothing was changed. Use Show changes again in the document's strip.\n") }),   // B2a QA follow-up (D7)
     vscode.workspace.registerTextDocumentContentProvider("featuredesigner-saved",       // Show changes: the file as saved
       { provideTextDocumentContent: (uri) => {
           const file = vscode.Uri.file(uri.path).fsPath;
@@ -752,6 +773,7 @@ function activate(context) {
     }),
     { dispose: () => { for (const b of bridges.values()) b.dispose(); bridges.clear(); } });
   setTimeout(() => offerRecovery().catch((err) => log(`[recovery] ${err.message}`)), 1500);
+  upd = updates.activate(context, { ask, bridgeFor, log, rootOf, relPath, panels, postAll });
   // Hooks for the automated tests only: the process ID, a simulated crash, and fault injection
   // (failNextInsertion, failNextReconcileDocument, delayNextAutoRefresh). Each is inert unless called.
   return {
@@ -761,6 +783,15 @@ function activate(context) {
     failNextReconcileDocument: () => { testFaults.failNextReconcileDocument = true; return true; },   // Apply to source: the block edit fails once
     delayNextAutoRefresh: () => { testFaults.autoRefreshDelayMs = 2500; return true; },   // time to type before an automatic refresh applies
     pendingRecovery: () => listRecovery().map((r) => ({ id: r.id, state: r.state, source: r.source })),
+    // PR B2b-1: this window's ID, the documents held by interrupted updates, and the crash injection of the
+    // design tooling (DESIGN_TEST_FAULT, read by tools/design/transactions.py only for the named repository).
+    updates: upd,
+    setDesignFault: (point, root, mode) => {
+      if (!process.env.FD_TEST_CMD_DIR) return false;    // only under the GUI test launcher
+      if (point) { process.env.DESIGN_TEST_FAULT = point; process.env.DESIGN_TEST_FAULT_ROOT = root; if (mode) process.env.DESIGN_TEST_FAULT_MODE = mode; else delete process.env.DESIGN_TEST_FAULT_MODE; }
+      else for (const k of ["DESIGN_TEST_FAULT", "DESIGN_TEST_FAULT_ROOT", "DESIGN_TEST_FAULT_MODE"]) delete process.env[k];
+      return true;
+    },
   };
 }
 
@@ -778,6 +809,6 @@ function sourceWatchers() {
   });
 }
 
-function deactivate() { for (const b of bridges.values()) b.dispose(); bridges.clear(); }
+function deactivate() { updates.deactivate(); for (const b of bridges.values()) b.dispose(); bridges.clear(); }
 
 module.exports = { activate, deactivate };

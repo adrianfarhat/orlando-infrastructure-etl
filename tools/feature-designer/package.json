@@ -8,7 +8,7 @@
   "license": "UNLICENSED",
   "engines": { "vscode": "^1.90.0" },
   "main": "./src/extension.js",
-  "activationEvents": [],
+  "activationEvents": ["workspaceContains:designs/diagrams/registry.yml"],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
@@ -29,7 +29,9 @@
       { "command": "featureDesigner.selectPython", "title": "Feature Designer: Select Python Interpreter" },
       { "command": "featureDesigner.showLog", "title": "Feature Designer: Show Log" },
       { "command": "featureDesigner.checkSources", "title": "Feature Designer: Check Diagram Sources" },
-      { "command": "featureDesigner.recovery", "title": "Feature Designer: Resolve Interrupted Apply to Source" }
+      { "command": "featureDesigner.recovery", "title": "Feature Designer: Resolve Interrupted Apply to Source" },
+      { "command": "featureDesigner.updateClosedDocuments", "title": "Feature Designer: Update Closed Documents…" },
+      { "command": "featureDesigner.resolveUpdate", "title": "Feature Designer: Resolve Interrupted Update" }
     ],
     "configuration": {
       "title": "Feature Designer",

@@ -1,0 +1,28 @@
+body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground);
+       background: var(--vscode-editor-background); padding: 12px 24px 32px; max-width: 980px; }
+h1 { font-size: 1.4em; margin: 0.4em 0 0.6em; }
+h2 { font-size: 1.1em; margin: 1.4em 0 0.4em; }
+table { border-collapse: collapse; width: 100%; margin: 0.5em 0; }
+th, td { text-align: left; border-bottom: 1px solid var(--vscode-panel-border, #8884); padding: 4px 8px; vertical-align: top; }
+td:first-child { font-family: var(--vscode-editor-font-family); word-break: break-all; }
+.warn { color: var(--vscode-editorWarning-foreground, #c80); }
+.limit { opacity: 0.85; font-size: 0.92em; border-left: 3px solid var(--vscode-panel-border, #8886); padding-left: 8px; }
+.none { opacity: 0.8; }
+.record { border: 1px solid var(--vscode-panel-border, #8884); border-radius: 4px; padding: 4px 14px 12px; margin: 12px 0; }
+fieldset.decide { border: none; padding: 0; margin: 10px 0 4px; }
+legend { font-weight: 600; margin-bottom: 6px; }
+label.choice { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; margin: 6px 0; cursor: pointer; }
+label.choice .label { font-weight: 600; }
+label.choice .consequence { grid-column: 2; opacity: 0.9; }
+label.choice.disabled { opacity: 0.55; cursor: default; }
+label.ack { display: flex; gap: 8px; margin: 6px 0 0 0; font-size: 0.95em; }
+.actions { display: flex; gap: 8px; margin-top: 12px; }
+button { font: inherit; padding: 4px 12px; border: 1px solid var(--vscode-button-border, transparent); border-radius: 2px;
+         background: var(--vscode-button-background); color: var(--vscode-button-foreground); cursor: pointer; }
+button.cancel { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+button:disabled { opacity: 0.5; cursor: default; }
+button:focus-visible, input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.result { padding: 8px 12px; border-radius: 4px; margin: 8px 0 12px; }
+.result.ok { border-left: 4px solid var(--vscode-testing-iconPassed, #3a3); }
+.result.fail { border-left: 4px solid var(--vscode-editorError-foreground, #c33); }
+tr.st-changed td:last-child, tr.st-missing td:last-child { color: var(--vscode-editorWarning-foreground, #c80); }

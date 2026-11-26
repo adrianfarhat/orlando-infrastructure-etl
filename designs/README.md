@@ -46,6 +46,9 @@ Other commands:
 | `python -m tools.design registry adopt\|adopt-architecture\|relink\|retire …` | Change the diagram registry under its lock: register a source, register the architecture diagrams in place, move or retitle a diagram, retire one (see [Diagrams](#diagrams)) |
 | `python -m tools.design resolve <ID or alias>` | Show a diagram's authoritative source (JSON); writes nothing |
 | `python -m tools.design reconcile --file F --line N --discard\|--apply-to-source` | Resolve a diagram block that was edited by hand: shows the change, applies it only with `--confirm <token>` |
+| `python -m tools.design refresh-blocks --file F --expect SHA256 [...] --sources-token T` | Refresh the out-of-date diagram blocks of several closed feature documents as one recoverable update (not an atomic multi-file write: a failure rolls back what it wrote, an interruption leaves a record to complete or undo); refused if any changed since it was listed (used by the Feature Designer; see [Interrupted updates](#interrupted-updates-of-closed-documents)) |
+| `python -m tools.design transaction status\|complete\|undo\|abandon [ID] [--confirm TOKEN]` | Show or resolve an interrupted update (E16): each action shows its effect first and acts only with the `--confirm` token it prints |
+| `python -m tools.design transaction windows` / `transaction forget-window NAME [--confirm]` | List the Feature Designer window records (responding, not responding, unreadable) and the documents each protects; remove one that is not responding or unreadable, only with `--confirm` and only when that window is no longer open |
 | `python -m tools.design designer` | The Feature Designer's interface (T-97): one JSON request on stdin, one JSON response on stdout; it proposes edits and never writes a file (described in `tools/design/designer_api.py`) |
 
 Exit codes: 0 success; 1 problems found (`check`, `index --check`) or a refused Feature
@@ -356,6 +359,57 @@ told from a stale copy. `index` migrates such a block only when that loses nothi
 exactly what its source generates now, only its start marker gains the fingerprint. Any other
 content is preserved and reported as a conflict (E15, "generated before fingerprints"); resolve
 it with `reconcile` as above.
+
+#### Interrupted updates of closed documents
+
+`refresh-blocks` (the Feature Designer's **Update…** for closed documents) writes several
+feature documents as one update. Before changing anything it keeps, in
+`designs/diagrams/.transactions/<id>/` (ignored by Git), the exact original and updated bytes of
+every document, their SHA-256 hashes, the registry and source revisions they were computed from
+and the state of the update, each flushed to disk. Every document is checked again just before
+it is replaced; if one changed, the documents already replaced are put back. This is a
+recoverable transaction, not an atomic multi-file write: partial states are possible and are
+always reported. If a document this update wrote is changed by another program before the
+rollback reaches it, that document is left alone, the update is reported as **partly done**, and
+the record (with every original) is kept for an explicit Complete or Undo.
+
+If the update is interrupted (the process or the computer stopped), `check` reports E16 and
+nothing more is written to those documents until you decide:
+
+```text
+python -m tools.design transaction status
+python -m tools.design transaction complete tx-20261125T101500Z-0a1b2c3d
+python -m tools.design transaction undo tx-20261125T101500Z-0a1b2c3d
+python -m tools.design transaction abandon tx-20261125T101500Z-0a1b2c3d
+```
+
+Each shows every document's current state (updated, not updated, changed since, missing) and
+what it would do, and acts only when repeated with `--confirm <token>`; the token changes if
+anything changes meanwhile. **Complete** writes the updated text into the documents not yet
+updated (refused if the registry or a source changed since). **Undo** restores the originals of
+those already updated. Both are safe to repeat, also after an interruption of their own; a
+document that changed since, is missing, or is open in a Feature Designer window is never
+overwritten. **Abandon** removes the record and changes no document; a damaged record can only
+be abandoned, and until then no feature document is written by the design tooling.
+
+Every command that writes takes the registry lock (below) and leaves documents held by an
+unresolved update alone. The lock is never waited for, so two commands cannot deadlock. An update
+and its recovery refuse while a Git operation (merge, rebase, cherry-pick, revert, bisect) is in
+progress, and check again before each document is written; `index`, `new feature` and
+`reconcile` do not check for Git operations. **Limits:** a program that does not use this tooling
+can still change a document in the short moment (milliseconds) between its last check and its
+replacement, and that change is then replaced; Windows has no folder flush, so the record relies
+on the file system's journal; open documents are known only from Feature Designer windows: a VS
+Code window without it (another installation, Restricted Mode, the repository opened as a
+subfolder) or another editor is not seen.
+
+A Feature Designer window that stops responding (suspended, asleep or hung for more than two
+minutes) still protects the documents it listed, because it may hold unsaved changes: its record
+is never ignored because of its age. A record is removed by its window when it closes, by any
+Feature Designer window on the same computer once it has verified that the window's process has
+ended (at start, every minute and before listing closed documents), or explicitly with
+`transaction forget-window NAME --confirm` (refused while that window is responding). An
+unreadable window record blocks every update until it is replaced by its window or forgotten.
 
 **A stale registry lock.** Diagram commands hold `designs/diagrams/.registry.lock` while they run;
 a command that was killed can leave it behind, and every diagram command then refuses (E12). To
