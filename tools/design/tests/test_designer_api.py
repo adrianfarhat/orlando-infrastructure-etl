@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tools.design import architecture, designer_api, ownership, workspace
+from tools.design import architecture, designer_api, ownership, registry, workspace
 from tools.design.workspace import new_feature
 from tools.design.tests.test_design import Workspace, cmd
 
@@ -55,11 +55,13 @@ class Library(unittest.TestCase):
                               "```mermaid\nflowchart LR\n  A --> B\n```\n", encoding="utf-8")
             r, code = request(ws, op="library")
             self.assertEqual((code, r["ok"], r["version"]), (0, True, 1))
-            cat = architecture.catalog(architecture.documents(ws.root))
+            cat = architecture.architecture_diagrams(ws.root)           # T-97 M1: in every state
             flat = [d for g in r["architecture"] for d in g["diagrams"]]
-            self.assertEqual([d["aliases"] for d in flat], [[c.diagram_id] for c in cat])   # one entry per diagram
+            self.assertEqual([d["aliases"] for d in flat], [[c.alias] for c in cat])        # one entry per diagram
             self.assertEqual([d["id"] for d in flat], [f"AD-{n:04d}" for n in range(1, 15)])  # stable IDs (M0)
-            self.assertEqual({d["format"] for d in flat}, {"mermaid-embedded"})
+            reg = {e.diagram_id: e for e in registry.load(ws.root).entries}
+            self.assertEqual([(d["format"], d["path"]) for d in flat],                    # the registered source
+                             [(reg[d["id"]].format, reg[d["id"]].path) for d in flat])
             self.assertEqual(len(flat), 14)
             self.assertEqual([g["document"] for g in r["architecture"]], sorted({c.document for c in cat}))
             for d in flat:                                                              # Edit source lands on the fence

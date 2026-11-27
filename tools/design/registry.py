@@ -426,6 +426,35 @@ def problems(root: Path, features: list[Feature] | None = None, reg: Registry | 
         elif e is None:
             out.append(Problem(s.path, f"{s.diagram_id} is not registered: run `python -m tools.design registry adopt "
                                        f"{s.path} --category <category>` (E5)"))
+        elif e.format == "mermaid-embedded" and e.status == "active" and posixpath.dirname(s.path) == DOCUMENT_SOURCES:
+            out.append(Problem(s.path, f"holds {s.diagram_id}, which is still registered as embedded in {e.path}: "
+                                       f"extraction not finished; run `python -m tools.design registry extract "
+                                       f"{s.diagram_id} --path {s.path} --snapshot <file>` (T-97 M1)"))
+    return out + extraction_problems(root, reg)
+
+
+def extraction_problems(root: Path, reg: Registry) -> list[Problem]:
+    """T-97 M1: an extracted (document-owned mermaid-md) diagram whose raw block is still in its
+    document (a second copy, E2 family: it would be counted twice), or that its document does
+    not show at all (U3: architecture pages show the generated copy)."""
+    from .architecture import catalog, documents
+    from .architecture_copies import COPY_COMMAND, regions
+    extracted = [e for e in reg.entries if e.status == "active" and e.owner_kind == "document" and e.format == "mermaid-md"]
+    if not extracted:
+        return []
+    cat = catalog(documents(root))
+    shown = regions(root)
+    out = []
+    for e in extracted:
+        raw = [d for d in cat if d.document == e.owner_ref and d.diagram_id in e.aliases]
+        for d in raw:
+            out.append(Problem(d.document, f"line {d.line}: this Mermaid block is a second copy of {e.diagram_id} (its "
+                                           f"source is {e.path}): technical-lead replaces it with the generated copy "
+                                           f"(`{COPY_COMMAND} {e.diagram_id}`) (E2)"))
+        names = (e.diagram_id, *e.aliases)
+        if not raw and not any(p == e.owner_ref for n in names for p, _ in shown.get(n, [])):
+            out.append(Problem(e.owner_ref, f"does not show {e.diagram_id} (its source is {e.path}): technical-lead adds "
+                                            f"the generated copy printed by `{COPY_COMMAND} {e.diagram_id}` (U3)"))
     return out
 
 
@@ -957,6 +986,299 @@ def retire(root: Path, ident: str, confirm: bool) -> tuple[Entry, list[str], boo
         save(root, doc, reg.sha)
         write_diagram_index(root)  # D3 (PR B2b-1): inside the lock, like every other write
     return load(root).by_id()[e.diagram_id], refs, True
+
+
+# --------------------------------------------------------------------------- M1: extraction (T-97)
+
+EXTRACT_WRITES = (REGISTRY, DIAGRAM_INDEX)
+SOURCE_KEYS = ["diagram_id", "title", "owner_document"]
+
+
+def _read(root: Path, rel: str) -> bytes:
+    try:
+        return (Path(root) / rel).read_bytes()
+    except OSError:
+        return b""
+
+
+def _token(*parts: bytes) -> str:
+    h = hashlib.sha256()
+    for p in parts:
+        h.update(hashlib.sha256(p).digest())
+    return h.hexdigest()[:16]
+
+
+def _fence_count(body: str) -> int:
+    """Fenced code blocks in a Markdown body (any language)."""
+    from .diagrams import _closes, _fence
+    count, fence = 0, None
+    for line in body.replace("\r\n", "\n").split("\n"):
+        if fence is not None:
+            if _closes(line, fence):
+                fence = None
+            continue
+        f = _fence(line)
+        if f and not (f[0] == "`" and "`" in f[2]):
+            fence, count = f, count + 1
+    return count
+
+
+def _source_problems(root: Path, e: Entry, rel: str, raw, files: dict) -> tuple[list[str], tuple[str, ...]]:
+    """Why `rel` cannot become the standalone source of embedded entry `e` (whose raw block is
+    `raw`), and the source's Mermaid lines."""
+    from . import diagrams
+    from .diagrams import LIKE_MARKER
+    bad = []
+    where = f"{e.diagram_id} --path {rel}"
+    problem = path_syntax_problem(rel) or approved_directory_problem(e.owner_kind, "mermaid-md", rel, e.owner_ref)
+    if problem:
+        return [f"{where}: {problem}"], ()
+    full = Path(root) / rel
+    if not _exact_case_exists(root, rel):
+        return [f"{where}: the file does not exist with exactly this letter case"], ()
+    if os.path.islink(full) or not full.is_file() or (hasattr(os.path, "isjunction") and os.path.isjunction(full)):
+        return [f"{where}: not a regular file (links are refused)"], ()
+    if full.stat().st_nlink > 1:
+        return [f"{where}: the file has more than one name (a hard link); links are refused"], ()
+    s = files.get(rel)
+    if s is None:
+        return [f"{where}: no front matter with a diagram_id"], ()
+    try:
+        text = full.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [f"{where}: cannot be read as UTF-8"], ()
+    front, body = split_front_matter(text)
+    meta = _yaml().load(front) if front is not None else None
+    if not isinstance(meta, dict) or list(meta) != SOURCE_KEYS:
+        bad.append(f"{where}: the front matter must hold exactly {', '.join(SOURCE_KEYS)} in this order, found "
+                   f"{list(meta) if isinstance(meta, dict) else 'none'}")
+    if s.diagram_id != e.diagram_id:
+        bad.append(f"{where}: the file holds diagram_id {s.diagram_id}, not {e.diagram_id} (E3)")
+    if s.feature_id:
+        bad.append(f"{where}: the file has a feature_id; a document-owned source names only owner_document (U10)")
+    if s.owner_document != e.owner_ref:
+        bad.append(f"{where}: owner_document is {s.owner_document or '(missing)'}, the registry's owner is "
+                   f"{e.owner_ref} (E3, U10)")
+    if s.title != e.title:
+        bad.append(f"{where}: title {s.title!r} differs from the registry's {e.title!r}")
+    if LIKE_MARKER.search(text):
+        bad.append(f"{where}: the file contains '<!-- diagram:' text, which would be read as a marker")
+    if _fence_count(body) != 1:
+        bad.append(f"{where}: the file must hold exactly one fenced block, the Mermaid block (found {_fence_count(body)})")
+    probe = Entry(e.diagram_id, e.title, e.owner_kind, e.owner_ref, "mermaid-md", e.category, rel)
+    src = diagrams._registered_source(root, probe)
+    if src.problem or not src.closed:
+        bad.append(f"{where}: {src.problem or 'its Mermaid block has no closing fence'}")
+        return bad, ()
+    if list(src.lines) != list(raw.source):
+        first = next((i for i, (a, b) in enumerate(zip(src.lines, raw.source)) if a != b), min(len(src.lines),
+                                                                                              len(raw.source)))
+        bad.append(f"{where}: its Mermaid lines are not byte-identical to the raw block in {e.owner_ref} (line "
+                   f"{raw.line} there; first difference at Mermaid line {first + 1})")
+    src_lines = text.replace("\r\n", "\n").split("\n")
+    doc_lines = _read(root, e.owner_ref).decode("utf-8", "replace").replace("\r\n", "\n").split("\n")
+    try:
+        src_fences = (src_lines[src.line - 1], src_lines[src.line + len(src.lines)])
+        doc_fences = (doc_lines[raw.line - 1], doc_lines[raw.line + len(raw.source)])
+    except IndexError:
+        src_fences, doc_fences = ("",), ("?",)
+    if src_fences != doc_fences:
+        bad.append(f"{where}: its fence lines {src_fences} differ from the document's {doc_fences}")
+    return bad, tuple(src.lines)
+
+
+def plan_extract(root: Path, items: list[tuple[str, str]], snapshot: Path | str) -> dict:
+    """What `registry extract` would do (read only): switch each named embedded entry of one
+    document to its standalone source. Every check of the whole batch runs first; any problem
+    refuses all of it. The token binds the registry, each source, the document and the
+    snapshot (their exact bytes)."""
+    from .architecture_copies import read_snapshot
+    root = Path(root)
+    reg = load(root)
+    bad = [p.message for p in reg.problems + identity_problems(reg)]
+    lookup = reg.lookup()
+    if not items:
+        bad.append("name at least one diagram: registry extract <ID> --path <source> [<ID> --path <source> ...]")
+    try:
+        snap, snap_sha = read_snapshot(Path(snapshot))
+    except DesignError as exc:
+        snap, snap_sha = None, ""
+        bad.append(str(exc))
+    by_snap = {d["diagram_id"]: d for d in snap["diagrams"]} if snap else {}
+    files = {s.path: s for s in source_files(root)}
+    planned, owners, seen_ids, seen_paths = [], set(), set(), {}
+    for ident, path in items:
+        rel = posixpath.normpath(str(path).replace("\\", "/"))
+        e = lookup.get(ident)
+        if e is None:
+            bad.append(f"{ident} is not in the registry as an ID or an alias (E1)")
+            continue
+        if e.diagram_id in seen_ids:
+            bad.append(f"{ident}: {e.diagram_id} is named twice")
+            continue
+        seen_ids.add(e.diagram_id)
+        key = rel.casefold()
+        if key in seen_paths:
+            bad.append(f"{ident}: --path {rel} is also given for {seen_paths[key]} (paths must differ, also in letter case)")
+        seen_paths[key] = e.diagram_id
+        if e.status != "active" or e.owner_kind != "document" or e.format != "mermaid-embedded":
+            bad.append(f"{ident}: {e.diagram_id} is not an active embedded document-owned diagram "
+                       f"({e.status}, {e.owner_kind}, {e.format}); only those are extracted")
+            continue
+        owners.add(e.owner_ref)
+        other = [x.diagram_id for x in reg.entries if x.path == rel and x.diagram_id != e.diagram_id]
+        if other:
+            bad.append(f"{ident}: {rel} is already registered for {', '.join(other)}")
+        raw, what = locate_embedded(root, e)
+        if raw is None:
+            bad.append(f"{ident}: its raw block is not found in {e.path}" + (f" ({what})" if what else "") + " (E7)")
+            continue
+        if not raw.closed:
+            bad.append(f"{ident}: its raw block in {e.path} (line {raw.line}) has no closing fence")
+            continue
+        problems, lines = _source_problems(root, e, rel, raw, files)
+        bad += problems
+        w = by_snap.get(e.diagram_id)
+        if snap is not None and w is None:
+            bad.append(f"{ident}: {e.diagram_id} is not in the snapshot")
+        elif w is not None and (w.get("document") != e.owner_ref or list(lines) != w["mermaid_lines"]):
+            bad.append(f"{ident}: the source's Mermaid lines (or document) differ from the snapshot's record of "
+                       f"{e.diagram_id}: the switch is tied to the recorded pre-migration bytes")
+        planned.append({"diagram_id": e.diagram_id, "aliases": list(e.aliases), "title": e.title, "path": rel,
+                        "from": e.path, "anchor": e.anchor, "ordinal": e.ordinal, "line": raw.line,
+                        "mermaid_sha256": hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest() if lines else ""})
+    if len(owners) > 1:
+        bad.append(f"one document per run: the diagrams named belong to {', '.join(sorted(owners))}")
+    document = sorted(owners)[0] if len(owners) == 1 else ""
+    reg_bytes = _read(root, REGISTRY)
+    parts = [reg_bytes, _read(root, document) if document else b"", Path(snapshot).read_bytes() if snap else b"",
+             json.dumps([[p["diagram_id"], p["path"]] for p in planned]).encode("utf-8")]
+    parts += [_read(root, p["path"]) for p in planned]
+    return {"version": 1, "action": "extract", "document": document, "diagrams": planned,
+            "registry_sha256": _sha(reg_bytes), "snapshot": {"path": str(snapshot), "sha256": snap_sha},
+            "writes": list(EXTRACT_WRITES), "problems": bad, "token": "" if bad else _token(*parts)}
+
+
+def extract(root: Path, items: list[tuple[str, str]], snapshot: Path | str, confirm: str) -> dict:
+    """Carry out exactly the plan that printed `confirm`: under the registry lock, refused while
+    a registry move is unresolved (Q1) or a Git operation is in progress (D4), planned and
+    validated again, then one compare-and-swap replacement of the registry (only `format` and
+    `path` change; `anchor` and `ordinal` are removed) and the diagram index, inside the lock.
+    Writes nothing else: never docs/architecture/."""
+    from . import transactions
+    root = Path(root).resolve()
+    if not isinstance(confirm, str) or not confirm:
+        raise DesignError("give the token the plan printed (--confirm TOKEN)")
+    with lock(root):
+        transactions._fault(root, "extract-after-lock")
+        _tx_guard(root)
+        transactions._git_ready(root)
+        plan = plan_extract(root, items, snapshot)
+        if plan["problems"]:
+            raise DesignError("the extraction was refused; nothing was changed:\n"
+                              + "\n".join(f"  - {p}" for p in plan["problems"]))
+        if plan["token"] != confirm:
+            raise DesignError("the registry, a source, the document or the snapshot changed since the extraction was "
+                              "planned; nothing was changed. Plan it again (without --confirm)")
+        reg = load(root)
+        doc = _writable(reg)
+        if reg.sha != plan["registry_sha256"]:
+            raise DesignError("the registry changed while this command ran; nothing was written (E12)")
+        for p in plan["diagrams"]:
+            item = _find_item(doc, p["diagram_id"])
+            item["format"] = "mermaid-md"
+            item["path"] = p["path"]
+            for key in ("anchor", "ordinal"):
+                if key in item:
+                    del item[key]
+        transactions._fault(root, "extract-before-registry")
+        transactions._git_ready(root)                   # once more, just before the registry changes
+        save(root, doc, reg.sha)
+        transactions._fault(root, "extract-after-registry")
+        index = write_diagram_index(root)               # D3: inside the lock
+    plan.update(done=True, token="", index=index, registry_sha256_after=_sha(_read(root, REGISTRY)))
+    return plan
+
+
+def plan_revert(root: Path, ident: str, heading: str, ordinal: int | None) -> dict:
+    """What `registry extract --revert` would do (read only): set an extracted document-owned
+    entry back to `mermaid-embedded` at `heading`/`ordinal` of its owner document, only when that
+    document holds a raw block there whose lines equal the source's and no generated copy of it."""
+    from . import diagrams
+    from .architecture_copies import regions
+    root = Path(root)
+    reg = load(root)
+    bad = [p.message for p in reg.problems + identity_problems(reg)]
+    ordinal = ordinal or 1
+    e = reg.lookup().get(ident)
+    plan = {"version": 1, "action": "revert", "diagram_id": e.diagram_id if e else ident, "heading": heading,
+            "ordinal": ordinal, "writes": list(EXTRACT_WRITES), "problems": bad, "token": ""}
+    if e is None:
+        bad.append(f"{ident} is not in the registry as an ID or an alias (E1)")
+        return plan
+    if e.status != "active" or e.owner_kind != "document" or e.format != "mermaid-md" \
+            or posixpath.dirname(e.path) != DOCUMENT_SOURCES:
+        bad.append(f"{e.diagram_id} is not an active document-owned mermaid-md diagram in {DOCUMENT_SOURCES}/; only an "
+                   "extracted diagram is reverted")
+        return plan
+    if not heading:
+        bad.append("give --heading <anchor> (the heading the raw block is under in the document)")
+        return plan
+    src = diagrams._registered_source(root, e)
+    if src.problem or not src.closed:
+        bad.append(f"{e.diagram_id}: {src.problem or 'its source block has no closing fence'}")
+        return plan
+    probe = Entry(e.diagram_id, e.title, e.owner_kind, e.owner_ref, "mermaid-embedded", e.category, e.owner_ref,
+                  anchor=heading, ordinal=ordinal)
+    raw, what = locate_embedded(root, probe)
+    if raw is None:
+        bad.append(f"{e.owner_ref} has no raw Mermaid block {ordinal} under #{heading}" + (f" ({what})" if what else ""))
+    elif list(raw.source) != list(src.lines) or not raw.closed:
+        bad.append(f"the raw block on line {raw.line} of {e.owner_ref} is not byte-identical to the source {e.path}")
+    names = (e.diagram_id, *e.aliases)
+    held = [b.start + 1 for n in names for p, b in regions(root).get(n, []) if p == e.owner_ref]
+    if held:
+        bad.append(f"{e.owner_ref} still shows the generated copy of {e.diagram_id} (line {', '.join(map(str, held))}): "
+                   "technical-lead replaces it with the raw block first")
+    plan.update(path=e.path, document=e.owner_ref, registry_sha256=_sha(_read(root, REGISTRY)))
+    if not bad:
+        plan["token"] = _token(_read(root, REGISTRY), _read(root, e.owner_ref), _read(root, e.path),
+                               json.dumps([e.diagram_id, heading, ordinal]).encode("utf-8"))
+    return plan
+
+
+def revert(root: Path, ident: str, heading: str, ordinal: int | None, confirm: str) -> dict:
+    """Carry out exactly the revert plan that printed `confirm` (same lock, guards, token and
+    compare-and-swap as `extract`), so the registry never needs `git restore`."""
+    from . import transactions
+    root = Path(root).resolve()
+    if not isinstance(confirm, str) or not confirm:
+        raise DesignError("give the token the plan printed (--confirm TOKEN)")
+    with lock(root):
+        _tx_guard(root)
+        transactions._git_ready(root)
+        plan = plan_revert(root, ident, heading, ordinal)
+        if plan["problems"]:
+            raise DesignError("the revert was refused; nothing was changed:\n"
+                              + "\n".join(f"  - {p}" for p in plan["problems"]))
+        if plan["token"] != confirm:
+            raise DesignError("the registry, the source or the document changed since the revert was planned; nothing "
+                              "was changed. Plan it again (without --confirm)")
+        reg = load(root)
+        doc = _writable(reg)
+        if reg.sha != plan["registry_sha256"]:
+            raise DesignError("the registry changed while this command ran; nothing was written (E12)")
+        item = _find_item(doc, plan["diagram_id"])
+        item["format"] = "mermaid-embedded"
+        item["path"] = plan["document"]
+        at = list(item.keys()).index("path") + 1
+        item.insert(at, "anchor", plan["heading"])
+        item.insert(at + 1, "ordinal", plan["ordinal"])
+        transactions._git_ready(root)
+        save(root, doc, reg.sha)
+        index = write_diagram_index(root)
+    plan.update(done=True, token="", index=index)
+    return plan
 
 
 # --------------------------------------------------------------------------- the diagram index (V7)

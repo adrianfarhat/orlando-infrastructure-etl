@@ -808,3 +808,80 @@ while implementing, for review:
     unchanged) so two worktrees can run GUI tests at once; the test helper gained `rename` (a
     `WorkspaceEdit` rename, which runs the same will/did-rename participants as the Explorer) and
     `reveal`.
+
+## 2026-11-27: T-97 M1 — implementation choices
+
+Draft for review, recorded with the M1-0 tooling PR. Design: technical-lead's M1 execution
+specification (sections 4 and 5); the open questions were decided by the main conversation under
+the user's completion authorization of 2026-11-27.
+
+1. **C1: architecture copies are reported and applied by technical-lead, never automatically.**
+   U5 and diagram library 6.4 item 2 (copies refreshed automatically when the source changes) do
+   not apply to `docs/architecture/`: the tooling never writes there, and the write guard
+   (`ownership.guard_write`) stays exactly as strict, with no general or move-specific
+   exception. When a standalone source changes, `check` and `index --check` report the copy
+   (out of date, fingerprint only, or a conflict, E15); `index` only warns. technical-lead applies
+   the exact text printed by `python -m tools.design architecture copy` (read only) with its own
+   tools, and `check` and `architecture verify` prove the result. `reconcile` and `refresh-blocks`
+   keep refusing these documents. This narrows an approved behaviour in the direction the user
+   chose (the T-97 card's recorded preference).
+2. **Q1: source file names** are those of diagram library 12.3 (`<owner-slug>_<category>_<name>.md`
+   in `docs/architecture/diagrams/`), not `slugify(title)` names; names are never parsed for
+   identity. `architecture verify` checks each extracted diagram's path against this list.
+3. **Q2: feature captions** of an extracted diagram use the registry title and link to its
+   standalone source (`diagrams._registered_source`, unchanged); a feature block that names the
+   diagram or one of its aliases becomes case 1 once and `index` refreshes it.
+4. **Q3: GitHub rendering** is checked on the pushed PR branches (rendered file view or the
+   rendered-HTML API); where it is not checked it is recorded as "expected, not verified".
+5. **Q4: `mermaid-embedded` stays an accepted format** after M1, for `registry extract --revert`
+   and for history, with no active entries left once all four documents are done.
+6. **Q5: feature-owned (proposed) diagram blocks are refused in `docs/architecture/` documents**:
+   current-state documents show only document-owned diagrams. A region naming a feature-owned,
+   retired, unknown or still-embedded ID is a `check` problem.
+7. **Q6: new document-owned diagrams after M1** (interim process): technical-lead writes a
+   document-owned source in `docs/architecture/diagrams/` and the main conversation runs
+   `registry adopt`. A command that hands out the next `AD-` ID is a backlog item.
+8. **Byte identity is defined on LF content**, which equals the Git blob (C8): the Windows working
+   tree may be CRLF (`core.autocrlf=true`, no `.gitattributes`). Fingerprints, the snapshot, the
+   V4 invariant and every comparison normalise CRLF to LF and nothing else.
+9. **Counting by registry identity (U9).** `architecture.catalog()` never counts a Mermaid fence
+   inside a generated region; `architecture.architecture_diagrams()` lists each diagram once
+   (embedded entry, extracted entry positioned by its copy, or an unregistered raw block), and the
+   architecture index, the Feature Designer library and the tests count with it, so the count is
+   14 in every M1 state. A raw block whose catalog ID is an alias of an extracted entry is that
+   entry's duplicate (reported, never counted). The architecture index gains one column, Source
+   (`embedded` or a link to the standalone source); its rows' Diagram ID is the registered alias.
+10. **Generated copy layout** (specification 3.1): start marker with the canonical ID and the U13
+    fingerprint; an invisible comment line naming the ID and the source path relative to the
+    document; the Mermaid lines verbatim in a fence; the end marker. No caption, no `%%`
+    substitution (U14); the legend paragraph above stays hand-written outside the region. The
+    renderer is separate from `diagrams.render()` and refuses a fence that would differ from the
+    source's own.
+11. **New `check` reports:** extraction pending (a source in `docs/architecture/diagrams/` whose
+    ID is still registered as embedded), duplicate raw block (E2 family), not shown (U3), and the
+    copy states (structure, E1, E11, Q5, embedded, E15 cases with technical-lead's fix, E14-like
+    wrong source path). None suggests `index` or `reconcile` as the fix for a copy.
+12. **`registry extract`** (main conversation): one document per run, all its diagrams at once;
+    the plan validates the whole batch (each entry an active embedded document-owned diagram, the
+    path in the approved folder with exact case, a regular file and not a link, not registered
+    for another entry, distinct paths; front matter exactly `diagram_id`, `title`,
+    `owner_document` with the registry's values and no `feature_id`; exactly one fenced block,
+    the Mermaid block, byte-identical to the raw block including its fence lines; the snapshot
+    readable and equal for that ID) and prints a token over the registry, document, sources and
+    snapshot bytes. `--confirm TOKEN` reruns everything under the registry lock, after the
+    transaction guard (Q1) and the Git-busy check (D4), and replaces the registry by
+    compare-and-swap (only `format` and `path` change; `anchor` and `ordinal` are removed), then
+    writes the diagram index inside the lock (D3). It writes only `designs/diagrams/registry.yml`
+    and `designs/index/diagram-index.md`. `--revert` is the guarded undo (same lock, guards, token
+    and CAS) so the registry is never restored with Git.
+13. **`architecture snapshot` and `architecture verify`**: the snapshot (JSON version 1, written
+    once to a new file outside `docs/architecture/`, never overwritten) records the commit, every
+    architecture document's LF text and SHA-256 and every diagram's registry fields and exact
+    Mermaid and fence lines; it is refused once any diagram is extracted. `verify` checks V1-V6
+    and reports V7 (`check` and `index --check` are run separately).
+14. **Feature Designer.** `designer_api.library()` builds the architecture groups from
+    `architecture_diagrams()`; for an extracted diagram `path` and `line` are those of its
+    standalone source (Edit Diagram opens it with the architecture-docs notice). No extension
+    change. Unit and GUI assertions that name `docs/architecture/system-architecture.md` as the
+    source of `AD-0011` must be made state-independent before M1-4 (they read the resolved
+    source).

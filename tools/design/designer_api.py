@@ -109,7 +109,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import diagrams, ownership, transactions
-from .architecture import catalog, documents
+from .architecture import architecture_diagrams
 from .ids import DIAGRAM_ID
 from .workspace import (FEATURES, INDEX, SECTIONS, DesignError, _fence_step, discover, marker_span, render_index)
 
@@ -150,21 +150,26 @@ def library(root: Path) -> dict:
     from . import registry
     known = diagrams.sources(root)
     reg = registry.load(root)
+    by_id = reg.by_id()
     by_alias = {a: e for e in reg.entries for a in e.aliases}
     groups: dict[str, dict] = {}
-    for d in catalog(documents(root)):
+    # T-97 M1: one item per diagram by registry identity (embedded or extracted), so the library
+    # keeps every architecture diagram exactly once in every state; an extracted diagram's path
+    # and line are those of its standalone source (Edit Diagram opens it, B6).
+    for d in architecture_diagrams(root):
         g = groups.setdefault(d.document, {"document": d.document, "title": d.title or posixpath.basename(d.document),
                                            "diagrams": []})
-        e = by_alias.get(d.diagram_id)
+        e = by_id.get(d.diagram_id) if d.format else by_alias.get(d.diagram_id)   # a retired entry's raw block
         ident = e.diagram_id if e is not None else d.diagram_id
         s = known.get(ident)
         g["diagrams"].append({"id": ident, "aliases": list(e.aliases) if e is not None else [], "kind": "current",
-                              "owner": None, "path": d.document, "line": d.line,
+                              "owner": None, "path": d.path, "line": d.line,
                               "format": e.format if e is not None else "mermaid-embedded",
                               "category": e.category if e is not None else None,
                               "status": e.status if e is not None else "unregistered",
-                              "title": d.heading.text if d.heading is not None and d.heading.text else g["title"],
-                              "problem": s.problem if s else ""})
+                              "title": (d.heading.text if d.heading is not None and d.heading.text
+                                        else e.title if e is not None else g["title"]),
+                              "problem": (s.problem if s else "") or d.problem})
     features, _ = discover(root)
     owned = {f.feature_id: {"feature_id": f.feature_id, "title": f.title or "", "path": f.path, "diagrams": []}
              for f in features if f.feature_id}

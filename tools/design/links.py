@@ -262,8 +262,13 @@ def diagram_files(root: Path) -> list[str]:
 
 
 def diagram_problems(root: Path, repo: _Repo) -> list[Problem]:
-    from .architecture import catalog, documents        # imports workspace, which imports this lazily
-    by_id = {d.diagram_id: d for d in catalog(documents(root))}
+    from .architecture import architecture_diagrams, catalog, documents   # imports workspace, which imports this lazily
+    docs = documents(root)
+    by_id = {d.diagram_id: d for d in catalog(docs)}
+    for d in architecture_diagrams(root, docs):         # T-97 M1: a former catalog ID of an extracted diagram
+        if d.format == "mermaid-md":                    # (document = owner, heading = that of its copy)
+            for alias in d.aliases:
+                by_id.setdefault(alias, d)
     out = []
     for rel in diagram_files(root):
         try:

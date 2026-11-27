@@ -14,24 +14,26 @@ A diagram ID is the document and the anchor of the heading above the diagram. It
 that heading is renamed. The registry ID is the diagram's stable ID in the
 [diagram registry](../diagrams/registry.yml) (see [diagram-index.md](diagram-index.md)); the diagram ID
 stays valid as its alias. The type is the diagram's `%% diagram-type:` marker
-([conventions.md section 2](../../docs/architecture/conventions.md#2-diagram-types)).
+([conventions.md section 2](../../docs/architecture/conventions.md#2-diagram-types)). The source is
+`embedded` (the Mermaid block in the document is the source) or a link to the diagram's standalone
+source in `docs/architecture/diagrams/`, of which the document shows a generated copy.
 
-| Diagram ID | Registry ID | Type | Document | Under the heading |
-|---|---|---|---|---|
-| `conventions/1-implementation-status-legend` | `AD-0001` | example | [conventions.md](../../docs/architecture/conventions.md) | [1. Implementation-status legend](../../docs/architecture/conventions.md#1-implementation-status-legend) |
-| `database-schema/1-current-model-built-schema-public-real-data` | `AD-0002` | er | [database-schema.md](../../docs/architecture/database-schema.md) | [1. Current model (built): schema public, real data](../../docs/architecture/database-schema.md#1-current-model-built-schema-public-real-data) |
-| `database-schema/2-target-model-proposed-not-built` | `AD-0003` | er | [database-schema.md](../../docs/architecture/database-schema.md) | [2. Target model: PROPOSED, NOT BUILT](../../docs/architecture/database-schema.md#2-target-model-proposed-not-built) |
-| `database-schema/a-the-team-workflow` | `AD-0004` | process | [database-schema.md](../../docs/architecture/database-schema.md) | [(a) The team workflow](../../docs/architecture/database-schema.md#a-the-team-workflow) |
-| `etl-workflow/the-common-pattern` | `AD-0005` | process | [etl-workflow.md](../../docs/architecture/etl-workflow.md) | [The common pattern](../../docs/architecture/etl-workflow.md#the-common-pattern) |
-| `etl-workflow/streets--road_segments` | `AD-0006` | process | [etl-workflow.md](../../docs/architecture/etl-workflow.md) | [Streets → road\_segments](../../docs/architecture/etl-workflow.md#streets--road_segments) |
-| `etl-workflow/wastewater--utility_lines` | `AD-0007` | process | [etl-workflow.md](../../docs/architecture/etl-workflow.md) | [Wastewater → utility\_lines](../../docs/architecture/etl-workflow.md#wastewater--utility_lines) |
-| `etl-workflow/manholes--manholes` | `AD-0008` | process | [etl-workflow.md](../../docs/architecture/etl-workflow.md) | [Manholes → manholes](../../docs/architecture/etl-workflow.md#manholes--manholes) |
-| `etl-workflow/safety-gates` | `AD-0009` | process | [etl-workflow.md](../../docs/architecture/etl-workflow.md) | [Safety gates](../../docs/architecture/etl-workflow.md#safety-gates) |
-| `system-architecture/1-current-state-the-big-picture` | `AD-0010` | architecture | [system-architecture.md](../../docs/architecture/system-architecture.md) | [1. Current state: the big picture](../../docs/architecture/system-architecture.md#1-current-state-the-big-picture) |
-| `system-architecture/credential-boundary` | `AD-0011` | architecture | [system-architecture.md](../../docs/architecture/system-architecture.md) | [Credential boundary](../../docs/architecture/system-architecture.md#credential-boundary) |
-| `system-architecture/2-current-state-inside-the-web-app` | `AD-0012` | architecture | [system-architecture.md](../../docs/architecture/system-architecture.md) | [2. Current state: inside the web app](../../docs/architecture/system-architecture.md#2-current-state-inside-the-web-app) |
-| `system-architecture/3-one-map-pan-step-by-step` | `AD-0013` | sequence | [system-architecture.md](../../docs/architecture/system-architecture.md) | [3. One map pan, step by step](../../docs/architecture/system-architecture.md#3-one-map-pan-step-by-step) |
-| `system-architecture/4-target-state-the-product-vision-mostly-planned` | `AD-0014` | architecture | [system-architecture.md](../../docs/architecture/system-architecture.md) | [4. Target state: the product vision (mostly planned)](../../docs/architecture/system-architecture.md#4-target-state-the-product-vision-mostly-planned) |
+| Diagram ID | Registry ID | Type | Document | Under the heading | Source |
+|---|---|---|---|---|---|
+| `conventions/1-implementation-status-legend` | `AD-0001` | example | [conventions.md](../../docs/architecture/conventions.md) | [1. Implementation-status legend](../../docs/architecture/conventions.md#1-implementation-status-legend) | embedded |
+| `database-schema/1-current-model-built-schema-public-real-data` | `AD-0002` | er | [database-schema.md](../../docs/architecture/database-schema.md) | [1. Current model (built): schema public, real data](../../docs/architecture/database-schema.md#1-current-model-built-schema-public-real-data) | embedded |
+| `database-schema/2-target-model-proposed-not-built` | `AD-0003` | er | [database-schema.md](../../docs/architecture/database-schema.md) | [2. Target model: PROPOSED, NOT BUILT](../../docs/architecture/database-schema.md#2-target-model-proposed-not-built) | embedded |
+| `database-schema/a-the-team-workflow` | `AD-0004` | process | [database-schema.md](../../docs/architecture/database-schema.md) | [(a) The team workflow](../../docs/architecture/database-schema.md#a-the-team-workflow) | embedded |
+| `etl-workflow/the-common-pattern` | `AD-0005` | process | [etl-workflow.md](../../docs/architecture/etl-workflow.md) | [The common pattern](../../docs/architecture/etl-workflow.md#the-common-pattern) | embedded |
+| `etl-workflow/streets--road_segments` | `AD-0006` | process | [etl-workflow.md](../../docs/architecture/etl-workflow.md) | [Streets → road\_segments](../../docs/architecture/etl-workflow.md#streets--road_segments) | embedded |
+| `etl-workflow/wastewater--utility_lines` | `AD-0007` | process | [etl-workflow.md](../../docs/architecture/etl-workflow.md) | [Wastewater → utility\_lines](../../docs/architecture/etl-workflow.md#wastewater--utility_lines) | embedded |
+| `etl-workflow/manholes--manholes` | `AD-0008` | process | [etl-workflow.md](../../docs/architecture/etl-workflow.md) | [Manholes → manholes](../../docs/architecture/etl-workflow.md#manholes--manholes) | embedded |
+| `etl-workflow/safety-gates` | `AD-0009` | process | [etl-workflow.md](../../docs/architecture/etl-workflow.md) | [Safety gates](../../docs/architecture/etl-workflow.md#safety-gates) | embedded |
+| `system-architecture/1-current-state-the-big-picture` | `AD-0010` | architecture | [system-architecture.md](../../docs/architecture/system-architecture.md) | [1. Current state: the big picture](../../docs/architecture/system-architecture.md#1-current-state-the-big-picture) | embedded |
+| `system-architecture/credential-boundary` | `AD-0011` | architecture | [system-architecture.md](../../docs/architecture/system-architecture.md) | [Credential boundary](../../docs/architecture/system-architecture.md#credential-boundary) | embedded |
+| `system-architecture/2-current-state-inside-the-web-app` | `AD-0012` | architecture | [system-architecture.md](../../docs/architecture/system-architecture.md) | [2. Current state: inside the web app](../../docs/architecture/system-architecture.md#2-current-state-inside-the-web-app) | embedded |
+| `system-architecture/3-one-map-pan-step-by-step` | `AD-0013` | sequence | [system-architecture.md](../../docs/architecture/system-architecture.md) | [3. One map pan, step by step](../../docs/architecture/system-architecture.md#3-one-map-pan-step-by-step) | embedded |
+| `system-architecture/4-target-state-the-product-vision-mostly-planned` | `AD-0014` | architecture | [system-architecture.md](../../docs/architecture/system-architecture.md) | [4. Target state: the product vision (mostly planned)](../../docs/architecture/system-architecture.md#4-target-state-the-product-vision-mostly-planned) | embedded |
 
 ## Documents
 

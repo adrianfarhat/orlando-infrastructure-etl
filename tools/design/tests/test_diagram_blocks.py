@@ -479,13 +479,13 @@ class EndToEnd(unittest.TestCase):
     def test_all_catalog_diagrams_round_trip(self):
         with Workspace() as ws:
             f = new_feature(ws.root, "All diagrams")
-            catalog = architecture.catalog(architecture.documents(ws.root))
+            catalog = architecture.architecture_diagrams(ws.root)       # T-97 M1: in every state
             self.assertEqual(len(catalog), 14)
             path = ws.root / f.path
             text = path.read_bytes().decode("utf-8")
             for i, d in enumerate(catalog):
                 h = SECTIONS[i % 6]
-                text = text.replace(h + "\n", h + block(d.diagram_id), 1)
+                text = text.replace(h + "\n", h + block(d.alias), 1)
             path.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
             self.assertEqual(cmd(ws.root, "index")[0], 0)
             self.assertEqual(problems(ws), [])
@@ -517,7 +517,7 @@ class Integration(unittest.TestCase):
             cmd(ws.root, "index")
             self.assertEqual(problems(ws), [])
             self.assertEqual(links.link_problems(ws.root), [])                         # blocks not double-checked
-            self.assertEqual(len(architecture.catalog(architecture.documents(ws.root))), 14)   # no new catalog IDs
+            self.assertEqual(len(architecture.architecture_diagrams(ws.root)), 14)             # no new diagrams
             self.assertTrue(architecture.architecture_index_is_fresh(ws.root))
             self.assertEqual(cmd(ws.root, "index", "--check")[0], 0)
             # Mark Sharp (ported exporter): the blocks are kept verbatim and check still passes

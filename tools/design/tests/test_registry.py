@@ -399,9 +399,9 @@ class ArchitectureM0(unittest.TestCase):
             self.assertEqual(registry.adopt_architecture(ws.root), [])                        # already registered
             self.assertEqual({p: p.read_bytes() for p in (ws.root / "docs/architecture").rglob("*.md")}, before)
             entries = registry.load(ws.root).entries
-            cat = architecture.catalog(architecture.documents(ws.root))
+            cat = architecture.architecture_diagrams(ws.root)           # T-97 M1: in every state
             self.assertEqual([(e.diagram_id, e.aliases) for e in entries],
-                             [(f"AD-{n:04d}", (c.diagram_id,)) for n, c in enumerate(cat, 1)])
+                             [(f"AD-{n:04d}", (c.alias,)) for n, c in enumerate(cat, 1)])
             self.assertEqual(check(ws), [])
 
     def test_a8_every_architecture_diagram_renders_byte_identically_through_its_alias(self):
@@ -411,8 +411,8 @@ class ArchitectureM0(unittest.TestCase):
             for w in (ws, pre):
                 cmd(w.root, "index")
             known, known_pre = diagrams.sources(ws.root), diagrams.sources(pre.root)
-            cat = architecture.catalog(architecture.documents(ws.root))
-            self.assertEqual(len(cat), 14)
+            cat = architecture.catalog(architecture.documents(ws.root))   # the embedded ones (all 14 before M1)
+            self.assertEqual(len(architecture.architecture_diagrams(ws.root)), 14)
             for c in cat:
                 with self.subTest(c.diagram_id):
                     self.assertEqual(diagrams.render(known[c.diagram_id], "designs/features/a.md"),
@@ -428,7 +428,7 @@ class ArchitectureM0(unittest.TestCase):
                 "```mermaid\nsequenceDiagram\n  A->>B: hi\n```\n", encoding="utf-8")
             docs = architecture.documents(ws.root)
             self.assertFalse(any(d.path.startswith("docs/architecture/diagrams/") for d in docs))
-            self.assertEqual(len(architecture.catalog(docs)), 14)                            # never counted twice
+            self.assertEqual(len(architecture.architecture_diagrams(ws.root, docs)), 14)     # never counted twice
             self.assertIn("AD-0099 is not registered", "\n".join(check(ws)))                 # but still accounted for
 
     def test_u11_a_renamed_heading_needs_an_explicit_relink(self):
