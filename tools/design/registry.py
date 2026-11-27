@@ -12,7 +12,9 @@ compare-and-swap (the file is replaced only if nobody changed it meanwhile):
   no document is changed);
 - `registry relink` changes a path or title, or re-points an embedded entry after a
   heading rename (never guessed);
-- `registry retire` marks a diagram retired after listing its references (never reused).
+- `registry retire` marks a diagram retired after listing its references (never reused);
+- `registry move` and `registry adopt-moves` (moves.py, PR B2b-2a) change paths for a batch
+  through a recorded, recoverable move transaction (transactions.py, version 2 records).
 
 Validation (`check`) reports, never fixes: duplicate IDs and aliases (E2), ID/alias
 collisions (E8), owners and ID prefixes (E9), sources that are missing (E7), moved (E6),
@@ -380,10 +382,17 @@ def problems(root: Path, features: list[Feature] | None = None, reg: Registry | 
             continue
         # mermaid-md: the source file
         if not _exact_case_exists(root, e.path):
-            moved = [s.path for s in file_ids.get(e.diagram_id, []) if s.path not in registered_paths]
-            if moved:
+            moved = sorted(s.path for s in file_ids.get(e.diagram_id, []) if s.path not in registered_paths)
+            if len(moved) > 1:                         # PR B2b-2a: ambiguous, never guessed
+                out.append(Problem(REGISTRY, f"{where} is at {len(moved)} unregistered paths ({', '.join(moved)}): "
+                                             "nothing is guessed; keep one of them, then relink it explicitly with "
+                                             f"`python -m tools.design registry relink {e.diagram_id} --path <path>` (E6)"))
+            elif moved:
+                batch = (f"; to update the registry for every moved feature-owned source at once, run `python -m "
+                         f"tools.design registry adopt-moves` (or `--from {e.path} --to {moved[0]}` for this one)"
+                         if e.owner_kind == "feature" else "")
                 out.append(Problem(REGISTRY, f"{where} moved to {moved[0]}: run `python -m tools.design registry relink "
-                                             f"{e.diagram_id} --path {moved[0]}` (E6)"))
+                                             f"{e.diagram_id} --path {moved[0]}` (E6){batch}"))
             else:
                 out.append(Problem(REGISTRY, f"{where}'s source {e.path} does not exist (E7)"))
             continue
@@ -622,9 +631,18 @@ def dump(doc) -> str:
     return stream.getvalue()
 
 
+def _tx_guard(root) -> None:
+    """Q1 (PR B2b-2a): no registry writer runs while a registry move is unresolved (or a record
+    cannot be read); recovery writes the registry through its own compare-and-swap instead."""
+    from . import transactions
+    transactions.registry_guard(root)
+
+
 def save(root: Path, doc, expected_sha: str | None) -> None:
     """Replace registry.yml with `doc` only if it still has `expected_sha` (None: it must
     still be absent). The new file is written whole to a temporary file first (E12)."""
+    from . import transactions
+    transactions.registry_guard(root)               # Q1 (PR B2b-2a): never while a registry move is unresolved
     path = Path(root) / REGISTRY
     path.parent.mkdir(parents=True, exist_ok=True)
     text = dump(doc).replace("\r\n", "\n")          # one line-ending style (comments keep what they were read with)
@@ -751,6 +769,7 @@ def adopt(root: Path, rel: str, category: str) -> Entry:
     if category not in CATEGORIES:
         raise DesignError(f"--category must be one of {', '.join(CATEGORIES)}")
     with lock(root):
+        _tx_guard(root)                                  # Q1 (B2b-2a): before anything is written
         reg = load(root)
         doc = _writable(reg)
         files = {s.path: s for s in source_files(root)}
@@ -792,6 +811,7 @@ def adopt_architecture(root: Path) -> list[Entry]:
     root = Path(root).resolve()
     created = []
     with lock(root):
+        _tx_guard(root)                                  # Q1 (B2b-2a): before anything is written
         reg = load(root)
         doc = _writable(reg)
         known = reg.lookup()
@@ -836,6 +856,7 @@ def relink(root: Path, ident: str, path: str | None = None, title: str | None = 
     if path is None and title is None and heading is None:
         raise DesignError("nothing to change: give --path, --title or --heading")
     with lock(root):
+        _tx_guard(root)                                  # Q1 (B2b-2a): before anything is written
         reg = load(root)
         doc = _writable(reg)
         e = reg.lookup().get(ident)
@@ -919,6 +940,7 @@ def retire(root: Path, ident: str, confirm: bool) -> tuple[Entry, list[str], boo
     returned so they can be shown first (R3). The ID is never issued again."""
     root = Path(root).resolve()
     with lock(root):
+        _tx_guard(root)                                  # Q1 (B2b-2a): before anything is written
         reg = load(root)
         doc = _writable(reg)
         e = reg.lookup().get(ident)

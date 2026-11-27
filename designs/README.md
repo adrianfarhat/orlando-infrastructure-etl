@@ -46,6 +46,8 @@ Other commands:
 | `python -m tools.design registry adopt\|adopt-architecture\|relink\|retire …` | Change the diagram registry under its lock: register a source, register the architecture diagrams in place, move or retitle a diagram, retire one (see [Diagrams](#diagrams)) |
 | `python -m tools.design resolve <ID or alias>` | Show a diagram's authoritative source (JSON); writes nothing |
 | `python -m tools.design reconcile --file F --line N --discard\|--apply-to-source` | Resolve a diagram block that was edited by hand: shows the change, applies it only with `--confirm <token>` |
+| `python -m tools.design registry move SOURCE [...] --to DEST [...] [--confirm TOKEN]` | Move feature-owned diagram sources (by ID, path or folder) and their registry paths as one recorded, recoverable move; shows the plan first and acts only with the `--confirm` token it prints (see [Moving diagram sources](#moving-diagram-sources)) |
+| `python -m tools.design registry adopt-moves [--from OLD --to NEW ...] [--confirm TOKEN]` | Update the registry for sources already renamed by VS Code, Git or another program (without arguments: every moved source `check` reports, E6); shows the plan first |
 | `python -m tools.design refresh-blocks --file F --expect SHA256 [...] --sources-token T` | Refresh the out-of-date diagram blocks of several closed feature documents as one recoverable update (not an atomic multi-file write: a failure rolls back what it wrote, an interruption leaves a record to complete or undo); refused if any changed since it was listed (used by the Feature Designer; see [Interrupted updates](#interrupted-updates-of-closed-documents)) |
 | `python -m tools.design transaction status\|complete\|undo\|abandon [ID] [--confirm TOKEN]` | Show or resolve an interrupted update (E16): each action shows its effect first and acts only with the `--confirm` token it prints |
 | `python -m tools.design transaction windows` / `transaction forget-window NAME [--confirm]` | List the Feature Designer window records (responding, not responding, unreadable) and the documents each protects; remove one that is not responding or unreadable, only with `--confirm` and only when that window is no longer open |
@@ -254,9 +256,12 @@ the features that show it.
   `FD-0001-D<n>`) or one document (`owner_document`, ID `AD-<nnnn>`). The registry decides; the
   front matter must agree. Diagram numbers are never reused (working tree, registry and
   committed history) and never renumbered.
-- **Rename or move** a source: move the file inside an approved folder (a `diagrams/` folder under
-  `designs/features/` for features), then
-  `python -m tools.design registry relink FD-0001-D1 --path <new path>`. Change a title with
+- **Rename or move** a feature-owned source with
+  `python -m tools.design registry move FD-0001-D1 --to <new path>` (several at once, or a whole
+  `diagrams/` folder; see [Moving diagram sources](#moving-diagram-sources)). If a source was
+  already moved by hand, with Git or in VS Code, `python -m tools.design registry adopt-moves`
+  updates the registry, or `python -m tools.design registry relink FD-0001-D1 --path <new path>`
+  for one source (unchanged; no record). Change a title with
   `registry relink FD-0001-D1 --title "New title"` (registry and front matter). If an
   architecture heading is renamed, re-point its diagram explicitly with
   `registry relink AD-0006 --heading <anchor>`; nothing is guessed. Then run `index`.
@@ -283,6 +288,93 @@ fix it.
 
 Mermaid stays editable text. Preview it in VS Code (Markdown preview with Mermaid support)
 or on GitHub.
+
+### Moving diagram sources
+
+A move changes two things, one after the other (G1 in [DECISIONS.md](DECISIONS.md)):
+
+1. **The identity**: the source files and their `path` in the registry. `registry move` and
+   `registry adopt-moves` change these, and only these, through a recorded move (below).
+   `diagram-index.md` is regenerated afterwards.
+2. **The generated text**: the captions and links in the diagram blocks that show a moved
+   diagram. They follow separately: Feature Designer refreshes open documents, and the move
+   prints the `refresh-blocks` command for the closed ones (or use Feature Designer's Update
+   closed documents). A refresh that fails or is refused never undoes the move; until it runs,
+   `check` reports the stale text (E14).
+
+```text
+python -m tools.design registry move FD-0001-D1 --to designs/features/pipes/diagrams/
+python -m tools.design registry move designs/features/pipes/diagrams --to designs/features/roads/diagrams
+python -m tools.design registry adopt-moves
+```
+
+Each command first prints its plan (every rename, and what refuses the batch) and changes
+nothing; repeat it with `--confirm <token>` to carry out exactly that plan. The token changes if
+a source, the registry or a destination changes meanwhile; the command then refuses and you plan
+again. Under the registry lock the whole batch is validated again before anything is written:
+
+- only registered, active, feature-owned `mermaid-md` sources move, to a `diagrams/` folder under
+  `designs/features/` (never into, out of or within `docs/architecture/`: architecture sources
+  change only through technical-lead's documentation workflow);
+- only `path` changes: the ID, owner, title, category, aliases and the file's bytes stay the same.
+  Links inside a moved source are never rewritten; the plan warns about relative links that will
+  stop resolving, and `check` reports them;
+- refused, with nothing changed: an existing destination (an unrelated file is never
+  overwritten), two equal destinations or destinations equal ignoring letter case, another
+  diagram's registered path, a source not exactly as planned, a symbolic link or junction on
+  the way, a source or destination open in a Feature Designer window (also one that has stopped
+  responding), a Git operation in progress, an unresolved record, and an ID found at two or more
+  unregistered paths (nothing is guessed);
+- **folders**: `registry move FOLDER --to FOLDER` moves the registered sources one by one and is
+  refused when the folder holds anything else (an unregistered file, a retired diagram's file, a
+  subfolder); `registry adopt-moves --from OLD --to NEW` follows a folder you already renamed.
+  Old folders are never deleted;
+- **letter case only** (`A.md` to `a.md`): `registry move` renames through a hidden intermediate
+  file in the same folder, so an interruption is recoverable; `adopt-moves` recognises a
+  case-only rename made elsewhere. The registry takes the exact new case. A folder whose name
+  changes only in letter case is not moved by `registry move`: rename the folder yourself, then
+  run `registry adopt-moves`;
+- hidden names (starting with `.`) and names Windows reserves (`con`, `nul`, `com1` …) are
+  refused as destinations, because a source there would never be read.
+
+The plan (with or without `--json`) exits with 1 when the move is possible and nothing was done
+yet, and with 2 when it is refused; carrying it out exits with 0.
+
+**What adoption can prove.** `registry adopt-moves` validates the source as it is *now* at its new
+path: it holds the diagram's ID and owner, and it is a well-formed Mermaid source. Without the
+SHA-256 the file had before it was renamed, it cannot prove that the bytes are unchanged by the
+rename (for example a program that edited the file while moving it). Feature Designer's rename
+integration (PR B2b-2b) can pass that checksum, taken just before VS Code renames the file, with
+the `move-plan` request (`sha256`); the adoption is then refused if the content differs.
+
+**After the move: secondary steps.** Once the move is verified, two things remain, and neither
+can undo it:
+
+- `diagram-index.md` is regenerated. If that fails (for example the file is locked), the command
+  says so instead of claiming it was regenerated, `check` reports the index as out of date, and
+  `python -m tools.design index` rewrites it.
+- The move's record is removed. If that fails (for example another program has a file in the
+  record's folder open), the command still succeeds (exit 0) with a warning. A record marked as
+  completed holds nothing and is never carried out again; `transaction status` lists it under
+  "cleanup pending", and later diagram commands retry the removal, which may stay pending until
+  the cause is removed. After **Undo** (which is not marked as completed) the record stays listed
+  as unresolved, and keeps the registry held, until it is removed: repeating Undo changes
+  nothing more and tries again.
+
+A genuine failure of the move itself still exits with 2 and says what was and was not done.
+
+**Interrupted moves.** A move keeps a record in `designs/diagrams/.transactions/<id>/` (the exact
+registry before and after, and every rename with the SHA-256 of the source). If it is interrupted,
+`check` reports E16, and no registry change and no refresh of generated text runs until you
+decide with `transaction status|complete|undo|abandon` (below). Each rename is shown at its old,
+new or intermediate path, at more than one, at none, or changed. **Complete** finishes the
+remaining renames and then writes the registry; **Undo** renames back and restores the registry
+(for an adoption, only the registry: the files stay where they were put). Both refuse to overwrite
+anything, never touch a registry that another program changed, and can be repeated. If recovery
+stops on an operating-system error after everything was already in place, it says so: repeat the
+same action to remove the record. A move is a recoverable transaction, not an atomic multi-file
+operation. These commands have been tested on Windows only; on Linux and macOS a rename is a link
+followed by an unlink, which the tests exercise only by simulation.
 
 ### Showing a diagram inside a feature (generated blocks)
 
@@ -391,6 +483,13 @@ those already updated. Both are safe to repeat, also after an interruption of th
 document that changed since, is missing, or is open in a Feature Designer window is never
 overwritten. **Abandon** removes the record and changes no document; a damaged record can only
 be abandoned, and until then no feature document is written by the design tooling.
+
+When an update (or its Complete or Undo) is verified but its record cannot be removed (for
+example another program has a file in the record's folder open), the command succeeds with a
+warning instead of reporting a failure. A completed record holds nothing and is never carried out
+again: `transaction status` lists it under "cleanup pending", and later commands retry the
+removal, which may stay pending until the cause is removed. After Undo, the record stays listed
+until it is removed; repeating Undo changes nothing more and tries again.
 
 Every command that writes takes the registry lock (below) and leaves documents held by an
 unresolved update alone. The lock is never waited for, so two commands cannot deadlock. An update

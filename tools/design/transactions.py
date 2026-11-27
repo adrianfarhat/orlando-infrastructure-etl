@@ -51,6 +51,27 @@ Limits (stated, not hidden):
   explicit `transaction forget-window`.
 - Git operations are checked by the update and by recovery (D4), not by `index`, `new feature`
   or `reconcile`.
+
+Registry moves (T-97 PR B2b-2a, decisions G1-G12, architecture diagram-library.md section 7.5)
+share this record folder with a second, independently read record version:
+  version 1  `tool: refresh-blocks` (above), written and recovered exactly as before;
+  version 2  `tool: registry-move`, with explicit operations: `rename` (a feature-owned diagram
+             source from one path to another, optionally through a recorded intermediate path in
+             the destination folder, for case-only renames; `observed` when another program
+             already renamed it and only the registry follows) and one final `registry` operation
+             (the exact original and replacement bytes of designs/diagrams/registry.yml). Its
+             write set is narrow: sources in a `diagrams/` folder under designs/features/ and the
+             registry file; never docs/architecture/.
+Any other version, or a record that does not validate, is never used: it can only be abandoned,
+and until then it blocks every writer, as in B2b-1.
+
+While a move record is unresolved (Q1), every registry writer and every refresh of generated
+text is refused, so nothing is ever derived from a partly committed identity state; read-only
+diagnostics and `transaction status|complete|undo|abandon` stay available (recovery writes the
+registry through its own compare-and-swap, so it can always release the hold). A move is a
+recoverable transaction, not an atomic multi-file operation: each rename is judged only by what
+is on disk (at the old, new or intermediate path, at more than one, at none, or changed), and a
+path in an unexpected state is never overwritten or deleted.
 """
 
 from __future__ import annotations
@@ -94,6 +115,10 @@ WINDOW_FUTURE = 300.0          # a heartbeat further ahead than this is not beli
 GIT_MARKERS = ("index.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-merge", "rebase-apply",
                "sequencer")
 CODE = "E16"
+MOVE_VERSION, MOVE_TOOL = 2, "registry-move"
+MOVE_MODES = ("move", "adopt")
+DIAGRAM_ID_RE = re.compile(r"[A-Z]{2}-\d{4}(?:-D\d+)?\Z")
+REGISTRY_BLOBS = ("registry.orig", "registry.new")
 
 
 def _sha(data: bytes) -> str:
@@ -259,6 +284,14 @@ def git_busy(root: Path) -> str:
     return ""
 
 
+class GitBusy(DesignError):
+    """A Git operation is in progress (D4). `marker` names what was found in the Git folder."""
+
+    def __init__(self, message: str, marker: str):
+        super().__init__(message)
+        self.marker = marker
+
+
 def _git_ready(root: Path) -> None:
     for attempt in range(8):               # index.lock is also taken briefly by `git status` (VS Code)
         busy = git_busy(root)
@@ -267,8 +300,8 @@ def _git_ready(root: Path) -> None:
         if busy != "index.lock" or attempt == 7:
             break
         time.sleep(0.25)
-    raise DesignError(f"a Git operation is in progress ({busy} in the Git folder); nothing was changed. "
-                      "Finish or abort it, then try again")
+    raise GitBusy(f"a Git operation is in progress ({busy} in the Git folder); nothing was changed. "
+                  "Finish or abort it, then try again", busy)
 
 
 # --------------------------------------------------------------------------- open documents (D6)
@@ -434,8 +467,25 @@ class Record:
         self.id = folder.name
 
     @property
+    def version(self) -> int | None:
+        return self.data.get("version") if self.data else None
+
+    @property
+    def is_move(self) -> bool:
+        return self.version == MOVE_VERSION
+
+    @property
     def files(self) -> list[dict]:
-        return self.data["files"] if self.data else []
+        """Version 1: the documents it replaces (version 2 records hold none)."""
+        return self.data["files"] if self.data and not self.is_move else []
+
+    @property
+    def renames(self) -> list[dict]:
+        return [o for o in self.data["ops"] if o["kind"] == "rename"] if self.is_move else []
+
+    @property
+    def registry_op(self) -> dict | None:
+        return self.data["ops"][-1] if self.is_move else None
 
 
 def _read_record(root: Path, folder: Path) -> Record:
@@ -455,8 +505,13 @@ def _read_record(root: Path, folder: Path) -> Record:
         data = json.loads(jp.read_bytes().decode("utf-8"))
     except (OSError, ValueError, UnicodeDecodeError) as exc:
         return bad(f"journal.json cannot be read ({type(exc).__name__})")
-    if not isinstance(data, dict) or data.get("format") != FORMAT or data.get("version") != VERSION:
-        return bad("journal.json is not a version-1 transaction record")
+    if not isinstance(data, dict) or data.get("format") != FORMAT:
+        return bad("journal.json is not a transaction record")
+    version = data.get("version")
+    if version == MOVE_VERSION and type(version) is int:
+        return _read_v2(root, folder, data, names)
+    if version != VERSION or type(version) is not int:
+        return bad(f"journal.json has an unknown record version ({version!r}); it is never used")
     if data.get("checksum") != _sha(_canonical(data)):
         return bad("journal.json does not match its checksum (it was changed or damaged)")
     if data.get("id") != folder.name or data.get("tool") != "refresh-blocks" or data.get("state") not in STATES:
@@ -518,6 +573,149 @@ def _read_record(root: Path, folder: Path) -> Record:
     return Record(folder, data, "")
 
 
+def _move_rel(rel) -> str:
+    """A path a registry move may touch (G5, G12): a `.md` file in a `diagrams/` folder under
+    designs/features/; never docs/architecture/. String checks only (links: safe_move_path)."""
+    rel = _clean_rel(rel)
+    parts = rel.split("/")
+    if rel == "docs/architecture" or rel.startswith("docs/architecture/"):
+        raise DesignError(f"{rel} is under docs/architecture/; a move never touches it")
+    if not (rel.startswith(FEATURES) and len(parts) >= 4 and parts[-2] == "diagrams" and rel.endswith(".md")):
+        raise DesignError(f"{rel} is not a feature-owned diagram source (a .md file in a diagrams/ folder under "
+                          f"{FEATURES})")
+    return rel
+
+
+def safe_move_path(root: Path, rel) -> Path:
+    """`rel` (in the move write set) inside the repository, with no symbolic link or junction on
+    the way (the parts that exist)."""
+    return safe_path(root, _move_rel(rel), feature=False)
+
+
+def _read_v2(root: Path, folder: Path, data: dict, names: set) -> Record:
+    def bad(why: str) -> Record:
+        return Record(folder, None, why)
+    from . import registry
+    if data.get("checksum") != _sha(_canonical(data)):
+        return bad("journal.json does not match its checksum (it was changed or damaged)")
+    if data.get("id") != folder.name or data.get("tool") != MOVE_TOOL or data.get("state") not in STATES:
+        return bad("journal.json names another record, tool or an unknown state")
+    if data.get("mode") not in MOVE_MODES:
+        return bad("journal.json has an unknown move mode")
+    if not isinstance(data.get("pid"), int) or not isinstance(data.get("host"), str):
+        return bad("journal.json does not record its process")
+    hist = data.get("history", [])
+    if not isinstance(hist, list) or not all(isinstance(h, dict) for h in hist) or not isinstance(data.get("action", ""), str):
+        return bad("journal.json has a malformed history")
+    ops = data.get("ops")
+    if not isinstance(ops, list) or not 2 <= len(ops) <= MAX_FILES + 1 or not all(isinstance(o, dict) for o in ops):
+        return bad("the operation list is malformed")
+    *renames, reg = ops
+    if reg.get("kind") != "registry" or any(o.get("kind") != "rename" for o in renames):
+        return bad("the operations must be renames followed by one registry operation")
+    observed = data["mode"] == "adopt"
+    claimed: dict[str, int] = {}                         # every path, as the file system compares it -> op
+    for i, o in enumerate(renames):
+        n = i + 1
+        if set(o) != {"kind", "diagram_id", "from", "to", "via", "sha", "observed"}:
+            return bad(f"rename {n} has unexpected or missing fields")
+        if not (isinstance(o["diagram_id"], str) and DIAGRAM_ID_RE.match(o["diagram_id"])):
+            return bad(f"rename {n}: the diagram ID is malformed")
+        if not (isinstance(o["sha"], str) and HEX64.match(o["sha"])):
+            return bad(f"rename {n}: the SHA-256 is malformed")
+        if o["observed"] is not observed:
+            return bad(f"rename {n}: observed does not match the record's mode")
+        try:
+            for key in ("from", "to"):
+                safe_move_path(root, o[key])
+            if o["via"] is not None:
+                safe_move_path(root, o["via"])
+        except DesignError as exc:
+            return bad(f"rename {n}: {exc}")
+        if o["from"] == o["to"]:
+            return bad(f"rename {n}: the old and new paths are the same")
+        case_only = o["from"].casefold() == o["to"].casefold()
+        if o["via"] is not None:
+            if observed or posixpath.dirname(o["via"]) != posixpath.dirname(o["to"]) or \
+                    not posixpath.basename(o["via"]).startswith("."):
+                return bad(f"rename {n}: the intermediate path is not a hidden file beside the destination")
+        elif case_only and not observed:
+            return bad(f"rename {n}: a case-only rename needs a recorded intermediate path")
+        for key in ("from", "to", "via"):
+            if o[key] is None:
+                continue
+            k = o[key].casefold()
+            if k in claimed and not (claimed[k] == i and case_only and key in ("from", "to")):
+                return bad(f"rename {n}: {o[key]} is also used by rename {claimed[k] + 1}")
+            claimed[k] = i
+    if set(reg) != {"kind", "path", "before_sha", "after_sha", "orig", "new"}:
+        return bad("the registry operation has unexpected or missing fields")
+    if reg["path"] != registry.REGISTRY or (reg["orig"], reg["new"]) != REGISTRY_BLOBS:
+        return bad("the registry operation names another file")
+    for key in ("before_sha", "after_sha"):
+        if not (isinstance(reg[key], str) and HEX64.match(reg[key])):
+            return bad(f"the registry {key} is malformed")
+    if reg["before_sha"] == reg["after_sha"]:
+        return bad("the registry original and replacement are the same")
+    for blob, want in (("orig", "before_sha"), ("new", "after_sha")):
+        bp = folder / reg[blob]
+        try:
+            if _is_link(bp) or not bp.is_file() or bp.stat().st_size > MAX_BYTES:
+                return bad(f"{reg[blob]} is missing or not a plain file")
+            if _sha(bp.read_bytes()) != reg[want]:
+                return bad(f"{reg[blob]} does not match its recorded checksum")
+        except OSError:
+            return bad(f"{reg[blob]} cannot be read")
+    extra = names - {JOURNAL, ".journal.tmp", *REGISTRY_BLOBS}
+    if extra:
+        return bad(f"unexpected files in the record: {', '.join(sorted(extra))}")
+    why = _registry_change_problem((folder / reg["orig"]).read_bytes(), (folder / reg["new"]).read_bytes(), renames)
+    if why:
+        return bad(why)
+    return Record(folder, data, "")
+
+
+def _plain(value):
+    """A parsed YAML value as plain Python (for exact comparison)."""
+    if isinstance(value, dict):
+        return {str(k): _plain(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_plain(v) for v in value]
+    return value
+
+
+def _registry_change_problem(before: bytes, after: bytes, renames: list[dict]) -> str:
+    """'' when `after` is `before` with exactly the renamed entries' `path` changed from `from` to
+    `to` and nothing else (QA m3: a record never carries any other registry change)."""
+    from . import registry
+    try:
+        old = _plain(registry._rt_yaml().load(before.decode("utf-8")))
+        new = _plain(registry._rt_yaml().load(after.decode("utf-8")))
+    except Exception as exc:                            # any parse failure: the record is not used
+        return f"the preserved registry copies cannot be read ({type(exc).__name__})"
+    if not (isinstance(old, dict) and isinstance(new, dict) and isinstance(old.get("diagrams"), list)
+            and isinstance(new.get("diagrams"), list) and len(old["diagrams"]) == len(new["diagrams"])):
+        return "the preserved registry copies do not have the same entries"
+    if {k: v for k, v in old.items() if k != "diagrams"} != {k: v for k, v in new.items() if k != "diagrams"}:
+        return "the registry replacement changes more than paths"
+    moves = {o["diagram_id"]: (o["from"], o["to"]) for o in renames}
+    seen = set()
+    for a, b in zip(old["diagrams"], new["diagrams"]):
+        if not (isinstance(a, dict) and isinstance(b, dict)) or a.get("diagram_id") != b.get("diagram_id"):
+            return "the preserved registry copies do not have the same entries"
+        ident = a.get("diagram_id")
+        if ident in moves:
+            if (a.get("path"), b.get("path")) != moves[ident]:
+                return f"the registry replacement does not move {ident} from {moves[ident][0]} to {moves[ident][1]}"
+            a, b = {k: v for k, v in a.items() if k != "path"}, {k: v for k, v in b.items() if k != "path"}
+            seen.add(ident)
+        if a != b:
+            return f"the registry replacement changes {ident} beyond its path"
+    if seen != set(moves):
+        return "the registry replacement does not hold every moved diagram"
+    return ""
+
+
 def records(root: Path) -> list[Record]:
     """Every unresolved transaction record (valid or not), oldest first. Read only."""
     tx = _tx_root(root, create=False)
@@ -551,6 +749,84 @@ def file_state(root: Path, f: dict) -> str:
     except OSError:
         return "changed"
     return "updated" if h == f["after_sha"] else "original" if h == f["before_sha"] else "changed"
+
+
+def _entry_sha(root: Path, rel: str) -> str | None:
+    """SHA-256 of the file at exactly `rel` (its letter case as listed by its folder), "" for
+    something else there (a folder, a link, unreadable), None when nothing has exactly that name."""
+    try:
+        p = safe_move_path(root, rel)
+    except DesignError:
+        return ""
+    try:
+        if p.name not in os.listdir(p.parent):
+            return None
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return ""
+    try:
+        if _is_link(p) or not stat.S_ISREG(os.lstat(p).st_mode):
+            return ""
+        return _sha(p.read_bytes())
+    except OSError:
+        return ""
+
+
+def _rename_where(root: Path, op: dict) -> tuple[list[str], list[str]]:
+    """(the paths holding exactly the source's bytes, the paths holding something else)."""
+    match, other = [], []
+    for name, rel in (("old", op["from"]), ("new", op["to"]), ("temp", op["via"])):
+        if rel is None:
+            continue
+        h = _entry_sha(root, rel)
+        if h is None:
+            continue
+        (match if h == op["sha"] else other).append(name)
+    return match, other
+
+
+def rename_state(root: Path, op: dict) -> str:
+    """Where one rename stands, judged only by where the source's exact bytes are: old, new or temp
+    (the recorded intermediate path) when at exactly that one; both when at more than one; changed
+    when nowhere but something else is at one of its paths (the source was edited, or replaced);
+    neither when nothing is at any of its paths. Something unrelated at another of its paths
+    (`occupied`) is reported separately and is never overwritten."""
+    match, other = _rename_where(root, op)
+    if len(match) > 1:
+        return "both"
+    if match:
+        return match[0]
+    return "changed" if other else "neither"
+
+
+def _same_file_at(root: Path, op: dict) -> list[str] | None:
+    """When the source's bytes are at more than one of its paths and every one of them is the same
+    file (a hard link: the interrupted link-then-unlink of a POSIX rename, QA M2), those location
+    names; otherwise None (real copies are never removed)."""
+    match, _other = _rename_where(root, op)
+    if len(match) < 2:
+        return None
+    where = {"old": op["from"], "new": op["to"], "temp": op["via"]}
+    try:
+        first = safe_move_path(root, where[match[0]])
+        if all(os.path.samefile(first, safe_move_path(root, where[m])) for m in match[1:]):
+            return match
+    except (OSError, DesignError):
+        return None
+    return None
+
+
+def rename_occupied(root: Path, op: dict) -> list[str]:
+    """Paths of this rename that hold something other than the source (never overwritten)."""
+    _match, other = _rename_where(root, op)
+    return [{"old": op["from"], "new": op["to"], "temp": op["via"]}[n] for n in other]
+
+
+def registry_state(root: Path, op: dict) -> str:
+    """original, replacement, or changed (anything else, including missing)."""
+    h = _registry_sha(root)
+    return "original" if h == op["before_sha"] else "replacement" if h == op["after_sha"] else "changed"
 
 
 def _registry_sha(root: Path) -> str | None:
@@ -592,6 +868,8 @@ def describe(root: Path, rec: Record, live: bool | None = None) -> dict:
                    abandon={"possible": not live, "effect": "removes the unreadable record; no document is changed"})
         out["token"] = _sha(json.dumps([rec.id, rec.problem, listing, live]).encode())[:16]
         return out
+    if rec.is_move:
+        return _describe_move(root, rec, live, out)
     d = rec.data
     files = [{"path": f["path"], "blocks": f["blocks"], "state": file_state(root, f)} for f in rec.files]
     changes = _source_changes(root, rec)
@@ -626,6 +904,80 @@ def describe(root: Path, rec: Record, live: bool | None = None) -> dict:
     return out
 
 
+def _move_paths(rec: Record) -> list[str]:
+    return [p for o in rec.renames for p in (o["from"], o["to"], o["via"]) if p is not None]
+
+
+def _describe_move(root: Path, rec: Record, live: bool, out: dict) -> dict:
+    """describe() for a version 2 (registry-move) record. `files` keeps the version 1 shape (one
+    row per rename, and one for the registry) so every existing reader can show it."""
+    d = rec.data
+    reg = rec.registry_op
+    adopt = d["mode"] == "adopt"
+    rows = [{"path": f"{o['from']} -> {o['to']}", "blocks": [o["diagram_id"]], "state": rename_state(root, o),
+             "occupied": rename_occupied(root, o),
+             "rename": {"from": o["from"], "to": o["to"], "via": o["via"], "observed": o["observed"]}} for o in rec.renames]
+    rstate = registry_state(root, reg)
+    rows.append({"path": reg["path"], "blocks": [], "state": rstate})
+    def blocked(o: dict, row: dict, goal: str) -> bool:
+        """This rename cannot reach `goal` now: its file is in an unexpected state, an observed
+        rename is not where it was found, or its next path is occupied (never overwritten)."""
+        st = row["state"]
+        if st == "both" and _same_file_at(root, o) is not None:
+            return False                               # an interrupted rename: one file, resolvable
+        if st in ("both", "neither", "changed"):
+            return True
+        if o["observed"]:
+            return goal == "new" and st != "new"
+        if st == goal:
+            return False
+        nxt = o["via"] if (o["via"] is not None and st != "temp") else (o["to"] if goal == "new" else o["from"])
+        return nxt in row["occupied"]
+    pairs = list(zip(rec.renames, rows[:-1]))
+    stuck = [r["path"] for o, r in pairs if blocked(o, r, "new")]
+    stuck_undo = [r["path"] for o, r in pairs if blocked(o, r, "old") and not o["observed"]]
+    to_new = [r["path"] for o, r in pairs if r["state"] in ("old", "temp", "both") and not o["observed"]
+              and r["path"] not in stuck]
+    to_old = [r["path"] for o, r in pairs if r["state"] in ("new", "temp", "both") and not o["observed"]
+              and r["path"] not in stuck_undo]
+    opened, unknown = open_documents(root)
+    busy = sorted({p for p in _move_paths(rec) if _key(p) in opened})
+    for r in rows[:-1]:
+        r["open"] = "; ".join(sorted({w for p in (r["rename"]["from"], r["rename"]["to"]) for w in opened.get(_key(p), [])}))
+    rows[-1]["open"] = ""
+    if live:
+        complete = undo = {"possible": False, "reason": "the registry lock is held by a process that may still be "
+                                                       "running (or cannot be verified from here); wait for it, or "
+                                                       "check it with `python -m tools.design registry unlock`"}
+    elif busy or unknown:
+        why = (f"close {', '.join(busy)} first: open in " + "; ".join(sorted({w for p in busy for w in opened[_key(p)]}))
+               if busy else "a Feature Designer window's list of open documents cannot be read; try again in a moment")
+        complete = {"possible": False, "reason": why, "writes": to_new, "left_alone": stuck}
+        undo = {"possible": False, "reason": why, "restores": to_old, "left_alone": stuck_undo}
+    else:
+        reg_write = [] if rstate == "replacement" or stuck else [reg["path"]]
+        complete = {"possible": rstate != "changed", "writes": to_new + reg_write,
+                    "left_alone": stuck + ([reg["path"]] if rstate == "changed" else []),
+                    "reason": ("refused: the registry was changed by something else since this move was prepared; it "
+                               "is never overwritten. Use Undo for the files, or Abandon after checking the registry")
+                              if rstate == "changed" else
+                              ("partly possible: the renames listed as left alone cannot reach their new path now (both, "
+                               "neither, changed, not where an observed rename was found, or the next path is "
+                               "occupied), so the registry replacement is not written until every source is at its "
+                               "new path") if stuck else ""}
+        undo = {"possible": True, "restores": to_old + ([reg["path"]] if rstate == "replacement" else []),
+                "left_alone": stuck_undo + ([reg["path"]] if rstate == "changed" else []),
+                "reason": ""}
+    out.update(tool=MOVE_TOOL, mode=d["mode"], state=d["state"], action=d.get("action") or "",
+               created=d.get("created", ""), pid=d["pid"], host=d["host"], files=rows, source_changes=[],
+               registry=rstate, complete=complete, undo=undo,
+               abandon={"possible": not live, "effect": "removes the record and its copies of the registry; every "
+                                                        "source and the registry stay exactly as they are now"})
+    out["token"] = _sha(json.dumps([d["checksum"], [(r["path"], r["state"], r.get("occupied", []), bool(r["open"]))
+                                                    for r in rows], live, bool(unknown)], sort_keys=True).encode())[:16]
+    return out
+
+
 def status(root: Path) -> list[dict]:
     """Every unresolved record with its description. Read only (used by `check`, the Feature
     Designer and `transaction status`)."""
@@ -635,22 +987,62 @@ def status(root: Path) -> list[dict]:
 
 
 def held(root: Path) -> tuple[set[str], list[str]]:
-    """Paths held by unresolved records, and the IDs of records that cannot be read (these hold
-    every feature document, since what they cover is unknown)."""
+    """Paths held by unresolved records, and the IDs of records that hold everything: records
+    that cannot be read (what they cover is unknown) and unresolved registry moves (Q1: the
+    registry and every generated text derived from it). A move also holds its source,
+    destination and intermediate paths and the registry file."""
+    from . import registry
     paths: set[str] = set()
     bad: list[str] = []
     for r in records(root):
         if r.problem:
             bad.append(r.id)
+        elif r.is_move:
+            bad.append(r.id)
+            paths.update(_move_paths(r))
+            paths.add(registry.REGISTRY)
         else:
             paths.update(f["path"] for f in r.files)
     return paths, bad
+
+
+def pending_moves(root: Path) -> list[str]:
+    """IDs of unresolved registry-move records (valid ones)."""
+    return [r.id for r in records(root) if not r.problem and r.is_move]
+
+
+def blocker_message(root: Path, ids: list[str]) -> str:
+    """Why everything is held: an unreadable record, or an unresolved registry move."""
+    moves = set(pending_moves(root))
+    mv = [i for i in ids if i in moves]
+    unreadable = [i for i in ids if i not in moves]
+    parts = []
+    if unreadable:
+        parts.append(f"an update record cannot be read ({', '.join(unreadable)})")
+    if mv:
+        parts.append(f"a registry move is unresolved ({', '.join(mv)})")
+    return " and ".join(parts)
+
+
+def registry_guard(root: Path) -> None:
+    """For every registry writer except recovery (Q1): refuse while a registry move is unresolved
+    or a record cannot be read (it could be one)."""
+    _paths, bad = held(root)
+    if bad:
+        raise DesignError(f"{blocker_message(root, bad)}, so the diagram registry is not changed until it is "
+                          f"resolved: run `python -m tools.design transaction status` ({CODE})")
 
 
 def problems(root: Path) -> list[Problem]:
     """For `check`: one problem per unresolved record (E16)."""
     out = []
     for r in records(root):
+        if not r.problem and r.is_move:
+            held_ids = ", ".join(f"{o['diagram_id']} ({o['from']} -> {o['to']})" for o in r.renames)
+            out.append(Problem(f"{TX_ROOT}/{r.id}", f"a registry move was interrupted ({r.data['state']}) and holds "
+                               f"{held_ids}: no registry change and no refresh of generated text until it is resolved: "
+                               f"run `python -m tools.design transaction status` ({CODE})"))
+            continue
         what = (f"cannot be read ({r.problem})" if r.problem else
                 f"was interrupted ({r.data['state']}) and holds {len(r.files)} document(s): "
                 + ", ".join(f['path'] for f in r.files))
@@ -668,7 +1060,7 @@ def guard(root: Path, paths=None) -> None:
         _remove_debris(root)
     hold, bad = held(root)
     if bad:
-        raise DesignError(f"an update record cannot be read ({', '.join(bad)}), so no feature document is written until "
+        raise DesignError(f"{blocker_message(root, bad)}, so no feature document is written until "
                           f"it is resolved: run `python -m tools.design transaction status` ({CODE})")
     hit = sorted(hold if paths is None else hold & set(paths))
     if hit:
@@ -711,15 +1103,94 @@ def _remove_debris(root: Path) -> list[str]:
         p = tx / name
         if _is_link(p) or not p.is_dir():
             continue
-        if (name.endswith(".preparing") or name.endswith(".done")) and ID_RE.match(name.rsplit(".", 1)[0]):
-            _remove_flat(p)
-            done.append(name)
-        elif ID_RE.match(name):
-            r = _read_record(root, p)
-            if not r.problem and r.data["state"] == "committed":
-                _finish(root, r)
-                done.append(name)
+        try:                                           # pre-PR review: best effort; what cannot be removed now stays
+            if (name.endswith(".preparing") or name.endswith(".done")) and ID_RE.match(name.rsplit(".", 1)[0]):
+                _remove_flat(p)                        # pending (`transaction status` lists it) and never blocks
+                done.append(name)                      # the command that is running
+            elif ID_RE.match(name):
+                r = _read_record(root, p)
+                if not r.problem and r.data["state"] == "committed":
+                    if r.is_move:
+                        _regenerate_index(root)
+                    _finish(root, r)
+                    done.append(name)
+        except (OSError, DesignError):
+            continue
     return done
+
+
+def _regenerate_index(root: Path) -> str:
+    """G4: diagram-index.md is derived from the registry and regenerated, never journalled. Best
+    effort (QA m4): if it cannot be written now, `check` reports it stale and `index` rewrites it;
+    it never blocks or reverses the move, recovery or another writer. Returns '' when it was
+    written (or was already up to date), otherwise why not (pre-PR review: reported, never claimed)."""
+    from . import registry
+    try:
+        registry.write_diagram_index(root)
+    except Exception as exc:                           # derived output only: nothing depends on it here
+        return f"{type(exc).__name__}: {exc}"[:300]
+    return ""
+
+
+def index_warning(problem: str) -> str:
+    return (f"{DIAGRAM_INDEX_NAME} could not be regenerated ({problem}); the identity change above is complete and is "
+            "not affected. `check` reports the index as out of date until `python -m tools.design index` rewrites it")
+
+
+DIAGRAM_INDEX_NAME = "designs/index/diagram-index.md"
+
+
+def _finish_safely(root: Path, rec: Record) -> str:
+    """Remove a resolved record after its primary operation was verified (pre-PR review). Returns ''
+    when removed, otherwise why not: the failure is reported as pending cleanup, never as a failure
+    of the operation, and the removal is retried by later diagram commands."""
+    try:
+        _finish(root, rec)
+    except OSError as exc:
+        return f"{type(exc).__name__}: {exc}"[:300]
+    return ""
+
+
+def cleanup_warning(rec: Record, problem: str, action: str) -> str:
+    """What a pending cleanup means: whether the record is still listed (and what that holds) or only
+    its removal is unfinished. Never promises when the removal will succeed."""
+    listed = rec.folder.is_dir() and rec.data is not None and rec.data.get("state") != "committed"
+    if listed:
+        what = ("the registry" if rec.is_move else "its documents")
+        return (f"removing the record {rec.id} failed ({problem}). It is still listed by `python -m tools.design "
+                f"transaction status` and holds {what} until it is removed: repeating {action.capitalize()} changes "
+                "nothing more and tries the removal again. It may stay pending until the cause (for example another "
+                "program using the folder) is removed")
+    return (f"removing the record {rec.id} failed ({problem}). It is marked as completed: it holds nothing and is never "
+            "carried out again. Later diagram commands retry the removal, which may stay pending until the cause (for "
+            "example another program using the folder) is removed; `python -m tools.design transaction status` lists it "
+            "meanwhile")
+
+
+def pending_cleanup(root: Path) -> list[dict]:
+    """Record folders whose operation is over but whose removal is unfinished (read only): completed
+    and verified records, resolved records being removed (`.done`), and preparations that never
+    started (`.preparing`). None of them holds anything or is ever carried out again."""
+    tx = _tx_root(root, create=False)
+    out: list[dict] = []
+    if tx is None:
+        return out
+    for name in sorted(os.listdir(tx)):
+        p = tx / name
+        if name == "windows" or _is_link(p) or not p.is_dir():
+            continue
+        if name.endswith(".done") or name.endswith(".preparing"):
+            base, kind = name.rsplit(".", 1)[0], ("resolved; its removal is unfinished" if name.endswith(".done") else
+                                                   "never started (interrupted while it was prepared); nothing was changed")
+        else:
+            base = name
+            r = _read_record(root, p) if ID_RE.match(name) else None
+            if r is None or r.problem or r.data["state"] != "committed":
+                continue
+            kind = "completed and verified; its removal is unfinished"
+        if ID_RE.match(base):
+            out.append({"id": base, "folder": name, "kind": kind})
+    return out
 
 
 def _finish(root: Path, rec: Record) -> None:
@@ -786,7 +1257,8 @@ def affected(root: Path, exclude_window: str = "") -> dict:
         ids = [diagrams.START.match(new[0]).group("id") for _s, _e, new in todo]
         conflicts = [b.diagram_id for b in blocks if diagrams._usable(b, known) and diagrams.classify(
             b, lines[b.start + 1:b.end], diagrams.render(known[b.diagram_id], f.path)) in diagrams.CONFLICTS]
-        excluded = ("part of an update that is running or was interrupted" if f.path in hold or bad else
+        excluded = ((blocker_message(root, bad) + ": resolve it first") if bad else
+                    "part of an update that is running or was interrupted" if f.path in hold else
                     "open in " + "; ".join(opened[_key(f.path)]) if _key(f.path) in opened else "")
         docs.append({"path": f.path, "sha256": _sha(data), "blocks": ids, "conflicts": conflicts, "excluded": excluded})
     return {"documents": docs, "sources_token": sources_token(root, known), "unknown_windows": unknown,
@@ -856,8 +1328,9 @@ def update(root: Path, requests: list[tuple[str, str]], expect_token: str | None
             if sources_token(root) != token or _source_changes(root, rec):
                 raise DesignError("a diagram source or the registry changed while the update was prepared")
         except DesignError as exc:
-            _finish(root, rec)                         # no document was touched
-            raise DesignError(f"{exc}; nothing was changed") from None
+            cleanup = _finish_safely(root, rec)        # no document was touched
+            raise DesignError(f"{exc}; nothing was changed"
+                              + (f"; {cleanup_warning(rec, cleanup, 'abandon')}" if cleanup else "")) from None
         return _commit(root, rec)
 
 
@@ -933,9 +1406,12 @@ def _commit(root: Path, rec: Record) -> dict:
         _fault(root, "before-committed-mark")
         _set(root, rec, state="committed")
         _fault(root, "after-committed-mark")
-        _finish(root, rec)
-        return {"ok": True, "id": rec.id, "files": [{"path": f["path"], "blocks": f["blocks"], "state": "updated"}
-                                                    for f in rec.files]}
+        out = {"ok": True, "id": rec.id, "files": [{"path": f["path"], "blocks": f["blocks"], "state": "updated"}
+                                                   for f in rec.files], "warnings": []}
+        cleanup = _finish_safely(root, rec)            # pre-PR review: the update is complete and verified either way
+        if cleanup:
+            out["warnings"].append(cleanup_warning(rec, cleanup, "complete"))
+        return out
     _set(root, rec, state="rolling-back", action="rollback")
     for i, f in enumerate(rec.files):
         try:
@@ -949,11 +1425,12 @@ def _commit(root: Path, rec: Record) -> dict:
     # to its original; a document it never wrote that someone else changed is theirs, not this update's.
     ours = [p for p, st in states.items() if st == "updated" or (p in replaced and st != "original")]
     if not ours:
-        _finish(root, rec)
+        cleanup = _finish_safely(root, rec)
         others = [p for p, st in states.items() if st != "original"]
         raise DesignError(f"{failure}; every document this update wrote is back to its original, so this update "
                           "changed nothing" + (f" ({', '.join(others)} was changed by another program before this "
-                                               "update wrote it)" if others else ""))
+                                               "update wrote it)" if others else "")
+                          + (f"; {cleanup_warning(rec, cleanup, 'undo')}" if cleanup else ""))
     _set(root, rec, state="needs-attention")
     left = ", ".join(f"{p} ({states[p]})" for p in ours)
     raise DesignError(f"{failure}; PARTLY DONE: not every document could be put back ({left}). The record "
@@ -1014,6 +1491,8 @@ def resolve(root: Path, tx_id: str, action: str, token: str) -> dict:
                     "message": "the record was removed; no document was changed"}
         if rec.problem:
             raise DesignError(f"the record cannot be trusted ({rec.problem}): only Abandon is possible")
+        if rec.is_move:
+            return _resolve_move(root, rec, action, now, note)
         if action == "undo" and not now["undo"]["possible"]:
             raise DesignError(now["undo"]["reason"])
         if action == "complete":
@@ -1045,10 +1524,309 @@ def resolve(root: Path, tx_id: str, action: str, token: str) -> dict:
         if all(f["state"] == goal for f in files):
             if goal == "updated":
                 _set(root, rec, state="committed")
-            _finish(root, rec)
-            return {"ok": True, "id": tx_id, "action": action, "note": note, "files": files,
-                    "message": "completed: every document is updated" if goal == "updated" else
-                               "undone: every document is as it was before the update"}
+            message = ("completed: every document is updated" if goal == "updated" else
+                       "undone: every document is as it was before the update")
+            out = {"ok": True, "id": tx_id, "action": action, "note": note, "files": files, "warnings": []}
+            cleanup = _finish_safely(root, rec)        # pre-PR review: the documents are verified either way
+            if cleanup:
+                out["warnings"].append(cleanup_warning(rec, cleanup, action))
+                message += "; warning: " + out["warnings"][-1]
+            out["message"] = message
+            return out
         _set(root, rec, state="needs-attention")
         return {"ok": False, "id": tx_id, "action": action, "note": note, "files": files,
                 "message": "partly done: the documents marked changed or missing were left alone; the record is kept"}
+
+
+# --------------------------------------------------------------------------- registry moves (version 2)
+
+def _move_rename(root: Path, src: str, dst: str, sha: str) -> str:
+    """Rename exactly `src` to `dst`, only if `src` has exactly the expected bytes and nothing is at
+    `dst` (in any letter case; never overwritten). "skipped" (not done), "done" (verified), or
+    "unverified" (renamed, but the result is not as expected)."""
+    _git_ready(root)
+    ps, pd = safe_move_path(root, src), safe_move_path(root, dst)
+    if _entry_sha(root, src) != sha:
+        return "skipped"
+    if os.path.lexists(pd) and not (os.path.normcase(str(ps)) == os.path.normcase(str(pd))
+                                    and _entry_sha(root, dst) is None):
+        return "skipped"
+    pd.parent.mkdir(parents=True, exist_ok=True)       # a new diagrams/ folder; folders are never removed (Q2)
+    safe_move_path(root, dst)                          # nothing on the way became a link
+    if sys.platform == "win32":
+        os.rename(ps, pd)                              # fails if the destination exists
+    else:
+        os.link(ps, pd)                                # fails if the destination exists (no silent overwrite)
+        os.unlink(ps)
+    _fsync_dir(pd.parent)
+    if ps.parent != pd.parent:
+        _fsync_dir(ps.parent)
+    return "done" if _entry_sha(root, dst) == sha and _entry_sha(root, src) is None else "unverified"
+
+
+def _drive(root: Path, rec: Record, i: int, op: dict, goal: str, tag: str) -> str:
+    """Move one rename's file to `goal` (old or new), through its intermediate path when it has
+    one. Only a file found in exactly one expected place is moved; anything else is left alone.
+    Returns the state afterwards."""
+    where = {"old": op["from"], "new": op["to"], "temp": op["via"]}
+    st = rename_state(root, op)
+    if st == "both":                                   # QA M2: one file at two paths (an interrupted POSIX rename)
+        same = _same_file_at(root, op)
+        if same is None:
+            return st                                  # real copies: left alone
+        keep = goal if goal in same else "temp" if "temp" in same else same[0]
+        _git_ready(root)                               # QA S1 minor: as before every other change of a path
+        for name in same:
+            if name != keep:
+                drop = safe_move_path(root, where[name])
+                if os.path.samefile(drop, safe_move_path(root, where[keep])):   # checked again just before
+                    os.unlink(drop)
+        _fsync_dir(safe_move_path(root, where[keep]).parent)
+        st = rename_state(root, op)
+    if st == goal or st not in where or where[st] is None:
+        return st
+    if op["via"] is not None and st != "temp":
+        if _move_rename(root, where[st], op["via"], op["sha"]) != "done":
+            return rename_state(root, op)
+        _fault(root, f"{tag}-temp:{i + 1}")
+        st = "temp"
+    _move_rename(root, where[st], where[goal], op["sha"])
+    return rename_state(root, op)
+
+
+def _write_registry(root: Path, rec: Record, want: str, blob: str) -> str:
+    """Compare-and-swap of the registry file: replaced only while it has `want`."""
+    from . import registry
+    reg = rec.registry_op
+    _git_ready(root)
+    p = safe_path(root, registry.REGISTRY, feature=False)
+    if _registry_sha(root) != want:
+        return "skipped"
+    data = (rec.folder / reg[blob]).read_bytes()
+    if _sha(data) != reg["after_sha" if blob == "new" else "before_sha"]:
+        raise DesignError(f"the preserved copy {reg[blob]} no longer matches its checksum; the registry was not written")
+    _replace(p, data, prefix=".registry.")
+    return "written" if _registry_sha(root) == _sha(data) else "unverified"
+
+
+def prepare_move(root: Path, mode: str, renames: list[dict], registry_before: bytes, registry_after: bytes) -> Record:
+    """Write and verify a version 2 record (inside the registry lock; the caller validated the
+    batch). `renames`: diagram_id, from, to, via (or None), sha. Nothing outside the record is
+    touched."""
+    from . import registry
+    if mode not in MOVE_MODES:
+        raise DesignError(f"unknown move mode {mode!r}")
+    if not registry.holds_lock(root):
+        raise DesignError("a registry move is prepared only inside the registry lock")
+    registry_guard(root)                               # QA M1: never a second move, or beside an unreadable record
+    if not isinstance(renames, list) or not 1 <= len(renames) <= MAX_FILES:   # QA m5: the shape, before anything is written
+        raise DesignError("a move needs 1 to %d renames" % MAX_FILES)
+    for r in renames:
+        if not (isinstance(r, dict) and {"diagram_id", "from", "to", "sha"} <= set(r) <= {"diagram_id", "from", "to", "sha", "via"}
+                and all(isinstance(r[k], str) for k in ("diagram_id", "from", "to", "sha"))
+                and isinstance(r.get("via"), (str, type(None)))):
+            raise DesignError(f"a rename is malformed: {r!r}")
+    if not (isinstance(registry_before, bytes) and isinstance(registry_after, bytes)):
+        raise DesignError("the registry copies must be bytes")
+    tx = _tx_root(root, create=True)
+    tx_id = f"tx-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"
+    staging = tx / (tx_id + ".preparing")
+    staging.mkdir()
+    _write_new(staging / "registry.orig", registry_before)
+    _fault(root, "move-after-orig")
+    _write_new(staging / "registry.new", registry_after)
+    _fault(root, "move-after-new")
+    ops = [{"kind": "rename", "diagram_id": r["diagram_id"], "from": r["from"], "to": r["to"], "via": r.get("via"),
+            "sha": r["sha"], "observed": mode == "adopt"} for r in renames]
+    ops.append({"kind": "registry", "path": registry.REGISTRY, "before_sha": _sha(registry_before),
+                "after_sha": _sha(registry_after), "orig": "registry.orig", "new": "registry.new"})
+    data = {"format": FORMAT, "version": MOVE_VERSION, "id": tx_id, "tool": MOVE_TOOL, "mode": mode,
+            "pid": os.getpid(), "host": platform.node(), "created": _now(), "state": "prepared", "action": "",
+            "ops": ops, "history": [{"time": _now(), "state": "prepared", "action": ""}]}
+    _fault(root, "move-before-journal")
+    _save_journal(staging, data)
+    _fault(root, "move-after-journal")
+    os.rename(staging, tx / tx_id)
+    _fsync_dir(tx)
+    _fault(root, "move-after-prepare")
+    rec = _read_record(root, tx / tx_id)
+    if rec.problem:
+        _remove_flat(tx / tx_id)                       # nothing outside the record was touched
+        raise DesignError(f"the move record could not be verified ({rec.problem}); nothing was changed")
+    return rec
+
+
+def commit_move(root: Path, rec: Record) -> dict:
+    """Carry out a prepared move record (inside the registry lock): the renames in order (an
+    observed one is only verified), then the registry. On a failure, what this move did is put
+    back where it is still exactly as it left it; otherwise the record is kept (needs-attention)."""
+    _set(root, rec, state="committing")
+    _fault(root, "move-after-committing-mark")
+    failure = ""
+    for i, op in enumerate(rec.renames):
+        try:
+            if op["observed"]:
+                st = rename_state(root, op)
+                if st != "new":
+                    failure = f"{op['to']} no longer holds {op['diagram_id']} as it was found ({st})"
+                    break
+                continue
+            _fault(root, f"move-before-rename:{i + 1}")
+            st = _drive(root, rec, i, op, "new", "move")
+            if st != "new":
+                failure = f"{op['from']} could not be moved to {op['to']} ({st})"
+                break
+            _fault(root, f"move-after-rename:{i + 1}")
+        except (OSError, DesignError) as exc:
+            failure = f"{op['from']} could not be moved to {op['to']} ({exc})"
+            break
+    wrote_registry = False
+    if not failure:
+        try:
+            _fault(root, "move-before-registry")
+            done = _write_registry(root, rec, rec.registry_op["before_sha"], "new")
+            wrote_registry = done != "skipped"
+            if done != "written":
+                failure = ("the registry changed while the move ran" if done == "skipped" else
+                           "the registry was replaced, but what is on disk now is not what was written")
+            else:
+                _fault(root, "move-after-registry")
+        except (OSError, DesignError) as exc:
+            failure = f"the registry could not be written ({exc})"
+            wrote_registry = True                      # it may or may not have been replaced
+    if not failure:
+        _fault(root, "move-before-committed-mark")
+        _set(root, rec, state="committed")
+        _fault(root, "move-after-committed-mark")
+        # The identity change is complete and verified from here on; what follows is secondary (pre-PR review).
+        index = _regenerate_index(root)                # before the record goes: a crash while removing it leaves nothing stale
+        _fault(root, "move-before-cleanup")
+        cleanup = _finish_safely(root, rec)
+        return {"ok": True, "id": rec.id, "renames": [{"diagram_id": o["diagram_id"], "from": o["from"], "to": o["to"]}
+                                                       for o in rec.renames],
+                "index": {"regenerated": not index, "problem": index},
+                "warnings": ([index_warning(index)] if index else []) +
+                            ([cleanup_warning(rec, cleanup, "complete")] if cleanup else [])}
+    _set(root, rec, state="rolling-back", action="rollback")
+    try:
+        if registry_state(root, rec.registry_op) == "replacement":
+            _write_registry(root, rec, rec.registry_op["after_sha"], "orig")
+    except (OSError, DesignError):
+        pass
+    for i, op in reversed(list(enumerate(rec.renames))):
+        if op["observed"]:
+            continue
+        try:
+            _drive(root, rec, i, op, "old", "move-rollback")      # also an interrupted POSIX rename (one file, two paths)
+        except (OSError, DesignError):
+            pass
+        _fault(root, f"move-rollback-after:{i + 1}")
+    # Resolved when every source this move renamed is back at its old path and the registry holds
+    # nothing this move wrote; a registry another program changed before this move wrote it is theirs.
+    reg_now = registry_state(root, rec.registry_op)
+    back = all(op["observed"] or rename_state(root, op) == "old" for op in rec.renames)
+    if back and (reg_now == "original" or (reg_now == "changed" and not wrote_registry)):
+        cleanup = _finish_safely(root, rec)
+        raise DesignError(f"{failure}; every source this move renamed is back at its old path and this move did not "
+                          "change the registry" + (" (another program changed it meanwhile; it was left as it is)"
+                                                   if reg_now == "changed" else "") + ", so this move changed nothing"
+                          + (f"; {cleanup_warning(rec, cleanup, 'undo')}" if cleanup else ""))
+    _set(root, rec, state="needs-attention")
+    raise DesignError(f"{failure}; PARTLY DONE: not everything could be put back. The record {rec.id} keeps the "
+                      f"original registry: run `python -m tools.design transaction status` ({CODE})")
+
+
+def _move_clean(root: Path, rec: Record, goal: str) -> bool:
+    """Every rename this move carries out at `goal` (observed ones: at new for completion, any for
+    undo) and the registry at the matching state."""
+    want_reg = "replacement" if goal == "new" else "original"
+    if registry_state(root, rec.registry_op) != want_reg:
+        return False
+    for op in rec.renames:
+        st = rename_state(root, op)
+        if op["observed"]:
+            if goal == "new" and st != "new":
+                return False
+        elif st != goal:
+            return False
+    return True
+
+
+def _resolve_move(root: Path, rec: Record, action: str, now: dict, note: str) -> dict:
+    """Complete or Undo a version 2 record (inside the registry lock, on the state that was shown).
+    Complete: the renames still at the old or intermediate path go to the new path, then the
+    registry replacement, written only while the registry is still the original and every source
+    is at its new path. Undo: the renames at the new or intermediate path go back, then the
+    registry original, written only while the registry is exactly the replacement. Anything in
+    another state is left alone. Both can be repeated."""
+    failure = ""
+    side = now["complete"] if action == "complete" else now["undo"]
+    if not side["possible"]:                           # refused before anything is marked or changed
+        raise DesignError(side["reason"])
+    try:
+        goal = _carry_out(root, rec, action, now)
+    except OSError as exc:                             # QA m2: e.g. a file locked by another program
+        goal, failure = ("new" if action == "complete" else "old"), f"{type(exc).__name__}: {exc}"
+    except GitBusy as exc:                             # a Git operation started while recovering
+        goal = "new" if action == "complete" else "old"
+        failure = f"a Git operation started while this ran ({exc.marker} in the Git folder), so the remaining steps were not carried out"
+    rows = describe(root, rec, live=False)["files"]
+    clean = _move_clean(root, rec, goal)
+    if not failure and clean:
+        if goal == "new":
+            _set(root, rec, state="committed")
+        # verified from here on; the index and the record's removal are secondary (pre-PR review)
+        index = _regenerate_index(root)
+        cleanup = _finish_safely(root, rec)
+        warnings = ([index_warning(index)] if index else []) + ([cleanup_warning(rec, cleanup, action)] if cleanup else [])
+        message = ("completed: every source is at its new path and the registry names it" if goal == "new" else
+                   ("undone: the registry is as it was before the move" +
+                    ("; the sources stay where they were found (an observed rename): `check` reports them (E6)"
+                     if rec.data["mode"] == "adopt" else "; every source is back at its old path")))
+        return {"ok": True, "id": rec.id, "action": action, "note": note, "files": rows,
+                "index": {"regenerated": not index, "problem": index}, "warnings": warnings,
+                "message": message + "".join(f"; warning: {w}" for w in warnings)}
+    try:
+        _set(root, rec, state="needs-attention")
+    except OSError:                                    # the journal itself cannot be written now (pre-PR review): the
+        pass                                           # result below is still reported; the record keeps its last state
+    if failure and clean:
+        # QA S1 minor: the error came after the last step it could affect, so everything is already where
+        # this action leads; the record is still kept, because the error is not explained by what is on disk.
+        return {"ok": False, "id": rec.id, "action": action, "note": note, "files": rows, "effectively_done": True,
+                "message": f"stopped by an error ({failure}), but every source and the registry are now exactly as "
+                           f"{action.capitalize()} leaves them. The record is "
+                           f"kept because the error was not explained: check that no other program is using these files, "
+                           f"then repeat `python -m tools.design transaction {action} {rec.id}` (it changes nothing more "
+                           "and removes the record)"}
+    return {"ok": False, "id": rec.id, "action": action, "note": note, "files": rows,
+            "message": (f"partly done ({failure}): " if failure else "partly done: ") +
+                       "what could not be renamed or written was left alone; the record is kept. Repeat the action "
+                       "once the cause is removed (`python -m tools.design transaction status`)"}
+
+
+def _carry_out(root: Path, rec: Record, action: str, now: dict) -> str:
+    if action == "complete":
+        _set(root, rec, state="completing", action="complete")
+        _fault(root, "move-complete-after-mark")
+        for i, op in enumerate(rec.renames):
+            if not op["observed"] and rename_state(root, op) in ("old", "temp", "both"):
+                _drive(root, rec, i, op, "new", "move-complete")
+            _fault(root, f"move-complete-after:{i + 1}")
+        if registry_state(root, rec.registry_op) == "original" and \
+                all(rename_state(root, op) == "new" for op in rec.renames):
+            _write_registry(root, rec, rec.registry_op["before_sha"], "new")
+            _fault(root, "move-complete-after-registry")
+        goal = "new"
+    else:
+        _set(root, rec, state="undoing", action="undo")
+        _fault(root, "move-undo-after-mark")
+        if registry_state(root, rec.registry_op) == "replacement":
+            _write_registry(root, rec, rec.registry_op["after_sha"], "orig")
+            _fault(root, "move-undo-after-registry")
+        for i, op in reversed(list(enumerate(rec.renames))):
+            if not op["observed"] and rename_state(root, op) in ("new", "temp", "both"):
+                _drive(root, rec, i, op, "old", "move-undo")
+            _fault(root, f"move-undo-after:{i + 1}")
+        goal = "old"
+    return goal

@@ -64,6 +64,18 @@ Requests (all carry "version": 1 and "op"):
 - {"op": "transactions"}
     every unresolved update record (E16) with each file's current state, what Complete, Undo
     and Abandon would do, and the token that confirms a decision on exactly that state.
+- {"op": "move-plan", "mode": "move" | "adopt", "moves": [{"from": ..., "to": ..., "sha256": ...}]}
+    the validated plan for `registry move` (mode move: the tooling renames the files) or
+    `registry adopt-moves` (mode adopt: the files were already renamed; "moves" may be omitted
+    for every adoptable E6 match) (T-97 PR B2b-2a): `possible`, every `problem` (any one refuses
+    the whole batch), `renames` (diagram_id, from, to, via: the intermediate path of a case-only
+    rename, sha: the source's SHA-256), the registry's SHA-256 before and after, the references
+    to each moved diagram, `skipped` and the `token` that `--confirm` takes. The optional
+    `sha256` is the content the caller knows (before a rename). Read only.
+- {"op": "moved"}
+    the registered sources missing at their path (E6/E7): `matches` (exactly one unregistered
+    file holds the ID; `problem` '' when it can be adopted), `ambiguous`, `missing` and
+    `architecture` (document-owned: technical-lead's workflow, G5). Read only.
 Requests that propose edits to a document (insert, refresh, remove-block, reconcile) are refused
 while that document is part of an unresolved update, or while an update record cannot be read.
 
@@ -457,12 +469,39 @@ def _text(value, name: str = "text") -> str:
 def _not_held(root: Path, rel: str) -> None:
     """Requirement 10: no edit is proposed for a document held by an unresolved update."""
     hold, bad = transactions.held(root)
-    if bad:
-        raise Refused(f"an update record cannot be read ({', '.join(bad)}); resolve it first "
+    if bad:                                         # unreadable records, and unresolved registry moves (Q1)
+        raise Refused(f"{transactions.blocker_message(root, bad)}; resolve it first "
                       "(Feature Designer: Resolve Interrupted Update) (E16)")
     if transactions._key(rel) in {transactions._key(h) for h in hold}:
         raise Refused(f"{rel} is part of an interrupted update of closed documents; resolve it first "
                       "(Feature Designer: Resolve Interrupted Update) (E16)")
+
+
+def _move_plan(root: Path, request: dict) -> dict:
+    """The read-only plan of a registry move or adoption (PR B2b-2a S2)."""
+    from . import moves
+    mode = request.get("mode")
+    if mode not in moves.MODES:
+        raise BadRequest("`mode` must be move or adopt")
+    items = request.get("moves")
+    if items is None and mode == "adopt":
+        reqs = None
+    else:
+        if not isinstance(items, list) or not items or len(items) > transactions.MAX_FILES:
+            raise BadRequest(f"`moves` must be a list of 1 to {transactions.MAX_FILES} {{from, to[, sha256]}} objects")
+        reqs = []
+        for m in items:
+            if not (isinstance(m, dict) and set(m) <= {"from", "to", "sha256"} and isinstance(m.get("from"), str)
+                    and isinstance(m.get("to"), str) and m["from"] and m["to"]):
+                raise BadRequest("each move must be {\"from\": <ID or path>, \"to\": <path>, \"sha256\": <optional>}")
+            want = m.get("sha256")
+            if want is not None and not (isinstance(want, str) and transactions.HEX64.match(want)):
+                raise BadRequest("`sha256` must be 64 lowercase hexadecimal characters")
+            reqs.append((m["from"], m["to"], want))
+    try:
+        return moves.plan(root, mode, reqs).to_json()
+    except DesignError as exc:
+        raise BadRequest(str(exc)) from None
 
 
 def handle(root: Path, request) -> tuple[dict, int]:
@@ -518,9 +557,14 @@ def handle(root: Path, request) -> tuple[dict, int]:
             result = transactions.affected(root, window)
         elif op == "transactions":
             result = {"records": transactions.status(root)}
+        elif op == "move-plan":
+            result = _move_plan(root, request)
+        elif op == "moved":
+            from . import moves
+            result = moves.moved(root)
         else:
             raise BadRequest(f"unknown op {op!r} (library, insert, refresh, resolve, blocks, diagram-name, "
-                             "remove-block, reconcile, feature-index, affected, transactions)")
+                             "remove-block, reconcile, feature-index, affected, transactions, move-plan, moved)")
         return {"version": VERSION, "op": op, "ok": True, **result}, EXIT_OK
     except Refused as exc:
         return {"version": VERSION, "ok": False, "error": {"code": "refused", "message": str(exc)}}, EXIT_REFUSED

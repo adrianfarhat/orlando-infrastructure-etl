@@ -94,6 +94,14 @@ test("transaction arguments: an explicit action, a record ID and the decision to
     assert.throws(() => commands.transactionArgs({ id: "tx-20261125T010203Z-0123abcd", token: TOKEN, ...b }));
 });
 
+test("a completed update whose record could not be removed is a success that carries its warning (exit code 0)", async () => {
+  const done = { ok: true, id: "tx-20261125T010203Z-0123abcd", files: [{ path: "designs/features/a.md", blocks: ["FD-0001-D1"], state: "updated" }],
+                 warnings: ["removing the record tx-20261125T010203Z-0123abcd failed (PermissionError)"] };
+  const r = await commands.refreshBlocks({ python: "py", root: "/r", execFileImpl: (f, a, o, cb) => cb(null, JSON.stringify(done), "") },
+                                         { files: [{ path: "designs/features/a.md", sha256: SHA }], token: TOKEN });
+  assert.deepStrictEqual([r.ok, r.files.length, r.warnings], [true, 1, done.warnings]);
+});
+
 test("a partly possible recovery (exit code 1 with a JSON answer) is a result, not a failure", async () => {
   const fake = (out, code) => (file, argv, options, cb) => { const e = code ? Object.assign(new Error("x"), { code }) : null; cb(e, out, ""); };
   const r = await commands.resolveTransaction({ python: "py", root: "/r", execFileImpl: fake(JSON.stringify({ ok: false, message: "partly done", files: [] }), 1) },

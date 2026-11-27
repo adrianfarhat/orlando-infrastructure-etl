@@ -1162,12 +1162,31 @@ async function prB2b1Steps() {
   await step("S10b a document changed between listing and confirming: nothing is written", async () => {
     await backToDesigner();
     const label = changeSource();
-    const { pf } = await openUpdatePanel();
-    const before = CLOSED.map(readWs);
-    fs.appendFileSync(path.join(WS, CLOSED[0]), "\nA hand edit made after the list was shown.\n");
-    const edited = readWs(CLOSED[0]);
-    await pf.locator(".confirm-update").click();
-    const result = await resultOf(pf);
+    // The source change makes B2a recount the closed documents a moment later, which redraws an open
+    // panel in place. Wait for that recount (the strip shows the new count) before opening the panel,
+    // so the hand edit below lands after the list is final (found in GUI runs: a redraw after the edit
+    // showed the new list, which was then rightly updated).
+    const { pf } = await openUpdatePanel(/3 other documents/);
+    // The hand edit itself is a change on disk, so the panel is redrawn with the new list a moment later
+    // (correct: Confirm then updates exactly what is shown; found in the pre-PR GUI run). To test a list
+    // that changed *before* Confirm, the button of the list shown before the edit is tagged and clicked
+    // inside the panel in one step, only if no redraw replaced it; otherwise the attempt is repeated.
+    let before = [], edited = "", result = "", how = "";
+    for (let attempt = 0; attempt < 5 && how !== "clicked"; attempt++) {
+      await sleep(800);                                                        // a pending redraw settles first
+      await waitFor(() => pf.evaluate(() => { const b = document.querySelector(".confirm-update"); return !!b && !b.disabled; }), 15000);
+      await pf.evaluate(() => { document.querySelector(".confirm-update").dataset.listedBeforeEdit = "1"; });
+      before = CLOSED.map(readWs);
+      fs.appendFileSync(path.join(WS, CLOSED[0]), "\nA hand edit made after the list was shown.\n");
+      edited = readWs(CLOSED[0]);
+      how = await pf.evaluate(() => {
+        const b = document.querySelector(".confirm-update");
+        if (!b || b.dataset.listedBeforeEdit !== "1" || b.disabled) return "redrawn";
+        b.click();
+        return "clicked";
+      });
+    }
+    if (how === "clicked") result = await resultOf(pf);
     const unchanged = readWs(CLOSED[0]) === edited && readWs(CLOSED[1]) === before[1] && readWs(CLOSED[2]) === before[2];
     await clearResult(pf);
     await waitFor(() => pf.evaluate(() => { const b = document.querySelector(".confirm-update"); return b && !b.disabled; }), 10000);
