@@ -113,7 +113,8 @@
     else if (m.type === "partial") { state.partial = { recovery: m.recovery, id: m.id, source: m.source, reason: m.reason }; strip(); }
     else if (m.type === "reconciled") { state.syncNote = null; status(m.text); strip(); }
     else if (m.type === "review") openReview(m);
-    else if (m.type === "heldNote") { state.held = !!m.held; strip(); }
+    else if (m.type === "heldNote") { state.held = !!m.held; state.heldKind = m.kind || "update"; strip(); }
+    else if (m.type === "movedNote") { state.moved = m.note || null; strip(); }     // PR B2b-2b: E6
     else if (m.type === "closedNote") { state.closed = m.count || m.elsewhere ? { count: m.count, elsewhere: m.elsewhere } : null; strip(); }
   });
 
@@ -141,9 +142,16 @@
       btn("finish", "Update the block now", () => post({ type: "recovery", recovery: p.recovery, kind: "finish" })),
       btn("restore", "Restore the original source", () => post({ type: "recovery", recovery: p.recovery, kind: "restore" }))));
     if (state.held) parts.push(h("div", { class: "strip-row held", role: "alert" },
-      h("span", { text: "This document is part of an interrupted update of closed documents. Nothing refreshes its diagrams until " +
-                        "that update is completed, undone or abandoned; your own edits are unaffected." }),
+      h("span", { text: state.heldKind === "move"
+        ? "A registry move was interrupted. Nothing refreshes the diagrams of any document until that move is completed, " +
+          "undone or abandoned; your own edits are unaffected."
+        : "This document is part of an interrupted update of closed documents. Nothing refreshes its diagrams until " +
+          "that update is completed, undone or abandoned; your own edits are unaffected." }),
       btn("resolve-update", "Review…", () => post({ type: "resolveUpdate" }), "Show the interrupted update and decide what to do")));
+    if (state.moved) parts.push(h("div", { class: "strip-row moved", role: "status" },      // PR B2b-2b: E6, derived from disk
+      h("span", { text: state.moved.text }),
+      state.moved.count ? btn("review-moves", "Review…", () => post({ type: "reviewMoves" }),
+                              "Update the registry, move the files back, or decide later (nothing is written before you choose)") : null));
     if (state.closed && state.closed.count) parts.push(h("div", { class: "strip-row closed" },
       h("span", { text: `${plural(state.closed.count, "other document", "other documents")} (not open) ${state.closed.count === 1 ? "has" : "have"} ` +
                         "out-of-date diagrams." + (state.closed.elsewhere ? ` ${plural(state.closed.elsewhere, "more is", "more are")} open in another window and ` +

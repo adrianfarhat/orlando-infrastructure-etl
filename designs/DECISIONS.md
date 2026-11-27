@@ -741,3 +741,70 @@ unchanged.
    which Mark Sharp reads as part of the list before it, is still reformatted by Mark Sharp
    (indentation dropped, blank lines added): the known behaviour behind step 11f, with the same 4
    conflicts as before T-98, reported as E15 and restored by Discard manual change.
+
+## 2026-11-27: T-97 PR B2b-2b — Feature Designer rename integration (implementation choices)
+
+Implements plan stages S3-S4 of the approved B2b-2 plan (C6, R2, D2, G1-G12 unchanged). Choices made
+while implementing, for review:
+
+1. **The pre-rename snapshot is its own read-only operation** (`rename-preview`). `move-plan` mode
+   adopt validates the state *after* a rename (the old path must be gone), so before the rename it
+   can only refuse. `rename-preview` reuses the same helpers (moves.py) and returns the registered
+   sources at or under each old path, their SHA-256, the registry revision, the architecture
+   notice cases (G5), held paths (G9) and warnings; nothing is refused, because VS Code cannot
+   cancel a rename. The adoption itself still goes through `move-plan` mode adopt with each
+   `sha256`. The snapshot waits at most 4 seconds (`waitUntil` with a timeout); without it, the
+   sources are identified from disk (E6) and adopted without a checksum, which the prompt says.
+2. **`registry adopt-moves --sha256 HEX`**, repeated once per `--from`/`--to` pair, binds the
+   checksum taken before the rename (the JSON `move-plan` already accepted it). Feature Designer
+   passes a checksum for every source of a batch or for none, never a mixture.
+3. **Move the files back is a new mode of the B2b-2a engine, `restore`** (CLI `registry
+   move-back --from NOW --to REGISTERED [--sha256]`; designer `move-plan` mode restore). In that
+   state the registry still names the old paths, so `registry move` cannot express it. A restore
+   record is version 2 with renames only (tool-initiated, the same compare-and-swap renames,
+   intermediate path for case-only, rollback, Complete/Undo/Abandon) and no `registry` operation:
+   it records the registry's SHA-256 (`registry_sha`) and never writes the registry; Complete is
+   refused if the registry changed since it was prepared. While it is unresolved it holds the
+   registry like any move record (Q1). Validation: the diagram's identity and owner in the file,
+   the bytes from before the rename when given, the registered path free in any letter case,
+   links, held paths, open windows (conservative presence), Git, the approved folders on both
+   sides (`docs/architecture/` refused), and no ID at two unregistered paths. **The write set was
+   not widened**: a file moved outside the approved `diagrams/` folders (or under
+   `docs/architecture/`) is not moved back by the tooling; the prompt says so and VS Code's own
+   Undo (or a manual rename) moves it back.
+4. **"Nothing preselected" in a VS Code modal.** The prompt is one VS Code modal per batch.
+   Because the custom dialog focuses its first button, **Not now** (which writes nothing) is
+   listed first; Escape, Cancel and closing the dialog are also Not now. No writing choice is a
+   default, and every writing choice needs a click.
+5. **A batch is adopted as far as it can be.** Each file is checked on disk after the rename;
+   one that changed, is missing, or that the tooling refuses (for example moved outside the
+   approved folders) is listed with its reason and not adopted. The rest is offered as one
+   adoption only when it is possible as a whole. Move the files back is all or nothing.
+6. **Letter case from disk.** VS Code reports a case-only rename with the file's old letter case on
+   Windows (its URIs are canonicalised), so the new path is read back from the folder after the
+   rename. A path that did not change on disk was not renamed and is not prompted for. Through the
+   extension API (`WorkspaceEdit.renameFile`) VS Code performs no case-only rename at all on
+   Windows; the GUI tests therefore use the Explorer (F2) for case-only renames.
+7. **Event storms (C5).** The file events of one rename batch count as one event. When the
+   registry follows a batch of more than five sources, the following refresh is treated as a
+   storm: open documents get the one summary with Refresh now instead of automatic refreshes.
+8. **Moved-sources strip row (E6).** "N moved sources: registry not updated" counts the moved
+   sources found (adoptable or not) and those found at several paths; missing sources (E7) are
+   reported in the same row; architecture sources are never offered (G5). It is derived from disk
+   by the read-only `moved` operation on start, on file and registry changes and after every
+   prompt, in every Feature Designer window. A checksum taken before a rename in the same session
+   is reused when that rename is adopted later from the row; nothing is persisted for Not now (G3).
+9. **Warnings that cannot prevent anything** (G9 held paths, unsaved sources in another window,
+   collisions, links, folders outside the approved ones, Git) are shown in the prompt; a rename
+   that affects only a held document, or only architecture paths, gives a non-modal warning or
+   the G5 notice instead of a prompt.
+10. **Recovery wording.** Version 2 records are shown in Resolve Interrupted Update as "Registry
+    move" with their kind (tool-initiated, observed, move back), per-rename and registry states,
+    and Complete/Undo/Abandon labels for moves; version 1 records keep their wording. The designer
+    `transactions` operation also returns `cleanup` (as `transaction status` lists it), shown as
+    "Cleanup pending". An unresolved move record holds every open document in Feature Designer,
+    as the design tooling already does (Q1), with its own strip wording.
+11. **Test infrastructure.** The GUI harness port can be overridden (`FD_GUI_PORT`, default 9341
+    unchanged) so two worktrees can run GUI tests at once; the test helper gained `rename` (a
+    `WorkspaceEdit` rename, which runs the same will/did-rename participants as the Explorer) and
+    `reveal`.

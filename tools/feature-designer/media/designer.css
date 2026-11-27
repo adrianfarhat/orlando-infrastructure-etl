@@ -137,3 +137,4 @@ body.placing .block > .plus { opacity: 1; color: var(--accent); }
 .review label.replace-confirm { display: flex; flex-direction: row; gap: 8px; align-items: center; font-size: 13px; color: var(--fg); margin: 8px 0; }
 #strip .strip-row.held { border-left: 3px solid var(--vscode-editorWarning-foreground, #c80); }
 #strip .strip-row.closed { border-left: 3px solid var(--vscode-focusBorder, #08f); }
+#strip .strip-row.moved { border-left: 3px solid var(--vscode-editorWarning-foreground, #c80); }   /* PR B2b-2b: E6 */

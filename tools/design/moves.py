@@ -11,6 +11,11 @@ documents). A refresh that fails or is refused never reverses a completed move.
 - `registry move` (tool-initiated): the tooling renames the files itself, then the registry.
 - `registry adopt-moves` (observed, G2): VS Code, Git or another program already renamed them;
   only the registry follows, after the identity and content at each destination are validated.
+- `registry move-back` (T-97 PR B2b-2b, Feature Designer's "Move the files back"): sources that
+  another program renamed while the registry still names their old paths are renamed back by the
+  tooling (tool-initiated, recorded, mode `restore`); the registry is not changed.
+- `preview` (read only, B2b-2b): what a rename that is about to happen would affect, computed
+  before it happens (VS Code's pre-rename event), with each source's SHA-256 then.
 
 Planning is read only (`plan_move`, `plan_adopt`, `moved`): it validates the whole batch and
 returns every problem, or the exact renames, the exact registry replacement and a token bound to
@@ -34,7 +39,7 @@ from .workspace import DesignError
 
 FEATURES = "designs/features"
 ARCHITECTURE = "docs/architecture"
-MODES = ("move", "adopt")
+MODES = ("move", "adopt", "restore")
 _sha = transactions._sha
 
 
@@ -284,7 +289,9 @@ def _finish_plan(ctx: _Context, plan: Plan) -> Plan:
     for did, n in ids.items():
         if n > 1:
             plan.problems.append(f"{did} is listed {n} times in the batch")
-    if plan.renames and not plan.problems:
+    if plan.renames and not plan.problems and plan.mode == "restore":
+        plan.after = plan.before                       # a Move back never changes the registry
+    elif plan.renames and not plan.problems:
         try:
             doc = registry._writable(ctx.reg)
             for r in plan.renames:
@@ -656,11 +663,207 @@ def plan_adopt(root: Path, requests=None) -> Plan:
     return _finish_plan(ctx, plan)
 
 
+# --------------------------------------------------------------------------- move-back (tool-initiated, B2b-2b)
+
+def _check_restore(ctx: _Context, plan: Plan, e, cur: str, want: str | None) -> None:
+    """One Move back: the unregistered file at `cur` holding `e`'s identity is renamed back to `e`'s
+    registered path, which must be free. The registry is not changed (it already names that path)."""
+    root = ctx.root
+    to = e.path
+    label = f"{e.diagram_id} ({cur} -> {to})"
+    why = _movable(e) or _write_set(cur, label) or _write_set(to, label)
+    if why:
+        plan.problems.append(why)
+        return
+    if cur == to:
+        plan.problems.append(f"{label}: it is already at its registered path")
+        return
+    for p in (_links(root, cur, label), _links(root, to, label)):
+        if p:
+            plan.problems.append(p)
+            return
+    h = transactions._entry_sha(root, cur)
+    if h is None:
+        plan.problems.append(f"{label}: there is no file at {cur} with exactly this letter case")
+        return
+    if h == "":
+        plan.problems.append(f"{label}: {cur} is not a plain file (a folder, a link or unreadable) (A7)")
+        return
+    if want is not None and h != want:
+        plan.problems.append(f"{label}: {cur} does not have the content it had before the rename (its SHA-256 differs), "
+                             "so it is not moved back")
+        return
+    s = ctx.files.get(cur)
+    if s is None or s.diagram_id != e.diagram_id or s.feature_id != e.owner_ref or s.owner_document:
+        plan.problems.append(f"{label}: the front matter of {cur} does not hold {e.diagram_id} owned by {e.owner_ref} "
+                             "(E3); nothing is guessed")
+        return
+    other = ctx.registered.get(cur.casefold())
+    if other is not None and other.diagram_id != e.diagram_id:
+        plan.problems.append(f"{label}: {cur} is the registered path of {other.diagram_id}")
+        return
+    cands = sorted(ctx.unregistered.get(e.diagram_id, []))
+    if len(cands) > 1:
+        plan.problems.append(f"{e.diagram_id} is at {len(cands)} unregistered paths ({', '.join(cands)}): nothing is "
+                             "guessed; keep one of them (A8)")
+        return
+    case_only = cur.casefold() == to.casefold()
+    occ = _occupant(root, to)
+    if occ and not (case_only and occ == cur):
+        plan.problems.append(f"{label}: {occ} already exists, so the old path is not free; an existing file is never "
+                             "overwritten (A9)")
+        return
+    why = _folder_problem(root, to)
+    if why:
+        plan.problems.append(f"{label}: {why}")
+        return
+    via = None
+    if case_only:
+        via = _intermediate(to, e.diagram_id)
+        if _occupant(root, via):
+            plan.problems.append(f"{label}: the intermediate path {via} already exists; remove it first")
+            return
+    plan.renames.append({"diagram_id": e.diagram_id, "from": cur, "to": to, "via": via, "sha": h})
+
+
+def plan_restore(root: Path, requests) -> Plan:
+    """The validated plan for `registry move-back` (read only). `requests`: (current path, registered
+    path, ID or alias[, sha]): each source that was renamed to its current path while the registry
+    still names its old path goes back there. Refused (the whole batch) unless every file still
+    holds its identity (and, when given, the bytes it had before the rename), every registered
+    path is free, and no Feature Designer window has either path open."""
+    root = Path(root).resolve()
+    plan = Plan("restore")
+    reqs = _requests(requests)
+    ctx = _Context(root, plan)
+    _blockers(root, plan)
+    for raw_cur, raw_to, want in reqs:
+        cur = _norm(raw_cur, "--from")
+        try:
+            transactions._clean_rel(cur)
+        except DesignError as exc:
+            plan.problems.append(f"--from {raw_cur!r}: {exc}")
+            continue
+        e = ctx.lookup.get(raw_to.strip()) or ctx.by_path.get(_norm(raw_to, "--to"))
+        if e is None:
+            plan.problems.append(f"{raw_to}: not a registered diagram ID, alias or path (--to names where the registry "
+                                 "says the source belongs)")
+            continue
+        _check_restore(ctx, plan, e, cur, want)
+    if not plan.problems:
+        _open_problems(root, plan)
+    return _finish_plan(ctx, plan)
+
+
+# --------------------------------------------------------------------------- before a rename (read only, B2b-2b)
+
+def preview(root: Path, requests, window: str = "") -> dict:
+    """What a rename that is about to happen would affect (Feature Designer's pre-rename snapshot;
+    VS Code cannot cancel a rename, so nothing here refuses anything). `requests`: (old, new) file or
+    folder paths. Read only. Returns:
+      sources       registered, active, feature-owned entries at or under an old path, with the path
+                    they will have and their SHA-256 now (None when not at the registered path), and
+                    `problem` ('' when the move tooling could adopt such a rename; G12: decided here)
+      architecture  document-owned sources affected, and renames into or out of docs/architecture/ (G5)
+      held          batch paths held by an unresolved record (G9: warned; recovery treats them as missing)
+      warnings      what the adoption will refuse or what may go wrong (collisions, links, folders
+                    outside the approved ones, unsaved in another Feature Designer window, Git busy)
+      references    {ID: [reference lines]} for the affected sources
+      registry_sha  the registry's SHA-256 now."""
+    root = Path(root).resolve()
+    plan = Plan("adopt")
+    ctx = _Context(root, plan)
+    out = {"sources": [], "architecture": [], "held": [], "warnings": list(plan.problems), "references": {},
+           "registry_sha": _sha(plan.before) if plan.before else None, "skipped": []}
+    pairs = []
+    for raw_old, raw_new in requests:
+        old, new = _norm(raw_old, "a renamed path"), _norm(raw_new, "a new path")
+        try:
+            transactions._clean_rel(old)
+            transactions._clean_rel(new)
+        except DesignError as exc:
+            out["warnings"].append(f"{raw_old} -> {raw_new}: {exc}")
+            continue
+        pairs.append((old, new))
+        if _architecture(old) or _architecture(new):
+            out["architecture"].append({"diagram_id": "", "from": old, "to": new})
+    heldpaths, bad = transactions.held(root)
+    if bad:
+        out["warnings"].append(f"{transactions.blocker_message(root, bad)}: no registry change is possible until it is "
+                               f"resolved (`python -m tools.design transaction status`) ({transactions.CODE})")
+    held_keys = {transactions._key(h): h for h in heldpaths}
+    for old, new in pairs:
+        for k, h in held_keys.items():
+            if k == transactions._key(old) or k.startswith(transactions._key(old) + "/"):
+                rec = next((r.id for r in transactions.records(root) if not r.problem and
+                            h in ([f["path"] for f in r.files] + transactions._move_paths(r))), "")
+                out["held"].append({"path": h, "new": new + h[len(old):], "record": rec})
+    mine = []
+    for e in ctx.reg.entries:
+        for old, new in pairs:
+            if e.path.casefold() == old.casefold():
+                to = new
+            elif e.path.casefold().startswith(old.casefold() + "/"):
+                to = new + e.path[len(old):]
+            else:
+                continue
+            if e.owner_kind != "feature":
+                out["architecture"].append({"diagram_id": e.diagram_id, "from": e.path, "to": to})
+            elif e.status != "active":
+                out["skipped"].append(f"{e.diagram_id} ({e.path}) was retired: it is not adopted")
+            else:
+                mine.append((e, to))
+            break
+    tos: dict[str, str] = {}
+    for e, to in mine:
+        label = f"{e.diagram_id} ({e.path} -> {to})"
+        h = transactions._entry_sha(root, e.path)
+        problem = (_movable(e) or _write_set(e.path, label) or _write_set(to, label) or _links(root, to, label)
+                   or (f"{label}: {_name_problem(to)}" if _name_problem(to) else ""))
+        if not problem and h is None:
+            problem = f"{label}: {e.path} is not at its registered path now (E6/E7)"
+        elif not problem and h == "":
+            problem = f"{label}: {e.path} is not a plain file (a folder, a link or unreadable) (A7)"
+        occ = _occupant(root, to)
+        if not problem and occ and occ.casefold() != e.path.casefold():
+            problem = f"{label}: {occ} already exists (a rename onto it would replace an unrelated file) (A5)"
+        other = ctx.registered.get(to.casefold())
+        if not problem and other is not None and other.diagram_id != e.diagram_id:
+            problem = f"{label}: {to} is the registered path of {other.diagram_id} (A5)"
+        if not problem and to.casefold() in tos and tos[to.casefold()] != e.diagram_id:
+            problem = f"{label}: {tos[to.casefold()]} would be renamed to the same path ignoring letter case (G7)"
+        tos[to.casefold()] = e.diagram_id
+        out["sources"].append({"diagram_id": e.diagram_id, "title": e.title, "format": e.format, "from": e.path, "to": to,
+                               "sha256": h or None, "problem": problem})
+        out["references"][e.diagram_id] = registry.references(root, e, ctx.reg)
+    if mine:
+        for w in transactions.window_records(root):
+            if w["name"] == window:
+                continue
+            if w["state"] == "unreadable":
+                out["warnings"].append(f"a Feature Designer window's list of open documents cannot be read ({w['name']}): "
+                                       "a source may be open with unsaved changes there")
+                continue
+            for d in w["documents"]:
+                if d["dirty"] and any(transactions._key(d["path"]) in (transactions._key(e.path), transactions._key(t))
+                                      for e, t in mine):
+                    out["warnings"].append(f"{d['path']} is open with unsaved changes in {transactions._describe_window(w, True)}: "
+                                           "saving it there writes it back at its old path (a copy, E4); save or close "
+                                           "it there first")
+        busy = transactions.git_busy(root)
+        if busy and busy != "index.lock":
+            out["warnings"].append(f"a Git operation is in progress ({busy} in the Git folder): the registry cannot be "
+                                   "updated until it finishes (D4)")
+    return out
+
+
 # --------------------------------------------------------------------------- carrying it out
 
 def plan(root: Path, mode: str, requests) -> Plan:
     if mode not in MODES:
-        raise DesignError(f"the mode must be move or adopt, not {mode!r}")
+        raise DesignError(f"the mode must be move, adopt or restore, not {mode!r}")
+    if mode == "restore":
+        return plan_restore(root, requests)
     return plan_move(root, requests) if mode == "move" else plan_adopt(root, requests)
 
 

@@ -63,7 +63,9 @@ Requests (all carry "version": 1 and "op"):
     window, or held by an interrupted update); `sources_token`; windows whose list cannot be read.
 - {"op": "transactions"}
     every unresolved update record (E16) with each file's current state, what Complete, Undo
-    and Abandon would do, and the token that confirms a decision on exactly that state.
+    and Abandon would do, and the token that confirms a decision on exactly that state; and, in
+    `cleanup` (B2b-2b), record folders whose operation is over but whose removal is unfinished
+    (as `transaction status` lists them: they hold nothing).
 - {"op": "move-plan", "mode": "move" | "adopt", "moves": [{"from": ..., "to": ..., "sha256": ...}]}
     the validated plan for `registry move` (mode move: the tooling renames the files) or
     `registry adopt-moves` (mode adopt: the files were already renamed; "moves" may be omitted
@@ -71,7 +73,15 @@ Requests (all carry "version": 1 and "op"):
     the whole batch), `renames` (diagram_id, from, to, via: the intermediate path of a case-only
     rename, sha: the source's SHA-256), the registry's SHA-256 before and after, the references
     to each moved diagram, `skipped` and the `token` that `--confirm` takes. The optional
-    `sha256` is the content the caller knows (before a rename). Read only.
+    `sha256` is the content the caller knows (before a rename). Mode "restore" (B2b-2b, `registry
+    move-back`): "from" is where a renamed source is now, "to" its registered path or ID; the
+    tooling renames it back and the registry is not changed. Read only.
+- {"op": "rename-preview", "moves": [{"from": <old path>, "to": <new path>}], "window": <ID, optional>}
+    before a rename happens (Feature Designer's pre-rename snapshot, B2b-2b; nothing is refused,
+    because VS Code cannot cancel a rename): the registered sources at or under each old path with
+    the path they will have, their SHA-256 now and a `problem` ('' when an adoption could follow);
+    `architecture` (document-owned sources, or paths under docs/architecture/: G5), `held` (paths
+    held by an unresolved record: G9), `warnings`, `references` and `registry_sha`. Read only.
 - {"op": "moved"}
     the registered sources missing at their path (E6/E7): `matches` (exactly one unregistered
     file holds the ID; `problem` '' when it can be adopted), `ambiguous`, `missing` and
@@ -482,7 +492,7 @@ def _move_plan(root: Path, request: dict) -> dict:
     from . import moves
     mode = request.get("mode")
     if mode not in moves.MODES:
-        raise BadRequest("`mode` must be move or adopt")
+        raise BadRequest("`mode` must be move, adopt or restore")
     items = request.get("moves")
     if items is None and mode == "adopt":
         reqs = None
@@ -500,6 +510,27 @@ def _move_plan(root: Path, request: dict) -> dict:
             reqs.append((m["from"], m["to"], want))
     try:
         return moves.plan(root, mode, reqs).to_json()
+    except DesignError as exc:
+        raise BadRequest(str(exc)) from None
+
+
+def _rename_preview(root: Path, request: dict) -> dict:
+    """The read-only snapshot taken before a rename (PR B2b-2b)."""
+    from . import moves
+    items = request.get("moves")
+    if not isinstance(items, list) or not items or len(items) > transactions.MAX_FILES:
+        raise BadRequest(f"`moves` must be a list of 1 to {transactions.MAX_FILES} {{from, to}} objects")
+    reqs = []
+    for m in items:
+        if not (isinstance(m, dict) and set(m) == {"from", "to"} and isinstance(m["from"], str)
+                and isinstance(m["to"], str) and m["from"] and m["to"]):
+            raise BadRequest("each move must be {\"from\": <old path>, \"to\": <new path>}")
+        reqs.append((m["from"], m["to"]))
+    window = request.get("window", "")
+    if not isinstance(window, str) or not re.fullmatch(r"[0-9a-f]{16}|", window):
+        raise BadRequest("`window` must be a window ID")
+    try:
+        return moves.preview(root, reqs, window)
     except DesignError as exc:
         raise BadRequest(str(exc)) from None
 
@@ -556,15 +587,18 @@ def handle(root: Path, request) -> tuple[dict, int]:
                 raise BadRequest("`window` must be a window ID")
             result = transactions.affected(root, window)
         elif op == "transactions":
-            result = {"records": transactions.status(root)}
+            result = {"records": transactions.status(root), "cleanup": transactions.pending_cleanup(root)}
         elif op == "move-plan":
             result = _move_plan(root, request)
         elif op == "moved":
             from . import moves
             result = moves.moved(root)
+        elif op == "rename-preview":
+            result = _rename_preview(root, request)
         else:
             raise BadRequest(f"unknown op {op!r} (library, insert, refresh, resolve, blocks, diagram-name, "
-                             "remove-block, reconcile, feature-index, affected, transactions, move-plan, moved)")
+                             "remove-block, reconcile, feature-index, affected, transactions, move-plan, moved, "
+                             "rename-preview)")
         return {"version": VERSION, "op": op, "ok": True, **result}, EXIT_OK
     except Refused as exc:
         return {"version": VERSION, "ok": False, "error": {"code": "refused", "message": str(exc)}}, EXIT_REFUSED

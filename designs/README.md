@@ -47,7 +47,8 @@ Other commands:
 | `python -m tools.design resolve <ID or alias>` | Show a diagram's authoritative source (JSON); writes nothing |
 | `python -m tools.design reconcile --file F --line N --discard\|--apply-to-source` | Resolve a diagram block that was edited by hand: shows the change, applies it only with `--confirm <token>` |
 | `python -m tools.design registry move SOURCE [...] --to DEST [...] [--confirm TOKEN]` | Move feature-owned diagram sources (by ID, path or folder) and their registry paths as one recorded, recoverable move; shows the plan first and acts only with the `--confirm` token it prints (see [Moving diagram sources](#moving-diagram-sources)) |
-| `python -m tools.design registry adopt-moves [--from OLD --to NEW ...] [--confirm TOKEN]` | Update the registry for sources already renamed by VS Code, Git or another program (without arguments: every moved source `check` reports, E6); shows the plan first |
+| `python -m tools.design registry adopt-moves [--from OLD --to NEW [--sha256 HEX] ...] [--confirm TOKEN]` | Update the registry for sources already renamed by VS Code, Git or another program (without arguments: every moved source `check` reports, E6); `--sha256` (one per `--from`) is the content the file had before the rename; shows the plan first |
+| `python -m tools.design registry move-back --from NOW --to REGISTERED [--sha256 HEX] [...] [--confirm TOKEN]` | Rename sources that were renamed while the registry still names their old paths back to those paths, as one recorded, recoverable move; the registry is not changed; shows the plan first |
 | `python -m tools.design refresh-blocks --file F --expect SHA256 [...] --sources-token T` | Refresh the out-of-date diagram blocks of several closed feature documents as one recoverable update (not an atomic multi-file write: a failure rolls back what it wrote, an interruption leaves a record to complete or undo); refused if any changed since it was listed (used by the Feature Designer; see [Interrupted updates](#interrupted-updates-of-closed-documents)) |
 | `python -m tools.design transaction status\|complete\|undo\|abandon [ID] [--confirm TOKEN]` | Show or resolve an interrupted update (E16): each action shows its effect first and acts only with the `--confirm` token it prints |
 | `python -m tools.design transaction windows` / `transaction forget-window NAME [--confirm]` | List the Feature Designer window records (responding, not responding, unreadable) and the documents each protects; remove one that is not responding or unreadable, only with `--confirm` and only when that window is no longer open |
@@ -343,9 +344,28 @@ yet, and with 2 when it is refused; carrying it out exits with 0.
 **What adoption can prove.** `registry adopt-moves` validates the source as it is *now* at its new
 path: it holds the diagram's ID and owner, and it is a well-formed Mermaid source. Without the
 SHA-256 the file had before it was renamed, it cannot prove that the bytes are unchanged by the
-rename (for example a program that edited the file while moving it). Feature Designer's rename
-integration (PR B2b-2b) can pass that checksum, taken just before VS Code renames the file, with
-the `move-plan` request (`sha256`); the adoption is then refused if the content differs.
+rename (for example a program that edited the file while moving it). Give it with `--sha256 HEX`
+(one per `--from`, in the same order): the adoption is then refused if the content differs.
+Feature Designer passes the checksum it took just before VS Code renamed the file.
+
+**From Feature Designer (PR B2b-2b).** An Explorer rename or move of registered sources (one file
+or a folder) gives one prompt for the whole batch in the window where it happened, with nothing
+that writes as the default: **Not now** (nothing is written; the status strip of every Feature
+Designer view then shows "N moved sources: registry not updated", also after a restart),
+**Update the registry** (`registry adopt-moves --sha256`), **Update the registry and N closed
+documents** (then the Update Closed Documents confirmation) and **Move the files back**
+(`registry move-back`). Renames made outside VS Code appear in the same strip row with the same
+prompt. See `tools/feature-designer/README.md`.
+
+**Moving files back.** `registry move-back --from <where it is now> --to <its registered path or
+ID>` renames a source that was renamed while the registry still names its old path back to that
+path, through a recorded move (mode `restore`; a case-only one through a hidden intermediate
+file). It is refused unless the file holds the diagram's ID and owner (and, with `--sha256`, the
+bytes it had before), the registered path is free (also in other letter case), both paths are in
+an approved `diagrams/` folder, no Feature Designer window has either path open, no record is
+unresolved and no Git operation is in progress. The registry is never written; Complete of an
+interrupted move back is refused if the registry changed since it was prepared (Undo puts the
+files back where they were found).
 
 **After the move: secondary steps.** Once the move is verified, two things remain, and neither
 can undo it:

@@ -64,8 +64,11 @@ function heartbeatTick() {
 // ------------------------------------------------------------------ unresolved records (E16)
 function isHeld(root, rel) {
   const h = held.get(root);
-  return !!h && (h.unreadable || h.paths.has(key(rel)));
+  return !!h && (h.unreadable || h.move || h.paths.has(key(rel)));
 }
+// PR B2b-2b: an unresolved registry move (a version 2 record) holds every document: no generated text is
+// refreshed from a partly committed identity state (Q1); the design tooling refuses it too.
+const isMove = (rec) => rec.valid && rec.tool === "registry-move";
 
 async function refreshHeld(root, { offer = true } = {}) {
   let r;
@@ -73,15 +76,16 @@ async function refreshHeld(root, { offer = true } = {}) {
   catch (err) { deps.log(`[updates] records not checked: ${err.message}`); return; }
   const records = r.records || [];
   const paths = new Set();
-  for (const rec of records) for (const f of rec.files || []) paths.add(key(f.path));
-  held.set(root, { paths, records, unreadable: records.some((x) => !x.valid) });
+  for (const rec of records) if (!isMove(rec)) for (const f of rec.files || []) paths.add(key(f.path));
+  const move = records.some(isMove);
+  held.set(root, { paths, records, unreadable: records.some((x) => !x.valid), move });
   for (const [k, set] of deps.panels) {
     if (!set.size) continue;
     let docRoot;
     try { docRoot = deps.rootOf(vscode.Uri.parse(k)); } catch { continue; }
     if (docRoot !== root) continue;
     const rel = deps.relPath(root, vscode.Uri.parse(k));
-    deps.postAll(k, { type: "heldNote", held: isHeld(root, rel), records: records.length });
+    deps.postAll(k, { type: "heldNote", held: isHeld(root, rel), records: records.length, kind: move ? "move" : "update" });
   }
   if (views.get("recovery")) showRecovery(false, false);
   // An update still running in another process leaves no file event when that process ends (it may be
@@ -94,9 +98,16 @@ async function refreshHeld(root, { offer = true } = {}) {
   if (offer && fresh.length) {
     fresh.forEach((x) => offered.add(x.id));
     const review = "Review…";
-    const n = records.reduce((s, x) => s + (x.files || []).length, 0);
-    vscode.window.showWarningMessage(`An update of closed feature documents was interrupted${n ? ` (${n} document${n === 1 ? "" : "s"})` : ""}. ` +
-      "Nothing more is written to those documents until you decide; the original and updated copies are preserved.", review)
+    const updatesOnly = fresh.filter((x) => !isMove(x)), movesOnly = fresh.filter(isMove);
+    const n = updatesOnly.reduce((s, x) => s + (x.files || []).length, 0);
+    const m = movesOnly.reduce((s, x) => s + (x.files || []).filter((f) => f.rename).length, 0);
+    const text = movesOnly.length
+      ? `A registry move was interrupted${m ? ` (${m} diagram source${m === 1 ? "" : "s"})` : ""}. No registry change and no refresh of ` +
+        "generated diagram text happens until you decide; the registry copies and every rename are recorded." +
+        (updatesOnly.length ? " An update of closed feature documents is also unresolved." : "")
+      : `An update of closed feature documents was interrupted${n ? ` (${n} document${n === 1 ? "" : "s"})` : ""}. ` +
+        "Nothing more is written to those documents until you decide; the original and updated copies are preserved.";
+    vscode.window.showWarningMessage(text, review)
       .then((a) => { if (a === review) showRecovery(); });          // dismissing keeps the record (D8)
   }
 }
@@ -192,13 +203,14 @@ async function runUpdate(root, files, token) {
 // ------------------------------------------------------------------ recovery (D2, D8)
 async function showRecovery(force = false, reveal = true) {
   const p = panel("recovery", "Resolve Interrupted Update", reveal);
-  const all = [];
+  const all = [], cleanup = [];
   for (const root of roots()) {
     let r;
     try { r = await deps.ask(root, "transactions", {}, false); } catch (err) { all.push({ root, error: String(err.message || err) }); continue; }
     for (const rec of r.records || []) all.push({ root, ...rec });
+    for (const c of r.cleanup || []) cleanup.push({ root, ...c });   // pre-PR review (B2b-2a): discoverable, holds nothing
   }
-  p.webview.postMessage({ type: "recovery", records: all, force });
+  p.webview.postMessage({ type: "recovery", records: all, cleanup, force });
 }
 
 async function runResolve(root, id, action, token) {
@@ -228,7 +240,8 @@ async function onPanelMessage(kind, m) {
     if (typeof m.root !== "string" || !["complete", "undo", "abandon"].includes(m.action)) return;
     try {
       const r = await runResolve(m.root, m.id, m.action, m.token);
-      if (views.get("recovery") === p) p.webview.postMessage({ type: "result", ok: r.ok, message: r.message, files: r.files || [], note: r.note || "" });
+      if (views.get("recovery") === p) p.webview.postMessage({ type: "result", ok: r.ok, message: r.message, files: r.files || [], note: r.note || "",
+                                                               index: r.index || null, warnings: Array.isArray(r.warnings) ? r.warnings : [] });
     } catch (err) {
       if (views.get("recovery") === p) p.webview.postMessage({ type: "result", ok: false, message: String(err.message || err) });
     }
@@ -282,6 +295,7 @@ function activate(context, d) {
     windowId: () => windowId,
     isHeld, refreshHeld, offerClosed, showUpdate, showRecovery,
     heldPaths: (root) => [...((held.get(root) || {}).paths || [])],
+    records: (root) => ((held.get(root) || {}).records || []),
     closedNote: (root) => closed.get(root) || null,
     publishNow: publishAll,
   };

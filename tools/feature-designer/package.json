@@ -31,7 +31,8 @@
       { "command": "featureDesigner.checkSources", "title": "Feature Designer: Check Diagram Sources" },
       { "command": "featureDesigner.recovery", "title": "Feature Designer: Resolve Interrupted Apply to Source" },
       { "command": "featureDesigner.updateClosedDocuments", "title": "Feature Designer: Update Closed Documents…" },
-      { "command": "featureDesigner.resolveUpdate", "title": "Feature Designer: Resolve Interrupted Update" }
+      { "command": "featureDesigner.resolveUpdate", "title": "Feature Designer: Resolve Interrupted Update" },
+      { "command": "featureDesigner.reviewMovedSources", "title": "Feature Designer: Review Moved Diagram Sources…" }
     ],
     "configuration": {
       "title": "Feature Designer",

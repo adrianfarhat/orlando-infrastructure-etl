@@ -31,6 +31,8 @@ let recoveryDir = null;                          // durable records of Apply to 
 const snapshots = new Map();                     // Show changes: read-only copies of the text, by id
 const updates = require("./updates");            // PR B2b-1: closed documents and their recovery
 let upd = null;
+const renames = require("./renames");            // PR B2b-2b: renames of diagram sources (one prompt per batch; E6 row)
+let ren = null;
 
 const log = (s) => output && output.appendLine(`${new Date().toISOString()} ${s}`);
 
@@ -145,6 +147,13 @@ function textEditorOpen(uri) {
 // ------------------------------------------------------------------ source changes (B3, C1, C2, C5)
 const sourceTimers = new Map();                  // repository root -> pending sync
 const stormSeen = new Map();                     // repository root -> sources counted when a storm was seen (QA M1)
+// PR B2b-2b (C5): the file events of one rename batch (a folder of sources, say) count as ONE event. A batch
+// that moves more than STORM_COUNT sources is then marked as a storm when the registry follows (markStorm),
+// so its open documents get one summary with Refresh now instead of automatic refreshes.
+const renameBatches = new Map();                 // repository root -> { pairs, until, id }
+let batchSeq = 0;
+function noteBatch(root, pairs) { renameBatches.set(root, { pairs, until: Date.now() + 10000, id: ++batchSeq }); }
+function markStorm(root, count) { stormSeen.set(root, Math.max(stormSeen.get(root) || 0, count)); }
 
 /** A file changed on disk: if it is a diagram source, refresh the open documents (debounced). */
 function onSourceEvent(uri) {
@@ -152,7 +161,10 @@ function onSourceEvent(uri) {
   if (!folder) return;
   const root = folder.uri.fsPath, rel = relPath(root, uri);
   if (!sync.isSourcePath(rel)) return;           // a feature document's own save never triggers a refresh
-  if (storm.record(`${root}|${rel}`, Date.now())) stormSeen.set(root, Math.max(stormSeen.get(root) || 0, storm.size(Date.now())));
+  const batch = renameBatches.get(root);
+  const one = batch && Date.now() < batch.until && renames.inBatch(batch.pairs, rel);
+  if (storm.record(one ? `${root}|rename-batch:${batch.id}` : `${root}|${rel}`, Date.now()))
+    stormSeen.set(root, Math.max(stormSeen.get(root) || 0, storm.size(Date.now())));
   clearTimeout(sourceTimers.get(root));
   sourceTimers.set(root, setTimeout(() => syncOpenDocuments(root).catch((err) => log(`[sync] ${err.stack || err}`)), 400));
 }
@@ -414,6 +426,10 @@ class DesignerEditor {
           const note = upd.closedNote(root);
           if (note) panel.webview.postMessage({ type: "closedNote", ...note });
         }
+        if (ren) panel.webview.postMessage({ type: "movedNote", note: ren.note(root) });   // PR B2b-2b: E6
+        return;
+      case "reviewMoves":                             // PR B2b-2b: the E6 row's Review… (the one-prompt flow)
+        await ren.review(root);
         return;
       case "updateClosed":                            // PR B2b-1: the confirmation lists every document first
         await upd.showUpdate(root);
@@ -774,6 +790,8 @@ function activate(context) {
     { dispose: () => { for (const b of bridges.values()) b.dispose(); bridges.clear(); } });
   setTimeout(() => offerRecovery().catch((err) => log(`[recovery] ${err.message}`)), 1500);
   upd = updates.activate(context, { ask, bridgeFor, log, rootOf, relPath, panels, postAll });
+  ren = renames.activate(context, { ask, bridgeFor, log, rootOf, relPath, panels, postAll, upd, noteBatch, markStorm,
+                                    stormCount: sync.STORM_COUNT, windowId: () => upd.windowId() });
   // Hooks for the automated tests only: the process ID, a simulated crash, and fault injection
   // (failNextInsertion, failNextReconcileDocument, delayNextAutoRefresh). Each is inert unless called.
   return {
@@ -786,6 +804,7 @@ function activate(context) {
     // PR B2b-1: this window's ID, the documents held by interrupted updates, and the crash injection of the
     // design tooling (DESIGN_TEST_FAULT, read by tools/design/transactions.py only for the named repository).
     updates: upd,
+    renames: ren,                                       // PR B2b-2b: the E6 row (note) and pending snapshots
     setDesignFault: (point, root, mode) => {
       if (!process.env.FD_TEST_CMD_DIR) return false;    // only under the GUI test launcher
       if (point) { process.env.DESIGN_TEST_FAULT = point; process.env.DESIGN_TEST_FAULT_ROOT = root; if (mode) process.env.DESIGN_TEST_FAULT_MODE = mode; else delete process.env.DESIGN_TEST_FAULT_MODE; }
