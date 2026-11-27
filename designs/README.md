@@ -393,8 +393,11 @@ The ID is either a diagram ID from the [architecture index](index/architecture-i
 run `python -m tools.design index`: it fills the lines between the markers with a caption
 (✅ Current architecture or 🔷 Proposed, the title linked to the source, the ID, and a link to
 the legend for architecture diagrams) and a copy of the source Mermaid, which renders on GitHub
-and in VS Code's preview with the Mermaid preview extension. Blank lines of the source are written as `%%` (a Mermaid
-comment), so the block stays one piece. The feature index lists each feature's diagrams in
+and in VS Code's preview with the Mermaid preview extension. Blank lines of the source are written as
+`%% (blank line)`, a Mermaid comment that every renderer removes, so the block stays one piece (Mark Sharp
+keeps a block only up to its first blank line) and the diagram renders exactly as its source. Copies made
+before T-98 used a bare `%%`, which Mermaid draws as a node or rejects; `index` refreshes such a copy unless
+it was edited by hand (then `check` reports it, see below). The feature index lists each feature's diagrams in
 its "Diagrams" column.
 
 - **The source is the only place a diagram is edited.** Change a current-state diagram in

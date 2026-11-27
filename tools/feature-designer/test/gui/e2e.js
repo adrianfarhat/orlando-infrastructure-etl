@@ -231,7 +231,7 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     await f.locator(".dlg button", { hasText: "Cancel" }).click();
   });
 
-  let insertedText;
+  let insertedText, markSharpSaved = null;
   await step("4 insert two diagrams at the + positions", async () => {
     const before = (await doc()).text;
     const a = await insertVia("3. Logic", "condition analysis workflow");          // owned by another feature
@@ -398,6 +398,8 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
         afterUndo.includes("MarkSharpTyped") && afterUndo.split(`diagram:start ${CRED}`).length - 1 === insertedKept - 1, null);
     await app.host("save", { path: FEATURE }); await sleep(1500);
     const saved = fs.readFileSync(path.join(WS, FEATURE), "utf8");
+    markSharpSaved = saved;
+    fs.writeFileSync(path.join(EV, "11-after-mark-sharp-save.md"), saved);        // evidence: what Mark Sharp wrote
     const check1 = py(["-m", "tools.design", "check"]);
     const stale = await waitFor(() => f.evaluate(() => { const s = document.querySelector("#stale"); return s && !s.hidden ? s.textContent : ""; }), 8000);
     await snap("stale-banner");
@@ -419,6 +421,74 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
         authored(saved) === authored(restored) && restored.includes("MarkSharpTyped") && restored.includes("RaceTyped"),
         { checkAfterMarkSharp: check1.trim().split("\n").pop(), banner: (stale || "").slice(0, 80), conflicts: conflicts.length,
           untouched, checkAfterReconcile: check2.trim().split("\n").pop() });
+  });
+
+  // T-98: the blank-line placeholder of a generated copy survives Mark Sharp's save and a reopen.
+  // AD-0011 (credential boundary, a flowchart) has one blank line, written as "%% (blank line)".
+  await step("11g T-98 blank-line placeholder through Mark Sharp", async () => {
+    if (!app.markSharp) { rec("11g T-98 blank-line placeholder through Mark Sharp", false, "Mark Sharp 1.13.0 not found; not tested"); return; }
+    const PH = "%% (blank line)";
+    /** The Mermaid lines (between the opening and closing fence) of every block of `id` in `s`; the fences are
+     *  found, not counted, so a change Mark Sharp makes around them (11f) does not shift the comparison. */
+    const bodies = (s, id) => {
+      const L = s.split(/\r?\n/), out = [];
+      L.forEach((l, i) => {
+        if (!l.startsWith(`<!-- diagram:start ${id} `) && l !== `<!-- diagram:start ${id} -->`) return;
+        const end = L.indexOf("<!-- diagram:end -->", i);
+        const open = L.findIndex((x, j) => j > i && j < end && /^`{3,}mermaid/.test(x));
+        if (open < 0) { out.push(null); return; }
+        const fence = L[open].match(/^`+/)[0];
+        const close = L.findIndex((x, j) => j > open && x.trim() === fence);
+        out.push(close > open && close < end ? L.slice(open + 1, close) : null);
+      });
+      return out;
+    };
+    const same = (b) => !!b && JSON.stringify(b) === JSON.stringify(generated);
+    // Mark Sharp reformats a generated block it reads as part of the list before it (indentation dropped,
+    // blank lines added; the known behaviour of 11f, the same 4 conflicts before T-98). In such a copy the
+    // placeholder must still be there exactly, in the same place among the other lines.
+    const content = (b) => b.map((l) => l.trim()).filter((l) => l);
+    const placeholderKept = (b) => !!b && b.filter((l) => l === PH).length === generated.filter((l) => l === PH).length &&
+      !b.includes("%%") && JSON.stringify(content(b)) === JSON.stringify(content(generated));
+    const firstDiff = (b) => { if (!b) return "no closed Mermaid fence"; const k = b.findIndex((l, j) => l !== generated[j]);
+                               return k < 0 && b.length === generated.length ? null : { line: k < 0 ? b.length : k, got: b[k], want: generated[k] }; };
+    const generated = bodies(insertedText, CRED)[0];
+    if (!generated || generated.filter((l) => l === PH).length !== 1) throw new Error(`the generated ${CRED} copy has no placeholder line`);
+    const afterSave = markSharpSaved ? bodies(markSharpSaved, CRED) : [];
+    rec("11g after Mark Sharp's save the placeholder line survives in every AD-0011 copy, in place and never as a bare %%; a copy Mark Sharp does not reformat (11f) is kept exactly",
+        afterSave.length >= 1 && afterSave.some(same) && afterSave.every(placeholderKept),
+        { blocks: afterSave.length, exact: afterSave.map(same), placeholderKept: afterSave.map(placeholderKept),
+          placeholders: afterSave.map((b) => b && b.filter((l) => l === PH).length), diff: afterSave.map(firstDiff) });
+    // reopen in Mark Sharp, change a paragraph so that Mark Sharp writes the whole document again, save, read back
+    await app.host("closeAll"); await dialogDismissIfAny(); await sleep(2000);   // no stale Mark Sharp frame
+    const before = fs.readFileSync(path.join(WS, FEATURE), "utf8");
+    await app.host("openWith", { path: FEATURE, viewType: "msharp.customEditor", column: 1 });
+    await sleep(2000);
+    const ms = await markSharpFrame(app.page);
+    if (!ms) throw new Error("Mark Sharp did not open");
+    await sleep(4000);
+    const view = await ms.evaluate(() => {
+      const svgs = [...document.querySelectorAll("svg")].filter((s) => s.closest("[data-lexical-editor]") || s.querySelector("g"));
+      return { svgs: svgs.length, percentNode: svgs.some((s) => [...s.querySelectorAll("text, span, p, div")].some((n) => n.textContent.trim() === "%%")),
+               syntaxError: /Syntax error|Parse error/i.test(document.body.innerText) };
+    }).catch((e) => ({ error: String(e) }));
+    await snap("t98-mark-sharp-reopen");
+    const para = ms.locator("[data-lexical-editor] p").filter({ hasText: "Who needs the result" }).first();   // untouched by 11d's race
+    await para.scrollIntoViewIfNeeded(); await para.click(); await app.page.keyboard.press("End"); await app.page.keyboard.type(" T98Typed");
+    await waitFor(async () => (await doc()).text.includes("T98Typed"), 10000);
+    await app.host("save", { path: FEATURE }); await sleep(1500);
+    const resaved = fs.readFileSync(path.join(WS, FEATURE), "utf8");
+    const again = bodies(resaved, CRED);
+    rec("11h reopened and saved again in Mark Sharp: the placeholder line still survives in every AD-0011 copy; Mark Sharp shows no %% node and no syntax error",
+        resaved.includes("T98Typed") && again.length >= 1 && again.some(same) && again.every(placeholderKept) &&
+        !view.error && !view.percentNode && !view.syntaxError,
+        { blocks: again.length, exact: again.map(same), placeholderKept: again.map(placeholderKept),
+          placeholders: again.map((b) => b && b.filter((l) => l === PH).length), diff: again.map(firstDiff), view });
+    fs.writeFileSync(path.join(EV, "t98-after-mark-sharp-reopen-save.md"), resaved);
+    await snap("t98-mark-sharp-resaved");
+    // put the fixture back as it was before this step (test data only), for the steps that follow
+    await app.host("closeAll"); await dialogDismissIfAny();
+    fs.writeFileSync(path.join(WS, FEATURE), before);
   });
 
   await prB1Steps();

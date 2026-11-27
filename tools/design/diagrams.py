@@ -29,10 +29,14 @@ diagram (E11) or a source that cannot be found (E7) is a problem, never a guess.
 The generated lines are one contiguous block: a caption line (label, title linked to the
 source document and heading, the ID, a "generated copy" note, and the legend link for
 architecture diagrams), then the Mermaid source in a fence that is always closed before the
-end marker. Blank lines of the source are written as `%%`, a Mermaid comment line, so the
-diagram renders the same and the block has no blank line (Mark Sharp keeps such a block,
-which starts with an HTML comment, verbatim). The fence is long enough that no line of the
-source can close it early.
+end marker. Blank lines of the source are written as `%% (blank line)` (BLANK_LINE), a Mermaid
+comment line, so the diagram renders the same and the block has no blank line (Mark Sharp keeps
+such a block, which starts with an HTML comment, verbatim). T-98: the T-96 form was a bare `%%`,
+which Mermaid does not remove as a comment (its comment pre-processing removes only `%%` lines
+with at least one character after `%%`): flowcharts and class diagrams drew it as a node
+labelled `%%` and ER diagrams failed to parse. Bare `%%` lines in blocks generated before T-98
+are still read back as blank lines (LEGACY_BLANK_LINE). The fence is long enough that no line
+of the source can close it early.
 
 Parsing rules (all outside the YAML front matter):
 - Markers are recognised only on a line of their own, outside fenced code (examples in code
@@ -71,6 +75,11 @@ GENERATED_ENDS = ("<!-- summary:end -->", "<!-- related-features:end -->")
 LEGEND = "docs/architecture/conventions.md#1-implementation-status-legend"
 FIRST_SECTION = "## 1. Objective"
 NOTE = "generated copy; edit the source, not this block"
+# How a blank (or whitespace-only) source line is written in a feature document's copy (T-96 decision 3,
+# placeholder revised by T-98): a Mermaid comment with text after `%%`, which every tested Mermaid version
+# removes before parsing; no trailing space to lose, and not `%%{` (directive syntax).
+BLANK_LINE = "%% (blank line)"
+LEGACY_BLANK_LINE = "%%"  # the T-96 form, still read back as a blank line (blocks generated before T-98)
 
 
 @dataclass(frozen=True)
@@ -313,7 +322,7 @@ def render(source: Source, feature_path: str) -> list[str]:
     if source.legend:
         caption += f" · [legend]({_link(posixpath.relpath(LEGEND.split('#')[0], here))}#{LEGEND.split('#')[1]})"
     fence = _fence_for(source.lines)
-    body = [line if line.strip() else "%%" for line in source.lines]
+    body = [line if line.strip() else BLANK_LINE for line in source.lines]
     return [caption, fence + "mermaid", *body, fence]
 
 
@@ -593,14 +602,17 @@ def _block_at(text: str, line: int) -> Block:
 
 
 def _body_from_block(block_lines: list[str]) -> list[str]:
-    """The Mermaid lines of a generated block (caption, fence, body, fence); a bare `%%` line is
-    the T-96 form of a blank line and becomes blank again."""
+    """The Mermaid lines of a generated block (caption, fence, body, fence). A BLANK_LINE line, and a
+    bare `%%` line (LEGACY_BLANK_LINE: the T-96 form, still found in blocks generated before T-98),
+    becomes a blank line again. A source line that is literally `%%` is copied unchanged and so also
+    comes back blank (an ambiguity kept from T-96). A source that literally contains a BLANK_LINE
+    line is refused by Apply to source (plan_reconcile_text) rather than turned into a blank line."""
     if len(block_lines) < 3 or not block_lines[1].lstrip("`").startswith("mermaid"):
         raise ValueError("the block does not have the generated layout (caption, then a Mermaid fence)")
     fence = block_lines[1][:len(block_lines[1]) - len(block_lines[1].lstrip("`"))]
     if block_lines[-1].strip() != fence:
         raise ValueError("the block's Mermaid fence is not closed as generated")
-    return ["" if line == "%%" else line for line in block_lines[2:-1]]
+    return ["" if line in (BLANK_LINE, LEGACY_BLANK_LINE) else line for line in block_lines[2:-1]]
 
 
 def plan_reconcile(root: Path, rel: str, line: int, action: str) -> Reconciliation:
@@ -639,6 +651,9 @@ def plan_reconcile_text(root: Path, rel: str, text: str, line: int, action: str)
         if entry.owner_kind != "feature":
             raise ValueError(f"{b.diagram_id} is owned by {entry.owner_ref}: document-owned sources change only through "
                              "technical-lead's documentation workflow (this preview can be handed to it)")
+        if BLANK_LINE in (x.rstrip("\r") for x in source.lines):
+            raise ValueError(f"the source of {b.diagram_id} contains the line {BLANK_LINE!r} itself, which a "
+                             "generated copy cannot tell apart from a blank line: edit the source directly instead")
         source_path = entry.path
         source_bytes = (root / source_path).read_bytes()
         src_text = source_bytes.decode("utf-8")

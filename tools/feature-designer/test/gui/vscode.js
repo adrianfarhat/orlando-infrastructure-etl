@@ -16,7 +16,8 @@ const CMD = path.join(RUN, "cmd");
 const HELPER = path.join(__dirname, "helper");
 const CODE = path.join(EXT, ".vscode-test", "vscode-win32-x64-archive-1.146.0", "Code.exe");
 const PY = testPython();
-const PORT = 9341;
+// FD_GUI_PORT: another worktree's suite may run at the same time; each run needs its own debugging port
+const PORT = Number(process.env.FD_GUI_PORT) || 9341;
 const MARK_SHARP = path.join(os.homedir(), ".vscode", "extensions", "jonathan-yeung.mark-sharp-1.13.0");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

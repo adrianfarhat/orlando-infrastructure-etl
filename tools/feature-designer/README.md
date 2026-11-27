@@ -189,7 +189,8 @@ tools\feature-designer\.toolchain\node-v26.13.0-win-x64\node tools\feature-desig
 ```
 
 (The GUI test needs `bootstrap.py --vscode-test` once, and Mark Sharp 1.13.0 installed for its
-interoperability checks.)
+interoperability checks. It drives VS Code over debugging port 9341; set `FD_GUI_PORT` to another
+port when a second copy runs at the same time, for example from another worktree.)
 
 The unit tests cover edit application (identical to the Python side, CRLF, end of file,
 stale edits refused), the Python process (restart, timeout, no orphan process) and the
