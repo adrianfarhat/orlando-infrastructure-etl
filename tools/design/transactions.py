@@ -1103,28 +1103,94 @@ def _remove_debris(root: Path) -> list[str]:
         p = tx / name
         if _is_link(p) or not p.is_dir():
             continue
-        if (name.endswith(".preparing") or name.endswith(".done")) and ID_RE.match(name.rsplit(".", 1)[0]):
-            _remove_flat(p)
-            done.append(name)
-        elif ID_RE.match(name):
-            r = _read_record(root, p)
-            if not r.problem and r.data["state"] == "committed":
-                if r.is_move:
-                    _regenerate_index(root)
-                _finish(root, r)
-                done.append(name)
+        try:                                           # pre-PR review: best effort; what cannot be removed now stays
+            if (name.endswith(".preparing") or name.endswith(".done")) and ID_RE.match(name.rsplit(".", 1)[0]):
+                _remove_flat(p)                        # pending (`transaction status` lists it) and never blocks
+                done.append(name)                      # the command that is running
+            elif ID_RE.match(name):
+                r = _read_record(root, p)
+                if not r.problem and r.data["state"] == "committed":
+                    if r.is_move:
+                        _regenerate_index(root)
+                    _finish(root, r)
+                    done.append(name)
+        except (OSError, DesignError):
+            continue
     return done
 
 
-def _regenerate_index(root: Path) -> None:
+def _regenerate_index(root: Path) -> str:
     """G4: diagram-index.md is derived from the registry and regenerated, never journalled. Best
     effort (QA m4): if it cannot be written now, `check` reports it stale and `index` rewrites it;
-    it never blocks the move, recovery or another writer."""
+    it never blocks or reverses the move, recovery or another writer. Returns '' when it was
+    written (or was already up to date), otherwise why not (pre-PR review: reported, never claimed)."""
     from . import registry
     try:
         registry.write_diagram_index(root)
-    except Exception:                                  # derived output only: nothing depends on it here
-        pass
+    except Exception as exc:                           # derived output only: nothing depends on it here
+        return f"{type(exc).__name__}: {exc}"[:300]
+    return ""
+
+
+def index_warning(problem: str) -> str:
+    return (f"{DIAGRAM_INDEX_NAME} could not be regenerated ({problem}); the identity change above is complete and is "
+            "not affected. `check` reports the index as out of date until `python -m tools.design index` rewrites it")
+
+
+DIAGRAM_INDEX_NAME = "designs/index/diagram-index.md"
+
+
+def _finish_safely(root: Path, rec: Record) -> str:
+    """Remove a resolved record after its primary operation was verified (pre-PR review). Returns ''
+    when removed, otherwise why not: the failure is reported as pending cleanup, never as a failure
+    of the operation, and the removal is retried by later diagram commands."""
+    try:
+        _finish(root, rec)
+    except OSError as exc:
+        return f"{type(exc).__name__}: {exc}"[:300]
+    return ""
+
+
+def cleanup_warning(rec: Record, problem: str, action: str) -> str:
+    """What a pending cleanup means: whether the record is still listed (and what that holds) or only
+    its removal is unfinished. Never promises when the removal will succeed."""
+    listed = rec.folder.is_dir() and rec.data is not None and rec.data.get("state") != "committed"
+    if listed:
+        what = ("the registry" if rec.is_move else "its documents")
+        return (f"removing the record {rec.id} failed ({problem}). It is still listed by `python -m tools.design "
+                f"transaction status` and holds {what} until it is removed: repeating {action.capitalize()} changes "
+                "nothing more and tries the removal again. It may stay pending until the cause (for example another "
+                "program using the folder) is removed")
+    return (f"removing the record {rec.id} failed ({problem}). It is marked as completed: it holds nothing and is never "
+            "carried out again. Later diagram commands retry the removal, which may stay pending until the cause (for "
+            "example another program using the folder) is removed; `python -m tools.design transaction status` lists it "
+            "meanwhile")
+
+
+def pending_cleanup(root: Path) -> list[dict]:
+    """Record folders whose operation is over but whose removal is unfinished (read only): completed
+    and verified records, resolved records being removed (`.done`), and preparations that never
+    started (`.preparing`). None of them holds anything or is ever carried out again."""
+    tx = _tx_root(root, create=False)
+    out: list[dict] = []
+    if tx is None:
+        return out
+    for name in sorted(os.listdir(tx)):
+        p = tx / name
+        if name == "windows" or _is_link(p) or not p.is_dir():
+            continue
+        if name.endswith(".done") or name.endswith(".preparing"):
+            base, kind = name.rsplit(".", 1)[0], ("resolved; its removal is unfinished" if name.endswith(".done") else
+                                                   "never started (interrupted while it was prepared); nothing was changed")
+        else:
+            base = name
+            r = _read_record(root, p) if ID_RE.match(name) else None
+            if r is None or r.problem or r.data["state"] != "committed":
+                continue
+            kind = "completed and verified; its removal is unfinished"
+        if ID_RE.match(base):
+            out.append({"id": base, "folder": name, "kind": kind})
+    return out
 
 
 def _finish(root: Path, rec: Record) -> None:
@@ -1262,8 +1328,9 @@ def update(root: Path, requests: list[tuple[str, str]], expect_token: str | None
             if sources_token(root) != token or _source_changes(root, rec):
                 raise DesignError("a diagram source or the registry changed while the update was prepared")
         except DesignError as exc:
-            _finish(root, rec)                         # no document was touched
-            raise DesignError(f"{exc}; nothing was changed") from None
+            cleanup = _finish_safely(root, rec)        # no document was touched
+            raise DesignError(f"{exc}; nothing was changed"
+                              + (f"; {cleanup_warning(rec, cleanup, 'abandon')}" if cleanup else "")) from None
         return _commit(root, rec)
 
 
@@ -1339,9 +1406,12 @@ def _commit(root: Path, rec: Record) -> dict:
         _fault(root, "before-committed-mark")
         _set(root, rec, state="committed")
         _fault(root, "after-committed-mark")
-        _finish(root, rec)
-        return {"ok": True, "id": rec.id, "files": [{"path": f["path"], "blocks": f["blocks"], "state": "updated"}
-                                                    for f in rec.files]}
+        out = {"ok": True, "id": rec.id, "files": [{"path": f["path"], "blocks": f["blocks"], "state": "updated"}
+                                                   for f in rec.files], "warnings": []}
+        cleanup = _finish_safely(root, rec)            # pre-PR review: the update is complete and verified either way
+        if cleanup:
+            out["warnings"].append(cleanup_warning(rec, cleanup, "complete"))
+        return out
     _set(root, rec, state="rolling-back", action="rollback")
     for i, f in enumerate(rec.files):
         try:
@@ -1355,11 +1425,12 @@ def _commit(root: Path, rec: Record) -> dict:
     # to its original; a document it never wrote that someone else changed is theirs, not this update's.
     ours = [p for p, st in states.items() if st == "updated" or (p in replaced and st != "original")]
     if not ours:
-        _finish(root, rec)
+        cleanup = _finish_safely(root, rec)
         others = [p for p, st in states.items() if st != "original"]
         raise DesignError(f"{failure}; every document this update wrote is back to its original, so this update "
                           "changed nothing" + (f" ({', '.join(others)} was changed by another program before this "
-                                               "update wrote it)" if others else ""))
+                                               "update wrote it)" if others else "")
+                          + (f"; {cleanup_warning(rec, cleanup, 'undo')}" if cleanup else ""))
     _set(root, rec, state="needs-attention")
     left = ", ".join(f"{p} ({states[p]})" for p in ours)
     raise DesignError(f"{failure}; PARTLY DONE: not every document could be put back ({left}). The record "
@@ -1453,10 +1524,15 @@ def resolve(root: Path, tx_id: str, action: str, token: str) -> dict:
         if all(f["state"] == goal for f in files):
             if goal == "updated":
                 _set(root, rec, state="committed")
-            _finish(root, rec)
-            return {"ok": True, "id": tx_id, "action": action, "note": note, "files": files,
-                    "message": "completed: every document is updated" if goal == "updated" else
-                               "undone: every document is as it was before the update"}
+            message = ("completed: every document is updated" if goal == "updated" else
+                       "undone: every document is as it was before the update")
+            out = {"ok": True, "id": tx_id, "action": action, "note": note, "files": files, "warnings": []}
+            cleanup = _finish_safely(root, rec)        # pre-PR review: the documents are verified either way
+            if cleanup:
+                out["warnings"].append(cleanup_warning(rec, cleanup, action))
+                message += "; warning: " + out["warnings"][-1]
+            out["message"] = message
+            return out
         _set(root, rec, state="needs-attention")
         return {"ok": False, "id": tx_id, "action": action, "note": note, "files": files,
                 "message": "partly done: the documents marked changed or missing were left alone; the record is kept"}
@@ -1622,10 +1698,15 @@ def commit_move(root: Path, rec: Record) -> dict:
         _fault(root, "move-before-committed-mark")
         _set(root, rec, state="committed")
         _fault(root, "move-after-committed-mark")
-        _regenerate_index(root)                        # before the record goes: a crash while removing it leaves nothing stale
-        _finish(root, rec)
+        # The identity change is complete and verified from here on; what follows is secondary (pre-PR review).
+        index = _regenerate_index(root)                # before the record goes: a crash while removing it leaves nothing stale
+        _fault(root, "move-before-cleanup")
+        cleanup = _finish_safely(root, rec)
         return {"ok": True, "id": rec.id, "renames": [{"diagram_id": o["diagram_id"], "from": o["from"], "to": o["to"]}
-                                                       for o in rec.renames]}
+                                                       for o in rec.renames],
+                "index": {"regenerated": not index, "problem": index},
+                "warnings": ([index_warning(index)] if index else []) +
+                            ([cleanup_warning(rec, cleanup, "complete")] if cleanup else [])}
     _set(root, rec, state="rolling-back", action="rollback")
     try:
         if registry_state(root, rec.registry_op) == "replacement":
@@ -1645,10 +1726,11 @@ def commit_move(root: Path, rec: Record) -> dict:
     reg_now = registry_state(root, rec.registry_op)
     back = all(op["observed"] or rename_state(root, op) == "old" for op in rec.renames)
     if back and (reg_now == "original" or (reg_now == "changed" and not wrote_registry)):
-        _finish(root, rec)
+        cleanup = _finish_safely(root, rec)
         raise DesignError(f"{failure}; every source this move renamed is back at its old path and this move did not "
                           "change the registry" + (" (another program changed it meanwhile; it was left as it is)"
-                                                   if reg_now == "changed" else "") + ", so this move changed nothing")
+                                                   if reg_now == "changed" else "") + ", so this move changed nothing"
+                          + (f"; {cleanup_warning(rec, cleanup, 'undo')}" if cleanup else ""))
     _set(root, rec, state="needs-attention")
     raise DesignError(f"{failure}; PARTLY DONE: not everything could be put back. The record {rec.id} keeps the "
                       f"original registry: run `python -m tools.design transaction status` ({CODE})")
@@ -1693,14 +1775,21 @@ def _resolve_move(root: Path, rec: Record, action: str, now: dict, note: str) ->
     if not failure and clean:
         if goal == "new":
             _set(root, rec, state="committed")
-        _regenerate_index(root)
-        _finish(root, rec)
+        # verified from here on; the index and the record's removal are secondary (pre-PR review)
+        index = _regenerate_index(root)
+        cleanup = _finish_safely(root, rec)
+        warnings = ([index_warning(index)] if index else []) + ([cleanup_warning(rec, cleanup, action)] if cleanup else [])
+        message = ("completed: every source is at its new path and the registry names it" if goal == "new" else
+                   ("undone: the registry is as it was before the move" +
+                    ("; the sources stay where they were found (an observed rename): `check` reports them (E6)"
+                     if rec.data["mode"] == "adopt" else "; every source is back at its old path")))
         return {"ok": True, "id": rec.id, "action": action, "note": note, "files": rows,
-                "message": "completed: every source is at its new path and the registry names it" if goal == "new" else
-                           ("undone: the registry is as it was before the move" +
-                            ("; the sources stay where they were found (an observed rename): `check` reports them (E6)"
-                             if rec.data["mode"] == "adopt" else "; every source is back at its old path"))}
-    _set(root, rec, state="needs-attention")
+                "index": {"regenerated": not index, "problem": index}, "warnings": warnings,
+                "message": message + "".join(f"; warning: {w}" for w in warnings)}
+    try:
+        _set(root, rec, state="needs-attention")
+    except OSError:                                    # the journal itself cannot be written now (pre-PR review): the
+        pass                                           # result below is still reported; the record keeps its last state
     if failure and clean:
         # QA S1 minor: the error came after the last step it could affect, so everything is already where
         # this action leads; the record is still kept, because the error is not explained by what is on disk.

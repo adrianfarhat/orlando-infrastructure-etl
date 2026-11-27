@@ -379,7 +379,10 @@ def _move(args, root: Path, out: TextIO) -> int:
         return EXIT_OK
     for r in result["renames"]:
         print(f"{'moved' if mode == 'move' else 'adopted'} {r['diagram_id']}: {r['from']} -> {r['to']}", file=out)
-    print(f"the registry names the new paths and {registry.DIAGRAM_INDEX} was regenerated.", file=out)
+    print("the move is complete: the registry names the new paths"
+          + (f" and {registry.DIAGRAM_INDEX} was regenerated." if result["index"]["regenerated"] else "."), file=out)
+    for w in result["warnings"]:
+        print(f"warning: {w}", file=out)
     docs = [d for d in result["refresh"]["documents"] if not d["excluded"]]
     held = [d for d in result["refresh"]["documents"] if d["excluded"]]
     if docs:
@@ -488,6 +491,8 @@ def _refresh_blocks(args, root: Path, out: TextIO) -> int:
         print(f"refreshed {', '.join(f['blocks'])} in {f['path']}", file=out)
     print(f"updated {len(result['files'])} document(s). Uncommitted working-tree changes: nothing was staged, "
           "committed or pushed.", file=out)
+    for w in result.get("warnings", []):
+        print(f"warning: {w}", file=out)
     return EXIT_OK
 
 
@@ -524,15 +529,19 @@ def _transaction(args, root: Path, out: TextIO) -> int:
         return EXIT_OK if result["ok"] else EXIT_PROBLEMS
     if args.action == "status":
         found = transactions.status(root)
+        cleanup = transactions.pending_cleanup(root)   # pre-PR review: discoverable, but not an unresolved operation
         if args.json:
-            print(json.dumps({"records": found}, sort_keys=True, ensure_ascii=False), file=out)
+            print(json.dumps({"records": found, "cleanup": cleanup}, sort_keys=True, ensure_ascii=False), file=out)
             return EXIT_PROBLEMS if found else EXIT_OK
         if not found:
             print("no interrupted update", file=out)
-            return EXIT_OK
         for r in found:
             _print_record(r, out)
-        return EXIT_PROBLEMS
+        for c in cleanup:
+            print(f"cleanup pending: {c['folder']}: {c['kind']}. It holds nothing and is never carried out again; diagram "
+                  "commands retry its removal, which may stay pending until the cause (for example another program "
+                  "using the folder) is removed", file=out)
+        return EXIT_PROBLEMS if found else EXIT_OK
     if not args.record:
         raise DesignError(f"give the record ID: transaction {args.action} tx-...")
     if args.confirm is None:

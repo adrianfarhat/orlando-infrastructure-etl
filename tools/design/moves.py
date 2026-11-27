@@ -696,8 +696,9 @@ def execute(root: Path, mode: str, requests, token: str) -> dict:
                 if transactions._entry_sha(root, r["to" if mode == "adopt" else "from"]) != r["sha"]:
                     raise DesignError(f"{r['to' if mode == 'adopt' else 'from']} changed while the move was prepared")
         except DesignError as exc:
-            transactions._finish(root, rec)           # nothing outside the record was touched
-            raise DesignError(f"{exc}; nothing was changed") from None
+            cleanup = transactions._finish_safely(root, rec)   # nothing outside the record was touched
+            raise DesignError(f"{exc}; nothing was changed"
+                              + (f"; {transactions.cleanup_warning(rec, cleanup, 'abandon')}" if cleanup else "")) from None
         result = transactions.commit_move(root, rec)
     result.update(mode=mode, references={k: len(v) for k, v in again.references.items()})
     result["refresh"] = _layer_two(root, [r["diagram_id"] for r in again.renames])

@@ -340,6 +340,29 @@ again. Under the registry lock the whole batch is validated again before anythin
 The plan (with or without `--json`) exits with 1 when the move is possible and nothing was done
 yet, and with 2 when it is refused; carrying it out exits with 0.
 
+**What adoption can prove.** `registry adopt-moves` validates the source as it is *now* at its new
+path: it holds the diagram's ID and owner, and it is a well-formed Mermaid source. Without the
+SHA-256 the file had before it was renamed, it cannot prove that the bytes are unchanged by the
+rename (for example a program that edited the file while moving it). Feature Designer's rename
+integration (PR B2b-2b) can pass that checksum, taken just before VS Code renames the file, with
+the `move-plan` request (`sha256`); the adoption is then refused if the content differs.
+
+**After the move: secondary steps.** Once the move is verified, two things remain, and neither
+can undo it:
+
+- `diagram-index.md` is regenerated. If that fails (for example the file is locked), the command
+  says so instead of claiming it was regenerated, `check` reports the index as out of date, and
+  `python -m tools.design index` rewrites it.
+- The move's record is removed. If that fails (for example another program has a file in the
+  record's folder open), the command still succeeds (exit 0) with a warning. A record marked as
+  completed holds nothing and is never carried out again; `transaction status` lists it under
+  "cleanup pending", and later diagram commands retry the removal, which may stay pending until
+  the cause is removed. After **Undo** (which is not marked as completed) the record stays listed
+  as unresolved, and keeps the registry held, until it is removed: repeating Undo changes
+  nothing more and tries again.
+
+A genuine failure of the move itself still exits with 2 and says what was and was not done.
+
 **Interrupted moves.** A move keeps a record in `designs/diagrams/.transactions/<id>/` (the exact
 registry before and after, and every rename with the SHA-256 of the source). If it is interrupted,
 `check` reports E16, and no registry change and no refresh of generated text runs until you
@@ -460,6 +483,13 @@ those already updated. Both are safe to repeat, also after an interruption of th
 document that changed since, is missing, or is open in a Feature Designer window is never
 overwritten. **Abandon** removes the record and changes no document; a damaged record can only
 be abandoned, and until then no feature document is written by the design tooling.
+
+When an update (or its Complete or Undo) is verified but its record cannot be removed (for
+example another program has a file in the record's folder open), the command succeeds with a
+warning instead of reporting a failure. A completed record holds nothing and is never carried out
+again: `transaction status` lists it under "cleanup pending", and later commands retry the
+removal, which may stay pending until the cause is removed. After Undo, the record stays listed
+until it is removed; repeating Undo changes nothing more and tries again.
 
 Every command that writes takes the registry lock (below) and leaves documents held by an
 unresolved update alone. The lock is never waited for, so two commands cannot deadlock. An update

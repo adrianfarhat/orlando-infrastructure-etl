@@ -175,7 +175,10 @@ async function runUpdate(root, files, token) {
     deps.log(`[updates] ${r.id}: updated ${r.files.map((f) => f.path).join(", ")}`);
     vscode.window.showInformationMessage(`Updated ${r.files.length} closed document${r.files.length === 1 ? "" : "s"} from their diagram sources ` +
       "(written on disk; not committed).");
-    return { ok: true, message: `Updated ${r.files.length} document(s).`, files: r.files };
+    // The update is complete and verified; only secondary maintenance (removing its record) may be pending.
+    const warnings = Array.isArray(r.warnings) ? r.warnings.filter((w) => typeof w === "string") : [];
+    for (const w of warnings) { deps.log(`[updates] ${r.id}: warning: ${w}`); vscode.window.showWarningMessage(`Feature Designer: ${w}`); }
+    return { ok: true, message: `Updated ${r.files.length} document(s).` + warnings.map((w) => ` Warning: ${w}`).join(""), files: r.files };
   } catch (err) {
     deps.log(`[updates] update refused or failed: ${err.message}`);
     await refreshHeld(root);                                      // a partial outcome leaves a record to resolve

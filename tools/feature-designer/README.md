@@ -106,7 +106,10 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
     not an atomic multi-file write: if the update is interrupted, or another program changes a
     document meanwhile (that document is then left alone), it is reported as partly done and the
     record lets you complete or undo it. If anything changed since the list was shown, nothing is
-    written and the new list is shown. Also **Feature Designer: Update Closed Documents…**;
+    written and the new list is shown. If the documents were updated but the update's record
+    could not be removed afterwards (for example another program had a file of it open), the
+    update is reported as done with a warning: the record holds nothing, is never carried out
+    again, and its removal is retried later. Also **Feature Designer: Update Closed Documents…**;
   - **Feature Designer: Check Diagram Sources** checks again when a change was missed.
 - **Review…** on a conflicting block shows both versions and the differences, then:
   - **Discard manual change** restores the generated copy here (one undoable edit; not saved;
