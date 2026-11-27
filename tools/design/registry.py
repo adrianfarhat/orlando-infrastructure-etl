@@ -12,7 +12,9 @@ compare-and-swap (the file is replaced only if nobody changed it meanwhile):
   no document is changed);
 - `registry relink` changes a path or title, or re-points an embedded entry after a
   heading rename (never guessed);
-- `registry retire` marks a diagram retired after listing its references (never reused).
+- `registry retire` marks a diagram retired after listing its references (never reused);
+- `registry move` and `registry adopt-moves` (moves.py, PR B2b-2a) change paths for a batch
+  through a recorded, recoverable move transaction (transactions.py, version 2 records).
 
 Validation (`check`) reports, never fixes: duplicate IDs and aliases (E2), ID/alias
 collisions (E8), owners and ID prefixes (E9), sources that are missing (E7), moved (E6),
@@ -380,10 +382,17 @@ def problems(root: Path, features: list[Feature] | None = None, reg: Registry | 
             continue
         # mermaid-md: the source file
         if not _exact_case_exists(root, e.path):
-            moved = [s.path for s in file_ids.get(e.diagram_id, []) if s.path not in registered_paths]
-            if moved:
+            moved = sorted(s.path for s in file_ids.get(e.diagram_id, []) if s.path not in registered_paths)
+            if len(moved) > 1:                         # PR B2b-2a: ambiguous, never guessed
+                out.append(Problem(REGISTRY, f"{where} is at {len(moved)} unregistered paths ({', '.join(moved)}): "
+                                             "nothing is guessed; keep one of them, then relink it explicitly with "
+                                             f"`python -m tools.design registry relink {e.diagram_id} --path <path>` (E6)"))
+            elif moved:
+                batch = (f"; to update the registry for every moved feature-owned source at once, run `python -m "
+                         f"tools.design registry adopt-moves` (or `--from {e.path} --to {moved[0]}` for this one)"
+                         if e.owner_kind == "feature" else "")
                 out.append(Problem(REGISTRY, f"{where} moved to {moved[0]}: run `python -m tools.design registry relink "
-                                             f"{e.diagram_id} --path {moved[0]}` (E6)"))
+                                             f"{e.diagram_id} --path {moved[0]}` (E6){batch}"))
             else:
                 out.append(Problem(REGISTRY, f"{where}'s source {e.path} does not exist (E7)"))
             continue

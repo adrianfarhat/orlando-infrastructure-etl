@@ -284,6 +284,14 @@ def git_busy(root: Path) -> str:
     return ""
 
 
+class GitBusy(DesignError):
+    """A Git operation is in progress (D4). `marker` names what was found in the Git folder."""
+
+    def __init__(self, message: str, marker: str):
+        super().__init__(message)
+        self.marker = marker
+
+
 def _git_ready(root: Path) -> None:
     for attempt in range(8):               # index.lock is also taken briefly by `git status` (VS Code)
         busy = git_busy(root)
@@ -292,8 +300,8 @@ def _git_ready(root: Path) -> None:
         if busy != "index.lock" or attempt == 7:
             break
         time.sleep(0.25)
-    raise DesignError(f"a Git operation is in progress ({busy} in the Git folder); nothing was changed. "
-                      "Finish or abort it, then try again")
+    raise GitBusy(f"a Git operation is in progress ({busy} in the Git folder); nothing was changed. "
+                  "Finish or abort it, then try again", busy)
 
 
 # --------------------------------------------------------------------------- open documents (D6)
@@ -1491,6 +1499,7 @@ def _drive(root: Path, rec: Record, i: int, op: dict, goal: str, tag: str) -> st
         if same is None:
             return st                                  # real copies: left alone
         keep = goal if goal in same else "temp" if "temp" in same else same[0]
+        _git_ready(root)                               # QA S1 minor: as before every other change of a path
         for name in same:
             if name != keep:
                 drop = safe_move_path(root, where[name])
@@ -1669,12 +1678,19 @@ def _resolve_move(root: Path, rec: Record, action: str, now: dict, note: str) ->
     registry original, written only while the registry is exactly the replacement. Anything in
     another state is left alone. Both can be repeated."""
     failure = ""
+    side = now["complete"] if action == "complete" else now["undo"]
+    if not side["possible"]:                           # refused before anything is marked or changed
+        raise DesignError(side["reason"])
     try:
         goal = _carry_out(root, rec, action, now)
     except OSError as exc:                             # QA m2: e.g. a file locked by another program
         goal, failure = ("new" if action == "complete" else "old"), f"{type(exc).__name__}: {exc}"
+    except GitBusy as exc:                             # a Git operation started while recovering
+        goal = "new" if action == "complete" else "old"
+        failure = f"a Git operation started while this ran ({exc.marker} in the Git folder), so the remaining steps were not carried out"
     rows = describe(root, rec, live=False)["files"]
-    if not failure and _move_clean(root, rec, goal):
+    clean = _move_clean(root, rec, goal)
+    if not failure and clean:
         if goal == "new":
             _set(root, rec, state="committed")
         _regenerate_index(root)
@@ -1685,15 +1701,23 @@ def _resolve_move(root: Path, rec: Record, action: str, now: dict, note: str) ->
                             ("; the sources stay where they were found (an observed rename): `check` reports them (E6)"
                              if rec.data["mode"] == "adopt" else "; every source is back at its old path"))}
     _set(root, rec, state="needs-attention")
+    if failure and clean:
+        # QA S1 minor: the error came after the last step it could affect, so everything is already where
+        # this action leads; the record is still kept, because the error is not explained by what is on disk.
+        return {"ok": False, "id": rec.id, "action": action, "note": note, "files": rows, "effectively_done": True,
+                "message": f"stopped by an error ({failure}), but every source and the registry are now exactly as "
+                           f"{action.capitalize()} leaves them. The record is "
+                           f"kept because the error was not explained: check that no other program is using these files, "
+                           f"then repeat `python -m tools.design transaction {action} {rec.id}` (it changes nothing more "
+                           "and removes the record)"}
     return {"ok": False, "id": rec.id, "action": action, "note": note, "files": rows,
             "message": (f"partly done ({failure}): " if failure else "partly done: ") +
-                       "what could not be renamed or written was left alone; the record is kept"}
+                       "what could not be renamed or written was left alone; the record is kept. Repeat the action "
+                       "once the cause is removed (`python -m tools.design transaction status`)"}
 
 
 def _carry_out(root: Path, rec: Record, action: str, now: dict) -> str:
     if action == "complete":
-        if not now["complete"]["possible"]:
-            raise DesignError(now["complete"]["reason"])
         _set(root, rec, state="completing", action="complete")
         _fault(root, "move-complete-after-mark")
         for i, op in enumerate(rec.renames):
@@ -1706,8 +1730,6 @@ def _carry_out(root: Path, rec: Record, action: str, now: dict) -> str:
             _fault(root, "move-complete-after-registry")
         goal = "new"
     else:
-        if not now["undo"]["possible"]:
-            raise DesignError(now["undo"]["reason"])
         _set(root, rec, state="undoing", action="undo")
         _fault(root, "move-undo-after-mark")
         if registry_state(root, rec.registry_op) == "replacement":
