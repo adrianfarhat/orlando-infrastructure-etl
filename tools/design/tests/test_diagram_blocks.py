@@ -99,7 +99,7 @@ class Generation(unittest.TestCase):
                 self.assertIn("generated copy; edit the source", caption)
                 self.assertEqual(fence, "```mermaid")
                 self.assertEqual(lines[end - 1], "```")                                  # closed before the end marker
-                self.assertEqual(lines[i + 3:end - 1], [l if l.strip() else "%%" for l in src.lines])
+                self.assertEqual(lines[i + 3:end - 1], [l if l.strip() else diagrams.BLANK_LINE for l in src.lines])
                 self.assertNotIn("", lines[i + 1:end])                                  # one contiguous block
                 link = caption.split("](", 1)[1].split(")", 1)[0]
                 self.assertIsNone(links.check_link(links._Repo(ws.root), f.path, link), link)   # link resolves
@@ -121,7 +121,7 @@ class Generation(unittest.TestCase):
             cmd(ws.root, "index")
             text = ws.text(f.path)
             self.assertIn("```mermaid\nflowchart LR\n  A --> B\n```", text)
-            self.assertIn("```mermaid\nflowchart LR\n  C --> D\n%%\n  D --> E\n```", text)
+            self.assertIn("```mermaid\nflowchart LR\n  C --> D\n%% (blank line)\n  D --> E\n```", text)   # T-98
             # a source line that starts with ``` would close a ``` fence early: the copy uses ````
             self.assertIn("````mermaid\nflowchart LR\n```\n  X --> Y\n````", text)
             self.assertTrue(all(d.closed for d in markdown.parse(workspace.split_front_matter(text)[1]).diagrams))
@@ -392,7 +392,7 @@ class ProposedDiagrams(unittest.TestCase):
             cmd(ws.root, "index")
             text = ws.text(f.path)
             self.assertIn("**🔷 Proposed: [Overlap model](diagrams/overlap.md)** · `FD-0001-D1` · generated copy", text)
-            self.assertIn("```mermaid\nflowchart LR\n  A[\"Step (planned)\"] --> B\n%%\n  B --> C\n```", text)
+            self.assertIn("```mermaid\nflowchart LR\n  A[\"Step (planned)\"] --> B\n%% (blank line)\n  B --> C\n```", text)
             caption = next(l for l in text.split("\n") if l.startswith("**🔷 Proposed"))
             self.assertNotIn("legend](", caption)                                        # legend: architecture only
             self.assertEqual(problems(ws), [])
@@ -497,7 +497,8 @@ class EndToEnd(unittest.TestCase):
             for b in diagrams.scan(lf)[0]:
                 with self.subTest(b.diagram_id):
                     body = lines[b.start + 1:b.end]
-                    self.assertEqual(body[2:-1], [l if l.strip() else "%%" for l in known[b.diagram_id].lines])
+                    self.assertEqual(body[2:-1], [l if l.strip() else diagrams.BLANK_LINE
+                                                  for l in known[b.diagram_id].lines])
                     link = body[0].split("](", 1)[1].split(")", 1)[0]
                     self.assertIsNone(links.check_link(links._Repo(ws.root), f.path, link))
             doc = markdown.parse(workspace.split_front_matter(lf)[1])

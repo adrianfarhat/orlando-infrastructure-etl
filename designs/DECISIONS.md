@@ -686,3 +686,58 @@ afterwards by the existing mechanisms (B2a for open documents, `refresh-blocks` 
     - *Architecture protection:* S0 changes to the architecture specification follow the
       technical-lead workflow and are approved before they are applied; no general exception to the
       `docs/architecture/` write guard.
+
+## 2026-11-27: T-98 — blank lines in generated Mermaid copies (directed by the user)
+
+Revises the placeholder of T-96 decision 3 (still in force for feature documents: a blank source
+line is written as a comment line so the block has no blank line for Mark Sharp). U13 and U14 are
+unchanged.
+
+1. **Defect and cause (reproduced).** T-96 wrote each blank line as a bare `%%`. Mermaid's comment
+   pre-processing (`cleanupComments`, `/^\s*%%(?!{)[^\n]+\n?/gm`, the same code in all three bundles
+   tested) removes only `%%` lines with at least one character after `%%`, so a bare `%%` reaches
+   the diagram grammar. Rendered with Feature Designer's Mermaid 12.3.0, Mark Sharp 1.13.0's bundled
+   11.16.0 and the VS Code Markdown preview extension's 11.12.2 (bierner.markdown-mermaid 1.32.1):
+   the five flowcharts with blank lines (AD-0001, AD-0010, AD-0011, AD-0012, AD-0014) draw a node
+   labelled `%%`; the ER diagram AD-0003 does not render at all (parse error); the sequence diagram
+   AD-0013 is unaffected. Probes: class diagrams also draw the node, ER diagrams also fail inside an
+   entity block; state, mindmap, gantt and sequence diagrams are unaffected. The Feature Designer
+   renders the generated copy, so it showed the defect too. No blank line of the 14 architecture
+   diagrams is inside a quoted or Markdown-string label.
+2. **Placeholder.** Blank (and whitespace-only) source lines are now written as `%% (blank line)`
+   (`diagrams.BLANK_LINE`), at column 0. In every renderer and diagram type tested (the 7
+   registered diagrams and 7 probes), the copy renders identically to the source with its blank
+   lines (normalised SVG, rendering made deterministic). It has text after `%%` (removed before
+   parsing), no trailing space (nothing to lose to whitespace trimming), is not `%%{` (directive
+   syntax), cannot be mistaken for a `%% diagram-type:` marker, and tells a reader what it stands
+   for. Three other candidates (`%% blank line`, `%%-`, `%% ---`) rendered identically too; this one
+   was chosen as the most readable and the least likely to occur in a source by chance. Nothing
+   else in the copy changes (indentation, line order, fence, caption).
+3. **Fingerprints (U13, unchanged).** The new text is a change to what the source generates, so
+   every existing copy of these 7 diagrams in a feature document moves as follows: untouched
+   (`B ≡ F`) → case 1, refreshed by `index` and by the Feature Designer in documents without unsaved
+   changes; edited by hand → case 3 ("both changed"; the source itself did not change, only the
+   generated text), a conflict (E15) never overwritten, reconciled explicitly; a marker without a
+   fingerprint (before U13) → preserved and reported (E15), as for any other difference. Copies of
+   diagrams without blank lines are unchanged. No committed feature document has a diagram block,
+   so `index` changes nothing in the repository.
+4. **Apply to source (reverse mapping).** A `%% (blank line)` line and a bare `%%` line (the T-96
+   form, still found in blocks generated before T-98) both become a blank line again. Unchanged
+   ambiguity, documented: a source line that is literally a bare `%%` is copied as it is and comes
+   back as a blank line; a whitespace-only source line comes back as an empty line (its spaces
+   are not kept, as before T-98). New: a source that literally contains a `%% (blank line)` line is
+   refused by Apply to source with an explanation (the copy itself is generated and renders the same;
+   Discard manual change still works), so the new placeholder is never read back wrongly. Only an
+   exact line is a placeholder; an indented or annotated comment is ordinary Mermaid content.
+5. **U14 not affected.** Architecture documents (M1, later) get verbatim copies; the placeholder
+   applies to feature documents only and is one constant in `render()`.
+6. **Evidence and limits.** Harness, JSON results and screenshots:
+   `t97-completion-evidence/t98/` (outside the repository). GitHub's renderer cannot be run locally
+   and was not tested; it uses Mermaid and is expected to share `cleanupComments`. Mark Sharp's
+   Mermaid was run from its own bundle, with one statement appended in memory to reach its Mermaid
+   object. The real Mark Sharp 1.13.0 was also driven in the GUI suite (steps 11g, 11h): after its
+   save, and after a reopen, an edit and a second save, the placeholder line is still in every
+   copy, unchanged and in place, and Mark Sharp shows no `%%` node and no syntax error. One copy,
+   which Mark Sharp reads as part of the list before it, is still reformatted by Mark Sharp
+   (indentation dropped, blank lines added): the known behaviour behind step 11f, with the same 4
+   conflicts as before T-98, reported as E15 and restored by Discard manual change.
