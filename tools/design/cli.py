@@ -487,6 +487,18 @@ def _print_record(r: dict, out: TextIO) -> None:
     if r["source_changes"]:
         print(f"  changed since it was prepared: {', '.join(r['source_changes'])}", file=out)
     c, u = r["complete"], r["undo"]
+    if r.get("tool") == transactions.MOVE_TOOL:     # a registry move (version 2): renames and the registry
+        print(f"  ({'observed renames: only the registry follows' if r['mode'] == 'adopt' else 'tool-initiated move'})",
+              file=out)
+        print("  complete: " + (c["reason"] if not c["possible"] else
+                                f"finishes {', '.join(c['writes']) or 'nothing (only the record is removed)'}" +
+                                (f"; leaves {', '.join(c['left_alone'])} alone" if c["left_alone"] else "") +
+                                (f" ({c['reason']})" if c["reason"] else "")), file=out)
+        print("  undo: " + (u["reason"] if not u["possible"] else
+                            f"puts back {', '.join(u['restores']) or 'nothing (only the record is removed)'}" +
+                            (f"; leaves {', '.join(u['left_alone'])} alone" if u["left_alone"] else "")), file=out)
+        print(f"  abandon: {r['abandon']['effect']}", file=out)
+        return
     print("  complete: " + (c["reason"] if not c["possible"] else
                             f"writes the update into {len(c['writes'])} document(s)" +
                             (f"; leaves {', '.join(c['left_alone'])} alone" if c["left_alone"] else "")), file=out)

@@ -30,6 +30,13 @@ from .workspace import (FEATURES, MAX_FILE_BYTES, MAX_NAME, DesignError, Feature
 DIAGRAM_TEMPLATE = "designs/templates/diagram.md"
 
 
+def _tx_guard(root) -> None:
+    """Q1 (PR B2b-2a): no registry writer runs while a registry move is unresolved (or a record
+    cannot be read); recovery writes the registry through its own compare-and-swap instead."""
+    from . import transactions
+    transactions.registry_guard(root)
+
+
 @dataclass(frozen=True)
 class DiagramFile:
     path: str             # repository-relative
@@ -174,6 +181,7 @@ def new_diagram(root: Path, owner: str, title: str, category: str = "other") -> 
     except (OSError, UnicodeDecodeError) as exc:
         raise DesignError(f"cannot read the template {DIAGRAM_TEMPLATE} ({type(exc).__name__})") from None
     with registry.lock(root):
+        _tx_guard(root)                                  # Q1 (B2b-2a): before anything is written
         reg = registry.load(root)
         doc = registry._writable(reg)
         in_tree = registry.all_ids(root, reg) + [_text(r.diagram_id) for r in diagram_records(root)]

@@ -457,8 +457,8 @@ def _text(value, name: str = "text") -> str:
 def _not_held(root: Path, rel: str) -> None:
     """Requirement 10: no edit is proposed for a document held by an unresolved update."""
     hold, bad = transactions.held(root)
-    if bad:
-        raise Refused(f"an update record cannot be read ({', '.join(bad)}); resolve it first "
+    if bad:                                         # unreadable records, and unresolved registry moves (Q1)
+        raise Refused(f"{transactions.blocker_message(root, bad)}; resolve it first "
                       "(Feature Designer: Resolve Interrupted Update) (E16)")
     if transactions._key(rel) in {transactions._key(h) for h in hold}:
         raise Refused(f"{rel} is part of an interrupted update of closed documents; resolve it first "

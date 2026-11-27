@@ -622,9 +622,18 @@ def dump(doc) -> str:
     return stream.getvalue()
 
 
+def _tx_guard(root) -> None:
+    """Q1 (PR B2b-2a): no registry writer runs while a registry move is unresolved (or a record
+    cannot be read); recovery writes the registry through its own compare-and-swap instead."""
+    from . import transactions
+    transactions.registry_guard(root)
+
+
 def save(root: Path, doc, expected_sha: str | None) -> None:
     """Replace registry.yml with `doc` only if it still has `expected_sha` (None: it must
     still be absent). The new file is written whole to a temporary file first (E12)."""
+    from . import transactions
+    transactions.registry_guard(root)               # Q1 (PR B2b-2a): never while a registry move is unresolved
     path = Path(root) / REGISTRY
     path.parent.mkdir(parents=True, exist_ok=True)
     text = dump(doc).replace("\r\n", "\n")          # one line-ending style (comments keep what they were read with)
@@ -751,6 +760,7 @@ def adopt(root: Path, rel: str, category: str) -> Entry:
     if category not in CATEGORIES:
         raise DesignError(f"--category must be one of {', '.join(CATEGORIES)}")
     with lock(root):
+        _tx_guard(root)                                  # Q1 (B2b-2a): before anything is written
         reg = load(root)
         doc = _writable(reg)
         files = {s.path: s for s in source_files(root)}
@@ -792,6 +802,7 @@ def adopt_architecture(root: Path) -> list[Entry]:
     root = Path(root).resolve()
     created = []
     with lock(root):
+        _tx_guard(root)                                  # Q1 (B2b-2a): before anything is written
         reg = load(root)
         doc = _writable(reg)
         known = reg.lookup()
@@ -836,6 +847,7 @@ def relink(root: Path, ident: str, path: str | None = None, title: str | None = 
     if path is None and title is None and heading is None:
         raise DesignError("nothing to change: give --path, --title or --heading")
     with lock(root):
+        _tx_guard(root)                                  # Q1 (B2b-2a): before anything is written
         reg = load(root)
         doc = _writable(reg)
         e = reg.lookup().get(ident)
@@ -919,6 +931,7 @@ def retire(root: Path, ident: str, confirm: bool) -> tuple[Entry, list[str], boo
     returned so they can be shown first (R3). The ID is never issued again."""
     root = Path(root).resolve()
     with lock(root):
+        _tx_guard(root)                                  # Q1 (B2b-2a): before anything is written
         reg = load(root)
         doc = _writable(reg)
         e = reg.lookup().get(ident)
