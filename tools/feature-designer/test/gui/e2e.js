@@ -1162,7 +1162,11 @@ async function prB2b1Steps() {
   await step("S10b a document changed between listing and confirming: nothing is written", async () => {
     await backToDesigner();
     const label = changeSource();
-    const { pf } = await openUpdatePanel();
+    // The source change makes B2a recount the closed documents a moment later, which redraws an open
+    // panel in place. Wait for that recount (the strip shows the new count) before opening the panel,
+    // so the hand edit below lands after the list is final (found in GUI runs: a redraw after the edit
+    // showed the new list, which was then rightly updated).
+    const { pf } = await openUpdatePanel(/3 other documents/);
     const before = CLOSED.map(readWs);
     fs.appendFileSync(path.join(WS, CLOSED[0]), "\nA hand edit made after the list was shown.\n");
     const edited = readWs(CLOSED[0]);
