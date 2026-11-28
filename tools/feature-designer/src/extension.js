@@ -154,6 +154,8 @@ const renameBatches = new Map();                 // repository root -> { pairs, 
 let batchSeq = 0;
 function noteBatch(root, pairs) { renameBatches.set(root, { pairs, until: Date.now() + 10000, id: ++batchSeq }); }
 function markStorm(root, count) { stormSeen.set(root, Math.max(stormSeen.get(root) || 0, count)); }
+/** A refused or failed adoption takes its mark back (QA); a storm counted meanwhile by real events stays. */
+function unmarkStorm(root, count) { if (stormSeen.get(root) === count) stormSeen.delete(root); }
 
 /** A file changed on disk: if it is a diagram source, refresh the open documents (debounced). */
 function onSourceEvent(uri) {
@@ -790,7 +792,7 @@ function activate(context) {
     { dispose: () => { for (const b of bridges.values()) b.dispose(); bridges.clear(); } });
   setTimeout(() => offerRecovery().catch((err) => log(`[recovery] ${err.message}`)), 1500);
   upd = updates.activate(context, { ask, bridgeFor, log, rootOf, relPath, panels, postAll });
-  ren = renames.activate(context, { ask, bridgeFor, log, rootOf, relPath, panels, postAll, upd, noteBatch, markStorm,
+  ren = renames.activate(context, { ask, bridgeFor, log, rootOf, relPath, panels, postAll, upd, noteBatch, markStorm, unmarkStorm,
                                     stormCount: sync.STORM_COUNT, windowId: () => upd.windowId() });
   // Hooks for the automated tests only: the process ID, a simulated crash, and fault injection
   // (failNextInsertion, failNextReconcileDocument, delayNextAutoRefresh). Each is inert unless called.

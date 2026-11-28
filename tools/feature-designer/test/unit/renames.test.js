@@ -216,3 +216,76 @@ test("a move runs once as a command with an argument array and returns its JSON 
   await assert.rejects(commands.moveSources({ python: "py.exe", root: ROOT, execFileImpl: fake({}, 2, "design: error: the adoption was refused; nothing was changed:\n  - x\n") },
                                             { mode: "adopt", moves: [{ from: SRC, to: NEW }], token: TOKEN }), (e) => e.refused && /x/.test(e.message));
 });
+
+// ---------------------------------------------------------------------------------------- QA follow-ups (B2b-2b)
+test("QA 6: the scope test ignores letter case on Windows only", () => {
+  assert.ok(R.inScope("Designs/features/diagrams/a.md", "win32"));
+  assert.ok(R.inScope("DOCS/Architecture/x.md", "win32"));
+  assert.ok(!R.inScope("Designs/features/diagrams/a.md", "linux"));
+  assert.ok(R.inScope("designs/features/diagrams/a.md", "linux"));
+  assert.ok(!R.inScope("web/designs/a.md", "win32"));
+  const pairs = R.batchOf(ROOT, [{ oldUri: uri("Designs/features/diagrams/a.md"), newUri: uri("Designs/features/diagrams/b.md") }], "win32");
+  assert.equal(pairs.length, 1);
+  assert.equal(R.batchOf(ROOT, [{ oldUri: uri("Designs/features/diagrams/a.md"), newUri: uri("Designs/features/diagrams/b.md") }], "linux").length, 0);
+});
+
+test("QA 3: a source moved out of the workspace is reported, never silently dropped (the registry is not updated)", () => {
+  const out = { scheme: "file", fsPath: path.join(os.tmpdir(), "elsewhere", "a_process_flow.md") };
+  const files = [{ oldUri: uri(SRC), newUri: out }, { oldUri: uri("web/a.ts"), newUri: { scheme: "file", fsPath: path.join(os.tmpdir(), "a.ts") } },
+                 { oldUri: uri("designs/features/diagrams"), newUri: { scheme: "vscode-remote", fsPath: "/x", toString: () => "vscode-remote://x" } },
+                 { oldUri: uri(SRC), newUri: uri(NEW) }];
+  const left = R.leftOf(ROOT, files);
+  assert.deepEqual(left.map((l) => l.from), [SRC, "designs/features/diagrams"]);
+  assert.equal(left[0].to, out.fsPath);
+  assert.equal(R.batchOf(ROOT, files).length, 1);                       // the in-workspace rename stays a batch
+  const text = R.leftNotice(left, [{ diagram_id: "FD-0001-D1", from: SRC }, { diagram_id: "FD-0001-D9", from: "designs/features/other/diagrams/z.md" }]);
+  assert.match(text, /^1 registered diagram source left the design workspace \(FD-0001-D1 designs\/features\/diagrams\/a_process_flow\.md → /);
+  assert.match(text, /The registry is not updated/);
+  assert.match(text, /reports it as missing \(E7\)/);
+  assert.doesNotMatch(text, /FD-0001-D9/);
+  assert.equal(R.leftNotice(left, [{ diagram_id: "FD-0001-D9", from: "designs/features/other/diagrams/z.md" }]), null);   // not a registered source here
+  assert.equal(R.leftNotice(left, []), null);
+});
+
+test("QA 1: the storm mark of a large adoption is withdrawn when the command fails or is refused; kept when it succeeds", async () => {
+  const marks = [];
+  const mark = (n) => marks.push(`mark ${n}`), unmark = (n) => marks.push(`unmark ${n}`);
+  assert.equal(await R.withStormMark(6, 5, mark, unmark, async () => "done"), "done");
+  assert.deepEqual(marks, ["mark 6"]);
+  marks.length = 0;
+  await assert.rejects(R.withStormMark(6, 5, mark, unmark, async () => { throw new Error("refused"); }), /refused/);
+  assert.deepEqual(marks, ["mark 6", "unmark 6"]);
+  marks.length = 0;
+  await assert.rejects(R.withStormMark(5, 5, mark, unmark, async () => { throw new Error("refused"); }), /refused/);   // not a storm: no mark
+  assert.deepEqual(marks, []);
+  assert.equal(await R.withStormMark(0, 5, mark, unmark, async () => 1), 1);                                      // a move back: never marked
+  assert.deepEqual(marks, []);
+});
+
+test("QA 4: Review Moved Diagram Sources asks which repository when several have moved sources", () => {
+  assert.equal(R.pickRoot(["C:\a"], "C:\a"), "C:\a");
+  assert.equal(R.pickRoot(["C:\b"], null), "C:\b");                     // the only root with moved sources, of several
+  assert.equal(R.pickRoot(["C:\a", "C:\b"], null), undefined);           // a quick pick
+  assert.equal(R.pickRoot([], "C:\a"), "C:\a");                          // one root, nothing moved: it says so
+  assert.equal(R.pickRoot([], null), null);
+});
+
+test("QA 2: recovery results are worded with the record's mode; a Move back never reads as 'At the new path'", () => {
+  const M = require("../../media/movestates");
+  const rename = { path: "a -> b", state: "new", rename: { from: "a", to: "b" } };
+  const regRow = { path: "designs/diagrams/registry.yml", state: "unchanged" };
+  assert.equal(M.resultState(rename, "restore"), "Back at its registered path");
+  assert.equal(M.resultState({ ...rename, state: "old" }, "restore"), "Where it was found (not moved back yet)");
+  assert.equal(M.resultState(rename, "adopt"), "At the new path");
+  assert.equal(M.resultState(rename, "move"), "At the new path");
+  assert.equal(M.resultState(regRow, "restore"), "Registry: not changed by this move (it never is)");
+  assert.equal(M.resultState({ path: "designs/features/x.md", state: "updated" }, null), "Updated");      // version 1
+  assert.equal(M.stateText({ tool: "registry-move", mode: "restore", valid: true }, rename), "Back at its registered path");
+  assert.equal(M.stateText({ tool: "refresh-blocks", valid: true }, { path: "designs/features/x.md", state: "original" }), "Not updated (original)");
+  assert.match(M.stateText({ tool: "registry-move", mode: "move" }, { ...rename, state: "old", occupied: ["b"] }), /occupied by something else: b/);
+});
+
+test("QA 5: no local binding shadows the review function", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "..", "src", "renames.js"), "utf8");
+  assert.doesNotMatch(src, /\bconst review\b/);
+});

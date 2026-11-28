@@ -95,7 +95,9 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
   await step("P2-A interpreter suggestion and confirmation", async () => {
     await app.host("openWith", { path: FEATURE, viewType: "featureDesigner.editor" });
     f = await designerFrame(app.page);                    // rendering needs no Python; the library does
-    const b0 = await blockAfter("3. Logic");
+    // the frame exists before the document is rendered: wait for the section (a slow first render under load
+    // failed here, and as this step also saves the test interpreter, every later step failed with it)
+    const b0 = await waitFor(() => blockAfter("3. Logic"), 30000);
     await placeMenu(b0.idx, "Add Existing Diagram");
     const dlg = app.page.locator(".monaco-dialog-box");
     await dlg.waitFor({ timeout: 30000 });
@@ -1839,6 +1841,18 @@ async function prB2b2bSteps() {
     rec("R-A8 a source found at two unregistered paths is shown in the strip and the prompt with both candidates; nothing can be adopted; nothing was written",
         !!row && p.detail.includes(a) && p.detail.includes(b) && /nothing is guessed/.test(p.detail) && JSON.stringify(p.buttons.slice(0, 1)) === '["Not now"]' &&
         !p.buttons.includes("Update the registry") && reg() === regBefore && !!gone, { row, buttons: p.buttons });
+  });
+
+  await step("R-QA3 a source moved out of the workspace: a notice, no prompt, the registry unchanged", async () => {
+    const src = B2.r2.path, regBefore = reg(), outside = "../outside-ws/rename-two.md";   // outside the repository folder
+    await app.host("command", { id: "notifications.clearAll" });
+    const ok = await app.host("rename", { pairs: [[src, outside]] });
+    const notice = await toast(/left the design workspace .*The registry is not updated/, 20000);
+    const none = await noPrompt(2500);
+    await snap("b2b2b-left-workspace");
+    fs.renameSync(path.join(WS, ...outside.split("/")), path.join(WS, ...src.split("/")));   // put back outside VS Code
+    rec("R-QA3 a registered source dragged out of the workspace is reported (it left the design workspace; the registry is not updated), never silently dropped; no prompt",
+        ok === true && !!notice && none && reg() === regBefore && notice.includes(B2.r2.id), { notice: (notice || "").slice(0, 240) });
   });
 
   await step("R-S safety", async () => {

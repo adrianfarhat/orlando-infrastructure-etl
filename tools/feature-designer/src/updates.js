@@ -153,7 +153,7 @@ function panel(kind, title, reveal = true) {
   const csp = [`default-src 'none'`, `style-src ${p.webview.cspSource}`, `script-src 'nonce-${nonce}'`, `base-uri 'none'`, `form-action 'none'`].join("; ");
   p.webview.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
 <link rel="stylesheet" href="${uri("updates.css")}"><title>${title}</title></head><body><main id="main" data-kind="${kind}"></main>
-<script nonce="${nonce}" src="${uri("updates.js")}"></script></body></html>`;
+<script nonce="${nonce}" src="${uri("movestates.js")}"></script><script nonce="${nonce}" src="${uri("updates.js")}"></script></body></html>`;
   p.onDidDispose(() => views.delete(kind));                       // closing keeps every record (D8)
   p.webview.onDidReceiveMessage((m) => onPanelMessage(kind, m).catch((err) => {
     deps.log(`[updates] ${err.stack || err}`);

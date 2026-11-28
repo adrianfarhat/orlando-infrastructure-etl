@@ -19,35 +19,10 @@
     for (const kid of kids.flat()) if (kid) el.append(kid);
     return el;
   }
-  const STATE = { updated: "Updated", original: "Not updated (original)", changed: "Changed since: left alone", missing: "Missing: left alone" };
-  // PR B2b-2b: a registry move (version 2 record): each rename is judged only by where the source's exact bytes
-  // are, and the registry by its bytes. A file in an unexpected state is never overwritten or deleted.
-  const MOVE_STATE = { old: "At the old path", new: "At the new path", temp: "At the temporary path (case-only rename)",
-                       both: "At more than one path: left alone", neither: "At neither path: left alone",
-                       changed: "Changed (other content): left alone" };
-  const BACK_STATE = { old: "Where it was found (not moved back yet)", new: "Back at its registered path", temp: MOVE_STATE.temp,
-                       both: MOVE_STATE.both, neither: MOVE_STATE.neither, changed: MOVE_STATE.changed };
-  const REGISTRY_STATE = { original: "Registry: the original (not updated)", replacement: "Registry: the replacement (updated)",
-                           changed: "Registry: changed by something else: never overwritten",
-                           unchanged: "Registry: not changed by this move (it never is)" };
-  const MODE = { move: "A tool-initiated move: the tooling renames the files, then writes the registry.",
-                 adopt: "Observed renames: the files were already renamed (by VS Code, Git or another program); only the registry follows. " +
-                        "Undo restores only the registry: the files stay where they were found.",
-                 restore: "Move the files back: the tooling renames the files back to their registered paths. The registry is never written." };
-  const isMove = (r) => r.tool === "registry-move";
-  const REGISTRY = "designs/diagrams/registry.yml";
-  function stateText(r, f) {
-    if (!isMove(r)) return STATE[f.state] || f.state;
-    if (!f.rename) return REGISTRY_STATE[f.state] || f.state;
-    return ((r.mode === "restore" ? BACK_STATE : MOVE_STATE)[f.state] || f.state) +
-      (f.occupied && f.occupied.length ? ` (occupied by something else: ${f.occupied.join(", ")})` : "");
-  }
-  function resultState(f) {                         // a result row: a document, a rename or the registry
-    if (f.rename) return MOVE_STATE[f.state] || f.state;
-    if (f.path === REGISTRY) return REGISTRY_STATE[f.state] || f.state;
-    return STATE[f.state] || f.state;
-  }
+  // the wording of every state (media/movestates.js; PR B2b-2b: registry moves, including Move back)
+  const { MODE, isMove, stateText, resultState } = window.FDMoveStates;
   let result = null;
+  let resolving = null;                             // the mode of the move record an action was confirmed on (QA)
 
   function showResult() {
     const old = document.getElementById("result");
@@ -57,7 +32,7 @@
     const box = h("div", { id: "result", class: result.ok ? "result ok" : "result fail", role: "status" },
       h("p", { text: result.message }), result.note ? h("p", { text: result.note }) : null,
       result.index && result.index.regenerated ? h("p", { class: "index", text: "designs/index/diagram-index.md was regenerated." }) : null,
-      (result.files || []).length ? h("ul", {}, result.files.map((f) => h("li", { text: `${f.rename ? `${f.rename.from} → ${f.rename.to}` : f.path}: ${resultState(f)}` }))) : null);
+      (result.files || []).length ? h("ul", {}, result.files.map((f) => h("li", { text: `${f.rename ? `${f.rename.from} → ${f.rename.to}` : f.path}: ${resultState(f, result.mode)}` }))) : null);
     main.prepend(box);
   }
 
@@ -152,6 +127,7 @@
       const chosen = choices.find((x) => x.checked);
       if (!chosen) return;
       result = null; showResult(); confirm.disabled = true; confirm.textContent = "Working…";   // the previous outcome is gone
+      resolving = r.valid && isMove(r) ? r.mode : null;
       post({ type: "resolve", root: r.root, id: r.id, action: chosen.value, token: r.token });
     });
     sec.append(box, ackLabel, h("div", { class: "actions" }, confirm));
@@ -186,7 +162,7 @@
     if (sig) shown = sig;
     if (m.type === "update") update(m);
     else if (m.type === "recovery") recovery(m);
-    else if (m.type === "result") { result = m; showResult(); }
+    else if (m.type === "result") { result = { ...m, mode: resolving }; showResult(); }
   });
   post({ type: "ready" });
 })();

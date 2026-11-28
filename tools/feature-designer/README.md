@@ -165,8 +165,12 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
   path until it is updated:
   - **In VS Code** (Explorer rename or move, one file or a folder): just before VS Code renames,
     Feature Designer records which registered sources are affected (a folder is expanded to the
-    registered sources under it, including a parent feature folder) and each one's SHA-256. This
-    waits at most 4 seconds; VS Code cannot cancel a rename, so problems found then (a destination
+    registered sources under it, including a parent feature folder) and each one's SHA-256. Any
+    rename under `designs/` or `docs/architecture/` may therefore wait up to 4 seconds before VS
+    Code carries it out. If the snapshot is not ready by then, the rename goes ahead and the flow
+    continues without the checksums: the sources are identified from disk afterwards, and the
+    prompt says that the content before the rename could not be recorded (the adoption then checks
+    each file's ID, owner and that it is a well-formed source). VS Code cannot cancel a rename, so problems found then (a destination
     outside the approved `diagrams/` folders, under `docs/architecture/`, onto another diagram's
     registered path, through a link, a source with unsaved changes in another Feature Designer
     window, a path held by an interrupted record, a Git operation in progress) are shown
@@ -189,14 +193,19 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
       is free; the registry is not changed. It is offered only for files inside the approved
       folders: a file moved outside them (or under `docs/architecture/`) is moved back with
       VS Code's own Undo (Ctrl+Z in the Explorer) or by hand.
+  - **Out of the workspace.** A registered source moved out of the repository folder (for example
+    dragged to another folder or drive) cannot be registered where it is: no prompt is shown, only a
+    notice that it left the design workspace and that the registry was not updated. Move it back
+    into a `diagrams/` folder under `designs/features/` (Undo in the Explorer); until then `check`
+    reports it as missing (E7).
   - **Other windows** never prompt. While the registry is not updated they show the row below, and
     after it is updated they refresh their open documents; a document with unsaved changes is
     never written in any window.
   - **Renames outside VS Code** (Git, the file explorer, another editor) and declined prompts
     show **"N moved sources: registry not updated"** in the status strip of every Feature
     Designer view, also after a restart (it is worked out from the files on disk, like `check`'s
-    E6). **Review…** (or **Feature Designer: Review Moved Diagram Sources…**) opens the same
-    prompt. Without the checksum from before the rename, the adoption checks each file's ID,
+    E6). **Review…** (or **Feature Designer: Review Moved Diagram Sources…**, which asks which
+    repository when several open folders have moved sources) opens the same prompt. Without the checksum from before the rename, the adoption checks each file's ID,
     owner and that it is a well-formed source. A diagram found at two or more paths is listed with
     the candidates and never adopted; a missing source with no file holding its ID (E7) is
     reported, never guessed.

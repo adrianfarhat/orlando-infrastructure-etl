@@ -21,6 +21,9 @@ const path = require("path");
 
 const SNAPSHOT_MS = 4000;                        // the longest a rename waits for the snapshot (never indefinitely)
 const SCOPE = /^(designs|docs\/architecture)(\/|$)/;
+const SCOPE_CI = /^(designs|docs\/architecture)(\/|$)/i;
+/** Whether a repository path may concern diagram sources (letter case ignored on Windows, QA). */
+const inScope = (rel, platform = process.platform) => (platform === "win32" ? SCOPE_CI : SCOPE).test(rel);
 const ARCH_NOTICE = "Architecture diagram sources change only through technical-lead's documentation workflow (M1); " +
   "the registry was not changed.";
 const CHOICES = {
@@ -35,21 +38,53 @@ const keyOf = (rel) => (process.platform === "win32" ? rel.toLowerCase() : rel);
 
 // ------------------------------------------------------------------ pure model (tested in test/unit/renames.test.js)
 
+function relIn(root, uri) {
+  if (!uri || uri.scheme !== "file") return null;
+  const r = path.relative(root, uri.fsPath);
+  if (!r || r.startsWith("..") || path.isAbsolute(r)) return null;
+  return r.split(path.sep).join("/");
+}
+
 /** The repository-relative pairs of a rename event under `root` that may concern diagram sources. */
-function batchOf(root, files) {
+function batchOf(root, files, platform = process.platform) {
   const out = [];
-  const rel = (uri) => {
-    if (!uri || uri.scheme !== "file") return null;
-    const r = path.relative(root, uri.fsPath);
-    if (!r || r.startsWith("..") || path.isAbsolute(r)) return null;
-    return r.split(path.sep).join("/");
-  };
   for (const f of files || []) {
-    const from = rel(f.oldUri), to = rel(f.newUri);
+    const from = relIn(root, f.oldUri), to = relIn(root, f.newUri);
     if (from === null || to === null) continue;
-    if (SCOPE.test(from) || SCOPE.test(to)) out.push({ from, to });
+    if (inScope(from, platform) || inScope(to, platform)) out.push({ from, to });
   }
   return out;
+}
+
+/** In-scope paths of `root` that a rename moved out of it (out of the workspace folder, or to another file
+ *  system): {from, to} with `to` as VS Code shows it. Not part of a batch: the registry cannot follow them (QA). */
+function leftOf(root, files, platform = process.platform) {
+  const out = [];
+  for (const f of files || []) {
+    const from = relIn(root, f.oldUri);
+    if (from === null || !inScope(from, platform) || relIn(root, f.newUri) !== null) continue;
+    out.push({ from, to: f.newUri ? (f.newUri.scheme === "file" ? f.newUri.fsPath : String(f.newUri)) : "" });
+  }
+  return out;
+}
+
+/** The notice for registered sources that left the design workspace (null when none did). `missing`: the
+ *  `moved` answer's missing entries after the rename. */
+function leftNotice(left, missing) {
+  const gone = (missing || []).filter((m) => left.some((l) => keyOf(m.from) === keyOf(l.from) || keyOf(m.from).startsWith(keyOf(l.from) + "/")));
+  if (!gone.length) return null;
+  return `${plural(gone.length, "registered diagram source", "registered diagram sources")} left the design workspace ` +
+    `(${gone.map((g) => `${g.diagram_id} ${g.from}`).join("; ")} → ${[...new Set(left.map((l) => l.to))].join("; ")}). The registry is not ` +
+    "updated: a source outside the repository cannot be registered. Move it back into a diagrams/ folder under designs/features/ " +
+    "(Undo in the Explorer); until then `check` reports it as missing (E7).";
+}
+
+/** C5: mark the storm before the command runs (its registry change triggers the refresh, possibly before the
+ *  command's process has returned), and take the mark back if the command fails or is refused (QA). */
+async function withStormMark(count, limit, mark, unmark, run) {
+  const marked = count > limit;
+  if (marked) mark(count);
+  try { return await run(); } catch (err) { if (marked) unmark(count); throw err; }
 }
 
 /** One key per batch, the same before and after the rename. */
@@ -259,6 +294,8 @@ function onWillRename(e) {
 function onDidRename(e) {
   if (!vscode.workspace.isTrusted) return;
   for (const root of roots()) {
+    const left = leftOf(root, e.files);
+    if (left.length) notifyLeft(root, left).catch((err) => deps.log(`[renames] ${err.message}`));
     const pairs = batchOf(root, e.files);
     if (!pairs.length) continue;
     const key = batchKey(root, pairs);
@@ -267,6 +304,13 @@ function onDidRename(e) {
     afterRename(root, pairs, snap).catch((err) => { deps.log(`[renames] ${err.stack || err}`); vscode.window.showErrorMessage(`Feature Designer: ${err.message}`); })
       .finally(() => refreshMoved(root).catch(() => {}));
   }
+}
+
+async function notifyLeft(root, left) {
+  deps.log(`[renames] left the workspace: ${left.map((l) => `${l.from} → ${l.to}`).join(", ")}`);
+  const r = await deps.ask(root, "moved", {}, false);
+  const text = leftNotice(left, r.missing);
+  if (text) vscode.window.showWarningMessage(`Feature Designer: ${text}`);
 }
 
 async function plan(root, mode, moves) {
@@ -303,10 +347,10 @@ async function afterRename(root, pairs, snap) {
     vscode.window.showInformationMessage(`${ARCH_NOTICE} (${pre.architecture.map((a) => `${a.from} → ${a.to}`).join("; ")})`);
   }
   if (pre.held.length && !pre.sources.length) {
-    const review = "Review…";
+    const reviewLabel = "Review…";
     vscode.window.showWarningMessage(`${pre.held.map((h) => h.path).join(", ")} ${pre.held.length === 1 ? "is" : "are"} held by an unresolved ` +
-      "record and VS Code cannot prevent the rename: its recovery reports the old path as missing and never writes it or the new path (G9).", review)
-      .then((a) => { if (a === review) deps.upd.showRecovery(); });
+      "record and VS Code cannot prevent the rename: its recovery reports the old path as missing and never writes it or the new path (G9).", reviewLabel)
+      .then((a) => { if (a === reviewLabel) deps.upd.showRecovery(); });
   }
   if (!pre.sources.length) return;
   // the new paths as they are on disk (a case-only rename keeps the old case in VS Code's event); a source
@@ -366,9 +410,11 @@ async function decide(root, { sources, warnings, held, skipped, references, exte
 }
 
 async function carryOut(root, bridge, mode, p, back) {
-  if (mode === "adopt" && p.moves.length > deps.stormCount) deps.markStorm(root, p.moves.length);   // C5: one summary, no automatic refresh
   try {
-    const r = await require("./commands").moveSources({ python: bridge.python, root }, { mode, moves: p.moves, token: p.token });
+    // C5: one summary, no automatic refresh, for a batch of more than STORM_COUNT sources; withdrawn on a failure
+    const r = await withStormMark(mode === "adopt" ? p.moves.length : 0, deps.stormCount, (n) => deps.markStorm(root, n),
+                                  (n) => deps.unmarkStorm(root, n),
+                                  () => require("./commands").moveSources({ python: bridge.python, root }, { mode, moves: p.moves, token: p.token }));
     deps.log(`[renames] ${r.id}: ${mode} ${r.renames.map((x) => `${x.diagram_id} ${x.from} → ${x.to}`).join(", ")}; index ${r.index.regenerated ? "regenerated" : `not regenerated (${r.index.problem})`}`);
     vscode.window.showInformationMessage(adoptedMessage(r, back));
     for (const w of (r.warnings || []).filter((x) => typeof x === "string")) vscode.window.showWarningMessage(`Feature Designer: ${w}`);
@@ -379,18 +425,26 @@ async function carryOut(root, bridge, mode, p, back) {
     // The tooling's message says exactly what was and was not done (refused before anything was written, or
     // partly done with a record kept); an unresolved record is offered for review.
     const recs = deps.upd.records(root);
-    const review = "Review…";
+    const reviewLabel = "Review…";
     const kept = recs.some((x) => x.valid && x.tool === "registry-move")
       ? " An interrupted registry move is recorded: nothing more changes until you complete, undo or abandon it (Review…)." : "";
     // not awaited: the notification may stay up for long, and a later prompt (Review… in the strip) must not wait for it
     vscode.window.showErrorMessage(`Feature Designer (${back ? "Move the files back" : "Update the registry"}): ${err.message}${kept}`,
-                                   ...(recs.length ? [review] : []))
-      .then((a) => { if (a === review) deps.upd.showRecovery(); });
+                                   ...(recs.length ? [reviewLabel] : []))
+      .then((a) => { if (a === reviewLabel) deps.upd.showRecovery(); });
     return false;
   }
 }
 
 // ------------------------------------------------------------------ the E6 strip row
+
+/** Which root Review Moved Diagram Sources acts on without asking: the only one with moved sources, the only
+ *  root at all (it then says there is nothing), or null when none has any; undefined: ask (several have some). */
+function pickRoot(found, only) {
+  if (found.length === 1) return found[0];
+  if (found.length > 1) return undefined;
+  return only;
+}
 
 async function refreshMoved(root) {
   if (!vscode.workspace.isTrusted) return;
@@ -421,8 +475,16 @@ function activate(context, d) {
     vscode.commands.registerCommand("featureDesigner.reviewMovedSources", async () => {
       const rs = roots();
       if (!rs.length) { vscode.window.showInformationMessage("Open the repository folder first."); return; }
-      await review(rs[0]).catch((err) => vscode.window.showErrorMessage(`Feature Designer: ${err.message}`));
-      await refreshMoved(rs[0]).catch(() => {});
+      // every design root with moved (or missing) sources; a quick pick when there is more than one (QA)
+      const found = [];
+      for (const r of rs) { await refreshMoved(r).catch(() => {}); if (notes.get(r)) found.push(r); }
+      const auto = pickRoot(found, rs.length === 1 ? rs[0] : null);
+      const chosen = auto !== undefined ? auto
+        : ((await vscode.window.showQuickPick(found.map((r) => ({ label: path.basename(r), description: r, detail: notes.get(r).text, r })),
+                                              { placeHolder: "Which repository's moved diagram sources?" })) || {}).r;
+      if (!chosen) { if (!found.length) vscode.window.showInformationMessage("No moved diagram source: the registry names every source's path."); return; }
+      await review(chosen).catch((err) => vscode.window.showErrorMessage(`Feature Designer: ${err.message}`));
+      await refreshMoved(chosen).catch(() => {});
     }),
   );
   setTimeout(soon, 1500);                         // on start: derived from disk, so a declined prompt is offered again
@@ -434,5 +496,5 @@ function activate(context, d) {
   };
 }
 
-module.exports = { activate, batchOf, batchKey, inBatch, exactSha, diskCase, verify, referencingDocuments, promptModel, choiceOf, movedNote,
+module.exports = { activate, inScope, leftOf, leftNotice, withStormMark, pickRoot, batchOf, batchKey, inBatch, exactSha, diskCase, verify, referencingDocuments, promptModel, choiceOf, movedNote,
                    externalSources, adoptedMessage, CHOICES, ARCH_NOTICE, SNAPSHOT_MS };
