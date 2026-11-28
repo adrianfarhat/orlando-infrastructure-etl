@@ -33,7 +33,7 @@ finding, placing, editing and maintaining it.
   [designs/README.md](../../designs/README.md) (diagram blocks and IDs as built today).
 - This page contains no Mermaid diagram on purpose: the architecture catalog reads every
   Mermaid block in `docs/architecture/`, and the set of 14 architecture diagrams must
-  stay unchanged (`architecture verify` checks it, V6). Sketches are plain text.
+  stay unchanged (`architecture verify` checks it: V5 the set of 14, V6 no Mermaid on this page). Sketches are plain text.
 
 ## 1. Principles
 
@@ -244,11 +244,11 @@ designs/
   index/
     diagram-index.md                   generated from the registry
   templates/
-    visual-diagram.drawio.svg          Make New Diagram's starter file (visual)
+    visual-diagram.drawio.svg          Make New Diagram's starter file (visual) (planned, draw.io)
     diagram.md                         unchanged (Mermaid)
 docs/architecture/
   diagrams/                            sources owned by documents (technical-lead)
-.gitattributes                         *.drawio.svg diff=drawio -merge
+.gitattributes                         *.drawio.svg diff=drawio -merge (planned, draw.io)
 ```
 
 - **Sources stay in their approved directories (U12):** document-owned sources in
