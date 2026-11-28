@@ -227,17 +227,36 @@ require, so the diagram rules stay the same everywhere.
 Every diagram has **one authoritative source** and a **stable ID** in the diagram registry,
 [diagrams/registry.yml](diagrams/registry.yml) (design:
 [docs/architecture/diagram-library.md](../docs/architecture/diagram-library.md)). Documents show a
-diagram by referencing its ID; nothing is ever copied by hand. The generated
+diagram by referencing its ID; every copy is generated, never written by hand. In
+`docs/architecture/`, which the tooling never writes, technical-lead applies the generated copy
+verbatim from the tool's output and `check` verifies it byte for byte (below). The generated
 [diagram index](index/diagram-index.md) lists every diagram, its owner, format and source, and
 the features that show it.
 
 - **Find** a diagram in the [diagram index](index/diagram-index.md) or the
   [architecture index](index/architecture-index.md#diagrams). The 14 architecture diagrams are
-  registered in place (stage M0) with stable IDs `AD-0001` to `AD-0014`; their former catalog
-  IDs (`<document>/<heading anchor>`, for example
+  registered (stage M0) with stable IDs `AD-0001` to `AD-0014`; their former catalog IDs
+  (`<document>/<heading anchor>`, for example
   `system-architecture/1-current-state-the-big-picture`) stay valid as **aliases**, so existing
-  references keep working. Their source is still the Mermaid block in `docs/architecture/`:
-  nothing there was changed or moved.
+  references keep working. Each architecture diagram is in one of two states, shown in the
+  architecture index's Source column (stage M1, one document at a time):
+  - `embedded` (format `mermaid-embedded`): its source is the Mermaid block in its
+    `docs/architecture/` document, as before M1;
+  - extracted (format `mermaid-md`): its source is a standalone file in
+    `docs/architecture/diagrams/`, and the document shows a **generated copy** of it between
+    `<!-- diagram:start AD-nnnn sha256:… -->` and `<!-- diagram:end -->` (invisible when
+    rendered). The tooling never writes `docs/architecture/`: when a source changes, `check` and
+    `index --check` report the copy as out of date, and technical-lead applies the exact text
+    printed by `python -m tools.design architecture copy AD-nnnn` (read only). Edit the
+    source, never the copy; a hand-edited copy is reported (E15) and never overwritten.
+
+  Either way the diagram is counted once (the count is by registry identity), and a feature
+  block that names it shows the same Mermaid content; for an extracted diagram its caption
+  links to the standalone source. The M1 commands are `python -m tools.design registry extract`
+  (main conversation; switches the registry entries of one document, with a plan, a token and
+  a guarded `--revert`), `architecture copy` (technical-lead's printed copy) and
+  `architecture snapshot` / `architecture verify` (the pre-migration record and the proof of
+  every state against it); see designs/DECISIONS.md, "T-97 M1 — implementation choices".
 - **Create** a standalone Mermaid diagram owned by a feature:
 
   ```text

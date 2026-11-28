@@ -803,6 +803,8 @@ def check(root: Path) -> list[Problem]:
     problems += registry.problems(root, features)
     from . import transactions                    # T-97 PR B2b-1: interrupted updates (E16)
     problems += transactions.problems(root)
+    from . import architecture_copies             # T-97 M1: generated copies in docs/architecture/
+    problems += architecture_copies.problems(root)
     if not index_is_fresh(root):
         problems.append(Problem(INDEX, "out of date or missing: run `python -m tools.design index`"))
     if not registry.diagram_index_is_fresh(root):

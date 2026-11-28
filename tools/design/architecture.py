@@ -13,6 +13,12 @@ is renamed; designs that cite the old ID are reported by the reference checks (M
 
 No line numbers are recorded, so edits that do not change headings or diagrams leave the
 index up to date.
+
+T-97 M1 (diagram library U3, U9): a document may show a diagram as a generated copy of its
+standalone source in docs/architecture/diagrams/, between `<!-- diagram:start <ID> sha256:... -->`
+and `<!-- diagram:end -->` (architecture_copies.py). `catalog()` never counts such a copy: it
+returns only the embedded (raw) Mermaid blocks. Every count and the index's diagram list come
+from `architecture_diagrams()`: one row per diagram by registry identity, whichever form it has.
 """
 
 from __future__ import annotations
@@ -49,6 +55,31 @@ class ArchitectureDocument:
     path: str                     # repository-relative path
     parsed: markdown.Document | None
     problem: str | None           # why it could not be read
+    text: str = ""                # the document as read (T-97 M1: where its generated copies are)
+
+
+NOT_FOUND = 10 ** 9               # ArchitectureDiagram.position of a diagram not found in its document
+
+
+@dataclass(frozen=True)
+class ArchitectureDiagram:
+    """One architecture diagram by registry identity (T-97 M1, U9): an active document-owned
+    entry, embedded or extracted to a standalone source, or a raw block not registered yet."""
+    diagram_id: str               # the registry ID; the catalog ID when not registered
+    alias: str                    # the catalog ID the index shows (the registered alias, which is stable)
+    aliases: tuple[str, ...]
+    document: str                 # the document that owns and shows it
+    heading: markdown.Heading | None   # the heading of its raw block, or of its copy in that document
+    diagram_type: str | None      # from the source's `%% diagram-type:` marker
+    source: tuple[str, ...]       # the Mermaid lines of its authoritative source
+    closed: bool
+    title: str                    # the owning document's title
+    path: str                     # where the source is: the document (embedded) or the standalone file
+    line: int                     # 1-based line of the source's opening fence in `path` (0: unknown)
+    format: str                   # mermaid-embedded, mermaid-md, or '' (not registered)
+    copies: tuple[tuple[str, int], ...] = ()   # (document, 1-based start-marker line) of each generated copy
+    position: int = 0             # 1-based line in `document` (raw block or copy); orders the rows
+    problem: str = ""             # why it cannot be used ('' when it can)
 
 
 def documents(root: Path) -> list[ArchitectureDocument]:
@@ -79,13 +110,16 @@ def documents(root: Path) -> list[ArchitectureDocument]:
             except OSError as exc:
                 found.append(ArchitectureDocument(rel, None, f"cannot be read ({type(exc).__name__})"))
                 continue
-            found.append(ArchitectureDocument(rel, markdown.parse(text), None))
+            found.append(ArchitectureDocument(rel, markdown.parse(text), None, text))
     found.sort(key=lambda d: d.path)
     return found
 
 
 def catalog(docs: list[ArchitectureDocument]) -> list[CatalogDiagram]:
-    """Every Mermaid diagram, with its derived ID, in document then line order."""
+    """Every embedded (raw) Mermaid diagram, with its derived ID, in document then line order.
+    A Mermaid fence inside a generated copy (between diagram markers, U3) is never counted
+    (U9): the copy belongs to its standalone source, which `architecture_diagrams` lists."""
+    from .architecture_copies import spans             # imports diagrams, which imports this lazily
     out, used = [], {}
     for doc in docs:
         if doc.parsed is None:
@@ -94,7 +128,10 @@ def catalog(docs: list[ArchitectureDocument]) -> list[CatalogDiagram]:
         stem = stem[:-3] if stem.lower().endswith(".md") else stem
         heads = doc.parsed.headings
         title = heads[0].text if heads and heads[0].level == 1 else ""
+        regions = spans(doc.text) if "diagram:" in doc.text else []
         for d in doc.parsed.diagrams:
+            if any(start < d.line - 1 < end for start, end in regions):
+                continue                                # inside a generated copy (0-based marker lines)
             heading = doc.parsed.headings[d.heading] if d.heading is not None else None
             base = f"{stem}/{heading.anchor if heading is not None and heading.anchor else 'top'}"
             used[base] = used.get(base, 0) + 1
@@ -113,29 +150,101 @@ def _label(heading: markdown.Heading) -> str:
     return _cell(heading.text) or "(empty heading)"
 
 
-def _registry_ids(root: Path, diagrams: list[CatalogDiagram]) -> dict[str, str]:
-    """Catalog ID -> registry ID for the architecture diagrams registered in place (stage M0)."""
-    from . import registry                         # imports this module lazily
+def heading_at(parsed: markdown.Document, line: int) -> markdown.Heading | None:
+    """The heading a 1-based line sits under (None before the first heading)."""
+    found = None
+    for h in parsed.headings:
+        if h.line >= line:
+            break
+        found = h
+    return found
+
+
+def type_of(lines) -> str | None:
+    """The value of the first `%% diagram-type:` line, as markdown.parse reads it."""
+    for line in lines:
+        m = markdown._DIAGRAM_TYPE.match(line)
+        if m:
+            return m.group(1)
+    return None
+
+
+def architecture_diagrams(root: Path, docs: list[ArchitectureDocument] | None = None) -> list[ArchitectureDiagram]:
+    """Every architecture diagram once, by registry identity (T-97 M1, U9), in document then
+    line order: each active document-owned entry (embedded: its raw block; mermaid-md: its
+    standalone source, positioned by its copy, or by a raw block that still duplicates it, in
+    the owning document), and every raw block that is not registered. A raw block whose
+    catalog ID is an alias of an extracted entry is that entry's duplicate (reported by
+    `check`), never a second diagram. Every count uses this list (index, library, tests)."""
+    from . import diagrams, registry                   # import this module lazily
+    from .architecture_copies import scan
+    root = Path(root)
+    docs = documents(root) if docs is None else docs
+    by_path = {d.path: d for d in docs}
+    cat = catalog(docs)
     reg = registry.load(root)
     position: dict[tuple, int] = {}
     by_position = {}
-    for d in diagrams:
+    for d in cat:
         key = registry.catalog_key(d)
         position[key] = position.get(key, 0) + 1
-        by_position[(key[0], key[1], position[key])] = d.diagram_id
-    out = {}
+        by_position[(key[0], key[1], position[key])] = d
+    regions: dict[str, list[tuple[str, int]]] = {}        # name -> (document, 0-based start-marker line)
+    for doc in docs:
+        if doc.parsed is not None and "diagram:" in doc.text:
+            for b in scan(doc.text)[0]:
+                regions.setdefault(b.diagram_id, []).append((doc.path, b.start))
+    rows, covered = [], set()
+
+    def title_of(path):
+        doc = by_path.get(path)
+        heads = doc.parsed.headings if doc is not None and doc.parsed is not None else ()
+        return heads[0].text if heads and heads[0].level == 1 else ""
+
     for e in reg.entries:
-        if e.format == "mermaid-embedded" and e.status == "active":
-            did = by_position.get((e.path, None if e.anchor in ("", "top") else e.anchor, e.ordinal))
-            if did is not None:
-                out[did] = e.diagram_id
-    return out
+        if e.status != "active" or e.owner_kind != "document":
+            continue
+        alias = e.aliases[0] if e.aliases else e.diagram_id
+        if e.format == "mermaid-embedded":
+            d = by_position.get((e.path, None if e.anchor in ("", "top") else e.anchor, e.ordinal))
+            if d is None:
+                rows.append(ArchitectureDiagram(e.diagram_id, alias, e.aliases, e.path, None, None, (), False,
+                                                title_of(e.path), e.path, 0, e.format, position=NOT_FOUND,
+                                                problem=f"cannot be found under #{e.anchor or 'top'} in {e.path} (E7)"))
+                continue
+            covered.add(d.diagram_id)
+            rows.append(ArchitectureDiagram(e.diagram_id, alias, e.aliases, e.path, d.heading, d.diagram_type, d.source,
+                                            d.closed, title_of(e.path), e.path, d.line, e.format, position=d.line))
+            continue
+        if e.format != "mermaid-md":
+            continue
+        src = diagrams._refuse_markers(diagrams._registered_source(root, e))
+        names = (e.diagram_id, *e.aliases)
+        copies = sorted({c for n in names for c in regions.get(n, [])})
+        duplicates = [d for d in cat if d.document == e.owner_ref and d.diagram_id in e.aliases]
+        covered.update(d.diagram_id for d in duplicates)
+        own = [c for c in copies if c[0] == e.owner_ref]
+        heading, at = None, NOT_FOUND
+        owner_doc = by_path.get(e.owner_ref)
+        if own and owner_doc is not None and owner_doc.parsed is not None:
+            at = own[0][1] + 1
+            heading = heading_at(owner_doc.parsed, at)
+        elif duplicates:
+            heading, at = duplicates[0].heading, duplicates[0].line
+        rows.append(ArchitectureDiagram(e.diagram_id, alias, e.aliases, e.owner_ref, heading, type_of(src.lines),
+                                        src.lines, src.closed, title_of(e.owner_ref), e.path, src.line, e.format,
+                                        tuple((p, i + 1) for p, i in copies), at, src.problem))
+    for d in cat:                                       # raw blocks not registered (yet)
+        if d.diagram_id not in covered:
+            rows.append(ArchitectureDiagram(d.diagram_id, d.diagram_id, (), d.document, d.heading, d.diagram_type,
+                                            d.source, d.closed, d.title, d.document, d.line, "", position=d.line))
+    rows.sort(key=lambda r: (r.document, r.position, r.diagram_id))
+    return rows
 
 
 def render_architecture_index(root: Path) -> str:
     docs = documents(root)
-    diagrams = catalog(docs)
-    registered = _registry_ids(root, diagrams)
+    diagrams = architecture_diagrams(root, docs)
     readable = [d for d in docs if d.parsed is not None]
     heading_count = sum(len(d.parsed.headings) for d in readable)
     types: dict[str, int] = {}
@@ -156,16 +265,25 @@ def render_architecture_index(root: Path) -> str:
                   "that heading is renamed. The registry ID is the diagram's stable ID in the",
                   "[diagram registry](../diagrams/registry.yml) (see [diagram-index.md](diagram-index.md)); the diagram ID",
                   "stays valid as its alias. The type is the diagram's `%% diagram-type:` marker",
-                  "([conventions.md section 2](../../docs/architecture/conventions.md#2-diagram-types)).", "",
-                  "| Diagram ID | Registry ID | Type | Document | Under the heading |", "|---|---|---|---|---|"]
+                  "([conventions.md section 2](../../docs/architecture/conventions.md#2-diagram-types)). The source is",
+                  "`embedded` (the Mermaid block in the document is the source) or a link to the diagram's standalone",
+                  "source in `docs/architecture/diagrams/`, of which the document shows a generated copy.", "",
+                  "| Diagram ID | Registry ID | Type | Document | Under the heading | Source |",
+                  "|---|---|---|---|---|---|"]
         for d in diagrams:
             name = d.document[len(ARCHITECTURE) + 1:]
-            under = (f"[{_label(d.heading)}]({_target(d.document, d.heading.anchor)})"
-                     if d.heading is not None and d.heading.anchor else "(before the first heading)")
-            reg_id = f"`{registered[d.diagram_id]}`" if d.diagram_id in registered else "not registered"
-            lines.append(f"| `{d.diagram_id}` | {reg_id} | "
+            if d.heading is not None and d.heading.anchor:
+                under = f"[{_label(d.heading)}]({_target(d.document, d.heading.anchor)})"
+            elif d.position == NOT_FOUND:
+                under = "(not found: see `python -m tools.design check`)"
+            else:
+                under = "(before the first heading)"
+            reg_id = f"`{d.diagram_id}`" if d.format else "not registered"
+            where = (f"[{_cell(posixpath.basename(d.path))}]({_target(d.path)})" if d.format == "mermaid-md"
+                     else "embedded")
+            lines.append(f"| `{d.alias}` | {reg_id} | "
                          f"{_cell(d.diagram_type) if d.diagram_type else '*' + NO_TYPE + '*'} | "
-                         f"[{_cell(name)}]({_target(d.document)}) | {under} |")
+                         f"[{_cell(name)}]({_target(d.document)}) | {under} | {where} |")
     else:
         lines.append("No Mermaid diagrams.")
     lines += ["", "## Documents", ""]
@@ -207,8 +325,8 @@ def render_architecture_index(root: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _diagram_note(items: list[CatalogDiagram]) -> str:
-    return "; ".join(f"diagram `{d.diagram_id}` ({d.diagram_type or NO_TYPE})" for d in items)
+def _diagram_note(items: list[ArchitectureDiagram]) -> str:
+    return "; ".join(f"diagram `{d.alias}` ({d.diagram_type or NO_TYPE})" for d in items)
 
 
 def architecture_index_is_fresh(root: Path) -> bool:

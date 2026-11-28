@@ -8,6 +8,11 @@
   python -m tools.design registry move SOURCE [SOURCE ...] --to DEST [--to DEST ...] [--confirm TOKEN] [--json]
   python -m tools.design registry adopt-moves [--from OLD --to NEW [--sha256 HEX] ...] [--confirm TOKEN] [--json]
   python -m tools.design registry move-back --from NOW --to REGISTERED [--sha256 HEX] [...] [--confirm TOKEN] [--json]
+  python -m tools.design registry extract ID --path SOURCE [ID --path SOURCE ...] --snapshot FILE [--confirm TOKEN] [--json]
+  python -m tools.design registry extract --revert ID --heading ANCHOR [--ordinal N] [--confirm TOKEN] [--json]
+  python -m tools.design architecture snapshot --out FILE [--json]
+  python -m tools.design architecture copy (ID [ID ...] | --document DOC) [--json]
+  python -m tools.design architecture verify --snapshot FILE [--json]
   python -m tools.design resolve ID
   python -m tools.design reconcile --file PATH --line N (--discard | --apply-to-source) [--confirm TOKEN]
   python -m tools.design index [--check] [--root DIR]
@@ -30,13 +35,15 @@ ordinary uncommitted changes (never staged, committed or pushed).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import traceback
 from pathlib import Path
 from typing import Callable, TextIO
 
-from . import architecture, dependencies, designer_api, diagrams, ownership, registry, transactions, workspace
+from . import (architecture, architecture_copies, dependencies, designer_api, diagrams, ownership, registry,
+               transactions, workspace)
 from .workspace import DesignError
 
 EXIT_OK, EXIT_PROBLEMS, EXIT_FAILURE = 0, 1, 2
@@ -118,9 +125,35 @@ def build_parser() -> argparse.ArgumentParser:
                            help="the SHA-256 the source had before it was renamed (one per --from; refused if it differs)")
     move_back.add_argument("--confirm", metavar="TOKEN", help="carry out exactly the plan that printed this token")
     move_back.add_argument("--json", action="store_true", help="print the plan or the result as JSON")
+    extract = ops.add_parser("extract", help="T-97 M1: switch the embedded architecture diagrams of one document to "
+                                             "their standalone sources in docs/architecture/diagrams/ (shows the plan "
+                                             "first; acts only with --confirm TOKEN; writes only the registry and the "
+                                             "diagram index)")
+    extract.add_argument("diagram_id", nargs="*", help="a diagram ID or alias, each followed by its --path")
+    extract.add_argument("--path", action="append", default=[], help="the diagram's standalone source (one per ID)")
+    extract.add_argument("--snapshot", help="the pre-migration snapshot (`architecture snapshot`)")
+    extract.add_argument("--revert", action="store_true", help="set one extracted diagram back to mermaid-embedded "
+                                                               "(needs --heading)")
+    extract.add_argument("--heading", help="--revert: the heading anchor of the raw block in the document")
+    extract.add_argument("--ordinal", type=int, help="--revert: which diagram under that heading (default 1)")
+    extract.add_argument("--confirm", metavar="TOKEN", help="carry out exactly the plan that printed this token")
+    extract.add_argument("--json", action="store_true", help="print the plan or the result as JSON")
     retire = ops.add_parser("retire", help="retire a diagram (lists its references; the ID is never reused)")
     retire.add_argument("diagram_id", help="the diagram ID or alias")
     retire.add_argument("--confirm", action="store_true", help="retire it (without this, only the references are listed)")
+    arch = sub.add_parser("architecture", help="T-97 M1: the generated copies of architecture diagrams (read only)")
+    arch_ops = arch.add_subparsers(dest="action", required=True, metavar="ACTION")
+    snap = arch_ops.add_parser("snapshot", help="record the pre-migration state (documents and diagrams) in a new file")
+    snap.add_argument("--out", required=True, type=Path, help="the snapshot file to create (never overwritten)")
+    snap.add_argument("--json", action="store_true", help="print the result as JSON")
+    copy = arch_ops.add_parser("copy", help="print the exact generated copy technical-lead applies to a document "
+                                            "(writes nothing)")
+    copy.add_argument("diagram_id", nargs="*", help="diagram IDs or aliases")
+    copy.add_argument("--document", help="every extracted diagram of this document, e.g. system-architecture.md")
+    copy.add_argument("--json", action="store_true", help="print the plan as JSON")
+    ver = arch_ops.add_parser("verify", help="prove the M1 state against the snapshot (V1-V7; writes nothing)")
+    ver.add_argument("--snapshot", required=True, type=Path, help="the pre-migration snapshot")
+    ver.add_argument("--json", action="store_true", help="print the result as JSON")
     resolve = sub.add_parser("resolve", help="show a diagram's authoritative source (JSON); writes nothing")
     resolve.add_argument("diagram_id", help="the diagram ID or alias")
     reconcile = sub.add_parser("reconcile", help="resolve a diagram block that was edited by hand (E15): shows the "
@@ -160,7 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="carry out the action on exactly the state that was shown (forget-window takes no token)")
     tx.add_argument("--json", action="store_true", help="print the result as JSON")
     for p in (feature, diagram, designer, index, sub.choices["check"], adopt, adopt_arch, relink, retire, unlock,
-              resolve, reconcile, rb, tx, move, adopt_moves, move_back):
+              resolve, reconcile, rb, tx, move, adopt_moves, move_back, extract, snap, copy, ver):
         p.add_argument("--root", type=Path, help="repository root (default: found from the current folder)")
     return parser
 
@@ -170,7 +203,13 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     out = stdout if stdout is not None else sys.stdout
     err = stderr if stderr is not None else sys.stderr
     try:
-        args = build_parser().parse_args(argv)
+        args, extra = build_parser().parse_known_args(argv)
+        if extra:                                   # only `registry extract ID --path P ID --path P ...` interleaves
+            if getattr(args, "action", None) == "extract" and args.command == "registry" \
+                    and not any(x.startswith("-") for x in extra):
+                args.diagram_id = list(args.diagram_id) + extra
+            else:
+                raise DesignError(f"unrecognized arguments: {' '.join(extra)}")
         if args.command == "designer":              # always answers in JSON, even without a workspace
             try:
                 root = workspace.find_root(args.root if args.root is not None else Path.cwd())
@@ -188,6 +227,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             return _new_feature(args, root, out, ask or input, interactive)
         if args.command == "registry":
             return _registry(args, root, out)
+        if args.command == "architecture":
+            return _architecture(args, root, out)
         if args.command == "resolve":
             response, code = designer_api.handle(root, {"version": designer_api.VERSION, "op": "resolve",
                                                         "diagram_id": args.diagram_id})
@@ -204,7 +245,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 fresh = workspace.index_is_fresh(root)
                 arch_fresh = architecture.architecture_index_is_fresh(root)
                 diagram_fresh = registry.diagram_index_is_fresh(root)
-                stale = workspace.stale_summaries(root) + dependencies.stale_related(root) + diagrams.stale(root)
+                stale = (workspace.stale_summaries(root) + dependencies.stale_related(root) + diagrams.stale(root)
+                         + architecture_copies.stale(root))        # T-97 M1: technical-lead applies these
                 print(f"{workspace.INDEX} is {'up to date' if fresh else 'out of date: run `python -m tools.design index`'}",
                       file=out)
                 print(f"{architecture.ARCHITECTURE_INDEX} is "
@@ -251,6 +293,8 @@ def _index(root: Path, out: TextIO, err: TextIO) -> int:
     for p in diagrams.stale(root):                       # conflicts are never overwritten (U13)
         if "(E15)" in p.message:
             print(f"design: warning: {p.path}: {p.message}", file=err)
+    for p in architecture_copies.stale(root):           # T-97 M1: never written by the tooling (C1)
+        print(f"design: warning: {p.path}: {p.message}", file=err)
     for p in workspace.not_refreshable(root):           # one line per file; nothing is repaired
         print(f"design: warning: {p.path}: {p.message}; run `python -m tools.design check`", file=err)
     fresh = workspace.index_is_fresh(root)
@@ -430,10 +474,128 @@ def _move(args, root: Path, out: TextIO) -> int:
     return EXIT_OK
 
 
+def _extract(args, root: Path, out: TextIO) -> int:
+    """`registry extract` (T-97 M1): the plan first, then exactly that plan."""
+    note = "Uncommitted working-tree changes: nothing was staged, committed or pushed."
+    if args.revert:
+        if len(args.diagram_id) != 1 or args.path or args.snapshot:
+            raise DesignError("--revert takes one diagram ID and --heading (no --path, no --snapshot)")
+        if args.confirm is None:
+            plan = registry.plan_revert(root, args.diagram_id[0], args.heading, args.ordinal)
+        else:
+            plan = registry.revert(root, args.diagram_id[0], args.heading, args.ordinal, args.confirm)
+    else:
+        if args.heading or args.ordinal:
+            raise DesignError("--heading and --ordinal belong to --revert")
+        if not args.snapshot:
+            raise DesignError("give --snapshot FILE (the pre-migration record from `architecture snapshot`)")
+        if len(args.diagram_id) != len(args.path):
+            raise DesignError("give one --path after every diagram ID, in the same order")
+        items = list(zip(args.diagram_id, args.path))
+        plan = (registry.plan_extract(root, items, args.snapshot) if args.confirm is None
+                else registry.extract(root, items, args.snapshot, args.confirm))
+    if args.json:
+        print(json.dumps(plan, sort_keys=True, ensure_ascii=False), file=out)
+        if plan.get("done"):
+            return EXIT_OK
+        return EXIT_FAILURE if plan["problems"] else EXIT_PROBLEMS
+    if plan["problems"]:
+        raise DesignError(f"the {plan['action']} was refused; nothing was changed:\n"
+                          + "\n".join(f"  - {p}" for p in plan["problems"]))
+    if plan["action"] == "revert":
+        head = (f"registry extract --revert: {plan['diagram_id']} back to mermaid-embedded in {plan['document']} "
+                f"#{plan['heading']} ({plan['ordinal']}); its source {plan['path']} stays")
+        lines = []
+    else:
+        head = f"registry extract: {len(plan['diagrams'])} diagram(s) of {plan['document']}"
+        lines = [f"  {d['diagram_id']}: mermaid-embedded #{d['anchor']} ({d['ordinal']}) -> mermaid-md {d['path']} "
+                 f"(Mermaid SHA-256 {d['mermaid_sha256']})" for d in plan["diagrams"]]
+        lines.append(f"  snapshot {plan['snapshot']['path']} (SHA-256 {plan['snapshot']['sha256']})")
+    if plan.get("done"):
+        print(("reverted " if plan["action"] == "revert" else "extracted ") + head.split(": ", 1)[1], file=out)
+        for line in lines:
+            print(line, file=out)
+        print(f"wrote {', '.join(plan['writes'])}; nothing under docs/architecture/ was changed. " + note, file=out)
+        return EXIT_OK
+    print(head + ":", file=out)
+    for line in lines:
+        print(line, file=out)
+    print(f"Only the registry entries' format and path change (anchor and ordinal "
+          f"{'are added' if plan['action'] == 'revert' else 'are removed'}); it writes {', '.join(plan['writes'])} "
+          "and nothing under docs/architecture/.", file=out)
+    print(f"Nothing was changed. To carry out exactly this, repeat with --confirm {plan['token']}", file=out)
+    return EXIT_PROBLEMS
+
+
+def _architecture(args, root: Path, out: TextIO) -> int:
+    """`architecture snapshot | copy | verify` (T-97 M1). Nothing under docs/architecture/ is written."""
+    if args.action == "snapshot":
+        target = Path(args.out).resolve()
+        if _inside(root, target):
+            ownership.guard_write(root, target)        # never under docs/architecture/
+        if target.exists():
+            raise DesignError(f"{args.out} exists; a snapshot is never overwritten")
+        data = architecture_copies.snapshot(root)
+        text = json.dumps(data, sort_keys=True, ensure_ascii=False, indent=1) + "\n"
+        # whole or not at all: a temporary file, then a link that fails if the name exists (never overwritten)
+        ownership.create_exclusively(target, text, str(args.out))
+        sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if args.json:
+            print(json.dumps({"path": str(target), "sha256": sha, "commit": data["commit"],
+                              "diagrams": len(data["diagrams"]), "documents": len(data["documents"])}, sort_keys=True),
+                  file=out)
+        else:
+            print(f"wrote {target} (SHA-256 {sha}): {len(data['diagrams'])} diagrams, {len(data['documents'])} "
+                  f"documents, commit {data['commit'] or '(none)'}", file=out)
+        return EXIT_OK
+    if args.action == "copy":
+        plan = architecture_copies.plan_copies(root, args.diagram_id or None, args.document)
+        if args.json:
+            print(json.dumps(plan, sort_keys=True, ensure_ascii=False), file=out)
+            return EXIT_OK
+        for doc in plan["documents"]:
+            print(f"{doc['path']} (LF SHA-256 now {doc['sha256_before']}, after these replacements "
+                  f"{doc['sha256_after']}):", file=out)
+            for r in doc["replacements"]:
+                print(f"\n{r['diagram_id']}: replace lines {r['start_line']}-{r['end_line']} ({r['kind']}; old text "
+                      f"SHA-256 {r['old_sha256']}{'' if r['old_unique'] else '; NOT unique in the document'}) with:",
+                      file=out)
+                print(r["new_text"], file=out)
+            for d in doc["current"]:
+                print(f"\n{d}: the generated copy is current; nothing to replace", file=out)
+            for d in doc["not_shown"]:
+                print(f"\n{d['diagram_id']}: not shown in {doc['path']}; add where it belongs:", file=out)
+                print(d["new_text"], file=out)
+        print("\nNothing was written: technical-lead applies this text in docs/architecture/, then runs "
+              "`python -m tools.design check` and `architecture verify`.", file=out)
+        return EXIT_OK
+    result = architecture_copies.verify(root, args.snapshot)
+    if args.json:
+        print(json.dumps(result, sort_keys=True, ensure_ascii=False), file=out)
+    else:
+        for v, state in result["checks"].items():
+            print(f"{v}: {state}", file=out)
+        for p in result["problems"]:
+            print(f"  {p['check']}: {p['message']}", file=out)
+        print(f"{len(result['extracted'])} extracted, {len(result['embedded'])} embedded; "
+              f"{len(result['problems'])} problem(s) against snapshot {result['snapshot']['sha256']}", file=out)
+    return EXIT_OK if result["ok"] else EXIT_PROBLEMS
+
+
+def _inside(root: Path, target: Path) -> bool:
+    try:
+        target.relative_to(Path(root).resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def _registry(args, root: Path, out: TextIO) -> int:
     note = "Uncommitted working-tree changes: nothing was staged, committed or pushed."
     if args.action in ("move", "adopt-moves", "move-back"):
         return _move(args, root, out)
+    if args.action == "extract":
+        return _extract(args, root, out)
     if args.action == "adopt":
         e = registry.adopt(root, args.path, args.category)
         print(f"registered {e.diagram_id} ({e.path}, owned by {e.owner_ref}). {note}", file=out)

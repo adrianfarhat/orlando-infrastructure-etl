@@ -254,15 +254,18 @@ class RealRepository(unittest.TestCase):
     """Read-only checks against this repository's own docs/architecture/."""
 
     def test_the_real_catalog(self):
-        diagrams = architecture.catalog(architecture.documents(REPO_ROOT))
+        # T-97 M1: counted by registry identity, so this holds in every M1 state (embedded or extracted)
+        diagrams = architecture.architecture_diagrams(REPO_ROOT)
         counts = {}
         for d in diagrams:
             counts[d.diagram_type] = counts.get(d.diagram_type, 0) + 1
-        # the same 14 blocks and types as the hand-kept inventory in conventions.md section 7
+        # the same 14 diagrams and types as the hand-kept inventory in conventions.md section 7
         self.assertEqual(len(diagrams), 14)
         self.assertEqual(counts, {"architecture": 4, "sequence": 1, "process": 6, "er": 2, "example": 1})
         self.assertEqual(len({d.diagram_id for d in diagrams}), 14)
-        self.assertIn("system-architecture/1-current-state-the-big-picture", {d.diagram_id for d in diagrams})
+        self.assertEqual(len({d.alias for d in diagrams}), 14)
+        self.assertIn("system-architecture/1-current-state-the-big-picture", {d.alias for d in diagrams})
+        self.assertEqual({d.problem for d in diagrams}, {""})
 
     def test_existing_anchor_links_resolve(self):
         """Every link in the repository's tracked Markdown to a heading in docs/ or designs/
