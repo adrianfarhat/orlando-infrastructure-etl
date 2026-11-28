@@ -84,7 +84,7 @@ source in `docs/architecture/diagrams/`, of which the document shows a generated
     - [Q9. Data-quality checks (intermediate)](../../docs/architecture/database-schema.md#q9-data-quality-checks-intermediate)
   - [(d) Where you could contribute SQL for real](../../docs/architecture/database-schema.md#d-where-you-could-contribute-sql-for-real)
 
-### [diagram-library.md](../../docs/architecture/diagram-library.md): Diagram Library (proposed)
+### [diagram-library.md](../../docs/architecture/diagram-library.md): Diagram Library
 
 - [1. Principles](../../docs/architecture/diagram-library.md#1-principles)
 - [2. What exists today](../../docs/architecture/diagram-library.md#2-what-exists-today)

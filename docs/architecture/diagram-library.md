@@ -1,20 +1,23 @@
-# Diagram Library (proposed)
+# Diagram Library
 
-> **PROPOSED — approved design (2026-11-22), not implemented.** Nothing on this page
-> is built. In the terms of the
-> [implementation-status legend](conventions.md#1-implementation-status-legend), every
-> component described here is `planned`; none is `unverified` or `verified`. The built
-> current state is described in the other `docs/architecture/` documents and in
-> [designs/README.md](../../designs/README.md). Where this page states what exists
-> today (section 2), it says so explicitly. Sections 6.3, 7.5, 8.1 and 9 also name the
-> move-related tooling that exists today (`registry relink`, E6 and the PR B2b-1
-> transaction records, E16) and mark the rest of the move design "planned".
+> **Status: approved design (2026-11-22), mostly implemented.** Built: the registry,
+> stable IDs and stage M0 (PR A), Place Diagram, Make New and Edit Diagram (PR B1),
+> source-change refresh and conflict review (PR B2a), closed-document updates as
+> recoverable transactions (PR B2b-1), registry moves (PR B2b-2a), the Feature Designer
+> rename integration (PR B2b-2b), the T-98 blank-line placeholder, and the M1 extraction,
+> generated-copy and verification tooling (M1-0). Not yet done: the extraction itself
+> (M1, one document at a time; section 12.2; no diagram is migrated yet), draw.io
+> (`drawio-svg`, section 10 and 11; E10, E13), and Extract to diagram source for
+> features (section 7.7). Sections that describe something not built say "planned".
+> These statements name what exists; verification evidence is in the
+> [Evidence log](../agents/task-board.md#evidence-log), not here (see the
+> [implementation-status legend](conventions.md#1-implementation-status-legend)).
 > Decisions G1–G12 for moves (PR B2b-2, approved 2026-11-26) are recorded in
 > [DECISIONS.md](../../designs/DECISIONS.md) and cited as "(Gn)". Decisions U1–U14 were **approved on
 > 2026-11-22** ([section 14](#14-decisions-u1u14-approved-2026-11-22)); U13 and U14
-> supersede T-96 decisions 2 and 3. Items deferred to stage M1 are listed in
-> [section 12.2](#122-stage-m1-extract-per-document). Statements that rest on a
-> decision cite it as "(Un)".
+> supersede T-96 decisions 2 and 3. The M1 decisions (C1, Q1–Q6) are in the DECISIONS
+> entry "T-97 M1 — implementation choices". Statements that rest on a decision cite it
+> as "(Un)".
 
 The diagram library gives every diagram in the project (architecture diagrams and
 feature diagrams, code-first Mermaid and visual draw.io) one stable ID, one
@@ -30,7 +33,7 @@ finding, placing, editing and maintaining it.
   [designs/README.md](../../designs/README.md) (diagram blocks and IDs as built today).
 - This page contains no Mermaid diagram on purpose: the architecture catalog reads every
   Mermaid block in `docs/architecture/`, and the set of 14 architecture diagrams must
-  stay unchanged. Sketches are plain text.
+  stay unchanged (`architecture verify` checks it, V6). Sketches are plain text.
 
 ## 1. Principles
 
@@ -54,33 +57,35 @@ finding, placing, editing and maintaining it.
 
 ## 2. What exists today
 
-Inventory as of 2026-11-22, `main` at `56e708f`. This section describes the current
-state, not the design.
+This section describes the current state, not the design. Which format each diagram
+has now (embedded or extracted) is listed in the generated
+[diagram index](../../designs/index/diagram-index.md) and in the Source column of the
+[architecture index](../../designs/index/architecture-index.md#diagrams), so this
+section does not change with each M1 document.
 
-| Where | Diagrams | Stored as | Referenced elsewhere |
-|---|---|---|---|
-| `docs/architecture/conventions.md` | 1 | embedded Mermaid | no |
-| `docs/architecture/database-schema.md` | 3 | embedded Mermaid | no |
-| `docs/architecture/etl-workflow.md` | 5 | embedded Mermaid | no |
-| `docs/architecture/system-architecture.md` | 5 | embedded Mermaid | no |
-| `docs/agents/development-status.md` | 7 | embedded Mermaid (planning, not in the catalog) | no |
-| Feature specifications (`designs/features/`, uncommitted user files) | 2 | the template's placeholder flowchart, embedded, unchanged | no |
-| `designs/templates/` | 2 | examples in templates (not diagrams) | no |
-| Standalone diagram source documents in the repository | 0 | — | — |
+| Where | Diagrams | Stored as |
+|---|---|---|
+| `docs/architecture/` (conventions.md 1, database-schema.md 3, etl-workflow.md 5, system-architecture.md 5) | 14 | registered as `AD-0001` to `AD-0014` (stage M0), each with its former catalog ID as an alias; `mermaid-embedded` until its document is extracted (M1), then `mermaid-md` with a standalone source in `docs/architecture/diagrams/` and a generated copy in the document |
+| `docs/agents/development-status.md` | 7 | embedded Mermaid (planning, not in the library, U2) |
+| `designs/templates/` | 2 | examples in templates (not diagrams) |
+| Feature-owned sources (`diagrams/` folders under `designs/features/`) | none committed | `mermaid-md`, created with `new diagram` (Make New Diagram) |
 
-- The 14 architecture diagrams have positional catalog IDs
-  (`<document>/<heading anchor>`, T-94 Phase 2 decision 2 in
-  [DECISIONS.md](../../designs/DECISIONS.md)). T-96 diagram markers and the
-  [architecture index](../../designs/index/architecture-index.md) use them. No two
-  diagrams are duplicates.
-- Built and recorded in the [Evidence log](../agents/task-board.md#evidence-log): T-96
-  diagram blocks (marker pair, generated caption and Mermaid copy, `check` and
-  `index`); T-97 Phase 1 feature-owned diagram IDs `FD-nnnn-D<n>` that are never
-  reused (Git history allocator) and the Feature Designer JSON interface; T-97 Phase 2
-  Feature Designer MVP (menu item "Insert Existing Diagram", library, Edit source).
-- Not present today: a diagram registry, `designs/diagrams/`,
-  `docs/architecture/diagrams/`, any `.drawio.svg` file, and a repository
-  `.gitattributes`.
+- **The registry** `designs/diagrams/registry.yml` exists and holds the 14 architecture
+  entries. Formats accepted today: `mermaid-md` and `mermaid-embedded`; `drawio-svg`,
+  `mermaid-mmd` and `dbml` are known and refused (section 4).
+- **Commands built** (section 3.2): `new diagram`, `registry adopt`,
+  `registry adopt-architecture` (M0), `registry relink`, `registry retire`,
+  `registry unlock`, `registry move`, `registry adopt-moves`, `registry move-back`,
+  `registry extract` (with `--revert`), `architecture snapshot|copy|verify`, `resolve`,
+  `reconcile`, `refresh-blocks`, `transaction …`, `index` and `check`, and the read-only
+  Feature Designer JSON interface.
+- **Feature Designer** (PR B1–B2b-2b): Place Diagram (Add Existing, Make New), Edit
+  Diagram, rendering from the resolved source, conflict review, refresh of open
+  documents, Update Closed Documents, Resolve Interrupted Update, and the Explorer rename
+  prompt (section 7.5).
+- Not present today: `docs/architecture/diagrams/` (created by the first M1 document),
+  any `.drawio.svg` file, `designs/templates/visual-diagram.drawio.svg` and a repository
+  `.gitattributes` (all planned with draw.io).
 
 ## 3. Owners, IDs and the registry
 
@@ -101,9 +106,25 @@ state, not the design.
 
 One registry, `designs/diagrams/registry.yml`, is authoritative for identity, owner,
 format, category, title, path and lifecycle. It never holds diagram content. It is
-written only by `python -m tools.design` commands (new diagram, `registry relink`,
-`registry retire`, `registry adopt`, and the planned `registry move` and
-`registry adopt-moves` with the recovery of their records; section 7.5).
+written only by `python -m tools.design` commands, each under the registry lock with
+compare-and-swap (section 8.1):
+
+- `new diagram`, `registry adopt`, `registry adopt-architecture` (M0), `registry relink`,
+  `registry retire`;
+- `registry move` and `registry adopt-moves` (PR B2b-2a; `adopt-moves --sha256` binds the
+  checksum taken before a rename, PR B2b-2b), through a recorded move transaction and its
+  recovery (`transaction complete|undo`; section 7.5). `registry move-back` (PR B2b-2b)
+  uses the same records but never writes the registry;
+- `registry extract ID --path SOURCE [ID --path SOURCE ...] --snapshot FILE` and its
+  guarded undo `registry extract --revert ID --heading ANCHOR [--ordinal N]` (M1-0;
+  section 12.2): switch the embedded diagrams of one document to their standalone
+  sources and back. Both show a plan and act only with `--confirm TOKEN`.
+
+The read-only commands `architecture snapshot --out FILE`,
+`architecture copy (ID ... | --document DOC)` and `architecture verify --snapshot FILE`
+(M1-0) record the pre-migration state, print the generated copies that technical-lead
+applies, and verify the migration (section 12.2). None of them writes the registry or
+anything under `docs/architecture/`.
 
 ```text
 version: 1
@@ -118,7 +139,7 @@ diagrams:
     status: active                  # active | retired
     created: 2026-11-22
     created_from: null              # or {diagram: <ID>, commit: <hash>, via: <method>}
-  - diagram_id: FD-0001-D1
+  - diagram_id: FD-0001-D1          # planned format (draw.io, not accepted yet; section 4)
     title: One map pan
     owner: {kind: feature, ref: FD-0001}
     format: drawio-svg
@@ -155,14 +176,15 @@ One table in the tooling drives validation, resolution, rendering and the editor
 | `format` | Extension | Kind | Editor | Rendering in Markdown | In-file identity |
 |---|---|---|---|---|---|
 | `mermaid-md` | `.md` | code | text editor, at the Mermaid block | Mermaid copy (T-96) | front matter: `diagram_id`, `title`, and `feature_id` (feature-owned) or `owner_document` (document-owned) (U10) |
-| `drawio-svg` | `.drawio.svg` | visual | draw.io (pinned, section 10) | image link | root-cell properties: `fd_diagram_id`, and `fd_feature_id` (feature-owned) or `fd_owner_document` (document-owned) (U10) |
-| `mermaid-embedded` | none (a block inside a document) | code, **transitional** | text editor, at the block in the owning document | the document itself | located by owner document + heading anchor + ordinal (renamed headings: U11) |
+| `drawio-svg` | `.drawio.svg` | visual, **not accepted yet** (planned, draw.io) | draw.io (pinned, section 10) | image link | root-cell properties: `fd_diagram_id`, and `fd_feature_id` (feature-owned) or `fd_owner_document` (document-owned) (U10) |
+| `mermaid-embedded` | none (a block inside a document) | code, **transitional** (accepted) | text editor, at the block in the owning document | the document itself | located by owner document + heading anchor + ordinal (renamed headings: U11) |
 | `mermaid-mmd` | `.mmd` | code, **reserved** | not accepted yet | Mermaid copy | `%% diagram_id:` lines |
 | `dbml` | `.dbml` | code, **reserved** | not accepted yet | to be designed | to be designed |
 
 - **`mermaid-md`**: a standalone `.md` source document with front matter and exactly one
   Mermaid block (today's diagram file format, unchanged).
-- **`drawio-svg`**: one diagram per file and **exactly one page**, because the saved
+- **`drawio-svg`** (planned; the registry refuses it until the draw.io work is merged):
+  one diagram per file and **exactly one page**, because the saved
   image shows whichever page was active when saving. The ID is stored as a property on
   the diagram's root cell (for a feature-owned diagram
   `<UserObject id="0" fd_diagram_id fd_feature_id>`), visible in
@@ -172,8 +194,10 @@ One table in the tooling drives validation, resolution, rendering and the editor
   with a white background, which reaches the exported image and keeps contrast in dark
   themes. The extension always compresses the embedded graph, so readable diffs need
   the diff helper (section 11).
-- **`mermaid-embedded`** exists for adoption only (stage M0, section 12). It is
-  read-only to tools and disappears when the diagram is extracted (stage M1).
+- **`mermaid-embedded`** exists for adoption (stage M0, section 12). It is read-only to
+  tools; an entry leaves it when its diagram is extracted (stage M1, `registry extract`).
+  The format stays accepted after M1, for `registry extract --revert` and for history,
+  with no active entries left once all four documents are extracted (Q4).
 - **Reserved** formats are not accepted until a later, separately approved design.
   Adding one means adding a table row and a reader, with no registry migration.
 - **Owner in the file (U10).** `owner_document` (front matter) and `fd_owner_document`
@@ -229,16 +253,17 @@ docs/architecture/
 
 - **Sources stay in their approved directories (U12):** document-owned sources in
   `docs/architecture/diagrams/`, feature-owned sources in a `diagrams/` folder under
-  `designs/features/`. `registry relink` refuses any other location, and so do the
-  planned `registry move` and `registry adopt-moves` (section 7.5).
+  `designs/features/`. `registry relink` refuses any other location, and so do
+  `registry move`, `registry adopt-moves` and `registry move-back` (section 7.5).
 - Document-owned sources in `docs/architecture/diagrams/` are owned and edited by
   technical-lead, like the documents themselves.
 - **One write guard for architecture files.** Every file the diagram commands write
   passes one guard that refuses anything under `docs/architecture/`, including
   `docs/architecture/diagrams/`. Changes there are made only through technical-lead's
-  documentation workflow; any change to this restriction is deferred to M1
-  (section 12.2).
-- **Moves add no exception.** The planned move tooling (section 7.5) is subject to the
+  documentation workflow. M1 does not change this restriction: the guard is unchanged,
+  with no general exception; technical-lead writes the standalone sources and applies
+  the generated copies as documentation work (C1, section 12.2).
+- **Moves add no exception.** The move tooling (section 7.5) is subject to the
   same guard, with no general or move-specific exception: it never renames, writes or
   adopts anything under `docs/architecture/`, as the source, the destination or an
   intermediate path.
@@ -304,8 +329,8 @@ A move or rename is handled in **two layers**, never as one transaction (G1 in
 [DECISIONS.md](../../designs/DECISIONS.md)):
 
 - **Identity**: the source files and `designs/diagrams/registry.yml`. They change
-  first, by `registry relink` (one entry, the file already moved) or, planned, by a
-  recorded move transaction (`registry move`, `registry adopt-moves`; section 7.5).
+  first, by `registry relink` (one entry, the file already moved) or by a recorded move
+  transaction (`registry move`, `registry adopt-moves`, PR B2b-2a; section 7.5).
 - **Generated text**: the captions and links between diagram markers, and
   `designs/index/diagram-index.md`. It is derived from the identity layer afterwards
   (steps 2 to 4 below) and is always safe to redo. `diagram-index.md` is regenerated
@@ -318,8 +343,8 @@ holds a diagram (section 7.5), no block of that diagram is refreshed by any path
 
 1. `registry relink` changes one registry field, `path` (or `title` with `--title`),
    under the lock with compare-and-swap (section 8.1). No document is touched by this
-   step. A planned move transaction changes `path` for each moved entry in the same
-   way, and also touches no document.
+   step. A move transaction changes `path` for each moved entry in the same way, and
+   also touches no document.
 2. Every block for that ID is now stale, because its generated content differs from
    what `resolve` produces. The registry fields that shape a block (title, path) count
    as part of the source, so an untouched block after a relink is case 1 of
@@ -341,6 +366,9 @@ holds a diagram (section 7.5), no block of that diagram is refreshed by any path
    - Only case 1 blocks are refreshed automatically. A block with a manual
      modification (cases 2 and 3) is never refreshed by any of these paths
      (section 6.5).
+   - **Copies in `docs/architecture/` documents** are never refreshed by any of these
+     paths (C1, section 6.4): `check` and `index --check` report them, and technical-lead
+     applies the output of `architecture copy`.
 4. Until refreshed, `check` reports E14, and Feature Designer still shows the right
    diagram, because it resolves by ID, not by the stale path.
 
@@ -353,7 +381,12 @@ of a diagram. Mermaid kept inside an architecture page, or any other document, i
 1. tracks each generated block by its stable diagram ID (the start marker);
 2. refreshes it when the source changes, automatically only in documents without
    unsaved changes and only the lines between that ID's markers, listing every
-   refreshed document in a notification (U5);
+   refreshed document in a notification (U5). **Exception for `docs/architecture/`
+   documents (C1):** their copies are never refreshed automatically, because no tool
+   writes there. When a source changes, `check` and `index --check` report the copy (out
+   of date, fingerprint only, or a conflict E15), `index` only warns, and technical-lead
+   applies the exact text printed by `python -m tools.design architecture copy`
+   (report-and-apply); `check` and `architecture verify` then prove the result;
 3. preserves the existing appearance and Mermaid content during migration
    (sections 6.6 and 12.2);
 4. detects manual modifications to generated content (section 6.5);
@@ -447,18 +480,40 @@ Nothing is overwritten on the assumption that it is a stale copy.
 
 | Where | Content between the markers |
 |---|---|
-| Feature documents, `mermaid-md` | Caption (title linked to the source, ID, "generated copy; edit the source") plus the Mermaid copy, with the T-96 `%%` blank-line rule; byte-identical to T-96 output |
-| Feature documents, `drawio-svg` | Caption plus `![<title>](<relative path>)`; stale only when the title or path changes, never when content changes |
-| Architecture documents (during and after stage M1) | The Mermaid copy only, with an HTML comment naming the ID and source, so the rendered page is unchanged (U3). Written verbatim (U14) |
+| Feature documents, `mermaid-md` | Caption (title linked to the source, ID, "generated copy; edit the source") plus the Mermaid copy, with each blank source line written as the comment line `%% (blank line)` (T-98) |
+| Feature documents, `drawio-svg` (planned) | Caption plus `![<title>](<relative path>)`; stale only when the title or path changes, never when content changes |
+| Architecture documents (from stage M1) | The Mermaid copy only, with an HTML comment naming the ID and source, so the rendered page is unchanged (U3). No caption. Written verbatim (U14): blank lines stay blank |
 
-- **Feature documents** keep the T-96 rule that blank source lines are written as `%%`
-  where needed, so the block stays contiguous for Mark Sharp.
+- **Feature documents** keep the T-96 rule that each blank source line is written as a
+  Mermaid comment line, so the block stays contiguous for Mark Sharp. Since T-98 the
+  comment line is `%% (blank line)` (the T-96 bare `%%` drew a `%%` node in flowcharts
+  and broke ER diagrams; see the DECISIONS entry "T-98"). When a block is read back
+  (Apply to source), both `%% (blank line)` and the old bare `%%` become a blank line
+  again; Apply to source refuses a source that itself contains a `%% (blank line)` line.
 - **Architecture documents (U14).** U14 supersedes T-96 decision 3 for architecture
-  documents. During and after M1, generated copies in `docs/architecture/` documents
-  are byte-for-byte the source's Mermaid lines: blank lines are **not** replaced by
-  `%%`. Reason: 7 of the 14 architecture diagrams contain blank lines, and the `%%`
-  rule exists only because Mark Sharp, used for `designs/`, truncates a block at a
-  blank line; architecture documents are not edited with Mark Sharp.
+  documents. From M1, generated copies in `docs/architecture/` documents are
+  byte-for-byte the source's Mermaid lines: blank lines are **not** replaced, neither by
+  the T-96 `%%` nor by T-98's `%% (blank line)`. Reason: 7 of the 14 architecture
+  diagrams contain blank lines, and the placeholder exists only because Mark Sharp,
+  used for `designs/`, truncates a block at a blank line; architecture documents are
+  not edited with Mark Sharp. The region that replaces the embedded block is exactly:
+
+  ````text
+  <!-- diagram:start <ID> sha256:<fingerprint> -->
+  <!-- generated copy of <ID> from diagrams/<file>.md: edit the source, not this copy -->
+  ```mermaid
+  <the source's Mermaid lines, verbatim>
+  ```
+  <!-- diagram:end -->
+  ````
+
+  The start marker holds the canonical ID (not the alias) and the U13 fingerprint of
+  the generated lines (the comment line, the fence lines and the Mermaid lines). The
+  source path is relative to the document. The fence is the source's own; the tooling
+  refuses to generate a copy whose fence would differ. The hand-written legend
+  paragraph above the diagram stays outside the region. Deleting the start marker,
+  comment and end marker lines gives back the document exactly as it was before M1
+  (`architecture verify`, V4).
 
 ### 6.7 Rendering in Feature Designer
 
@@ -519,8 +574,9 @@ Nothing is overwritten on the assumption that it is a stale copy.
 
 ### 7.4 Saving a source (sync)
 
-A debounced file watcher covers `designs/**/*.drawio.svg`, the registered `mermaid-md`
-sources and `registry.yml`.
+A debounced file watcher covers the registered `mermaid-md` sources (Markdown under
+`designs/` and `docs/architecture/`) and `registry.yml`; `designs/**/*.drawio.svg` is
+added with draw.io (planned).
 
 | Event | Feature Designer | Markdown written? |
 |---|---|---|
@@ -534,8 +590,11 @@ sources and `registry.yml`.
   Refresh button. Only untouched blocks (case 1 of section 6.5) are refreshed; blocks
   with a manual modification (cases 2 and 3) are reported as conflicts (E15, U13) and
   left unchanged.
-- `index` covers everything, including closed documents; `check` reports any stale
-  copy.
+- Copies in `docs/architecture/` documents are not refreshed by Feature Designer or by
+  `index` (C1, section 6.4): `check` and `index --check` report them and technical-lead
+  applies the output of `architecture copy` (report-and-apply).
+- `index` covers every feature document, including closed ones; `check` reports any
+  stale copy.
 - Feature Designer never writes a diagram source.
 
 ### 7.5 Rename or move (relink)
@@ -549,24 +608,30 @@ sources and `registry.yml`.
   with the draw.io work. Decisions G1 to G12 are recorded in
   [DECISIONS.md](../../designs/DECISIONS.md).
 
-**Commands.** Only `registry relink` exists today. The other two are planned for
-PR B2b-2a.
+**Commands.** `registry relink` exists unchanged. `registry move` and
+`registry adopt-moves` exist (PR B2b-2a). `adopt-moves --sha256` and
+`registry move-back` (mode restore: renames only, the registry is never written;
+Complete is refused if the registry changed) exist (PR B2b-2b).
 
 | Command | When | What changes |
 |---|---|---|
-| `registry relink ID --path P` (exists today, unchanged) | One source was already moved, by hand | One entry's `path`, under the lock with compare-and-swap, after checking that the file at `P` holds the ID. No record is written |
-| `registry adopt-moves [--from A --to B ...]` (planned) | Sources were already renamed by VS Code, Git or another program (observed renames, G2) | The registry only, for a batch, after validating identity and content at each destination. Without arguments: every unambiguous E6 match |
-| `registry move ID\|PATH --to PATH [...]` (planned) | The tooling renames the files itself (tool-initiated) | The source files and the registry, as one recorded move transaction, for a batch |
+| `registry relink ID --path P` | One source was already moved, by hand | One entry's `path`, under the lock with compare-and-swap, after checking that the file at `P` holds the ID. No record is written |
+| `registry adopt-moves [--from A --to B [--sha256 HEX] ...]` | Sources were already renamed by VS Code, Git or another program (observed renames, G2) | The registry only, for a batch, after validating identity and content at each destination (with `--sha256`, also the bytes from before the rename). Without arguments: every unambiguous E6 match |
+| `registry move ID\|PATH --to PATH [...]` | The tooling renames the files itself (tool-initiated) | The source files and the registry, as one recorded move transaction, for a batch |
+| `registry move-back --from NOW --to REGISTERED [--sha256 HEX] [...]` | Sources were renamed and the registry still names their old paths; the user chose to move them back | The source files only, renamed back to their registered paths as one recorded move (mode restore). The registry is never written; Complete is refused if the registry changed since the move was prepared |
 
-- `registry move` is command-line only in B2b-2 (G10). Moving files back after an
-  observed rename is a separate tool-initiated move (G2).
+- `registry move` is command-line only (G10). Moving files back after an observed
+  rename is a tool-initiated move (G2), `registry move-back`. It moves back only files
+  inside the approved `diagrams/` folders; a file moved elsewhere (or under
+  `docs/architecture/`) is moved back with VS Code's Undo or by hand.
 - **`registry relink` keeps its behaviour and guarantees**: one entry, the approved
   directory of the owner kind, `--title` and `--heading` as below, and no record. Its
-  only new refusal concerns a state that cannot exist today: while an unresolved move
-  record exists, it is refused like every other registry writer (section 8.1).
-- Feature Designer's JSON interface gains read-only `move-plan` (a batch → its plan and
-  a confirmation token) and `moved` (the E6 matches) operations (planned, B2b-2a). Its
-  response version stays 1 and fields are only added.
+  only new refusal: while an unresolved move record exists, it is refused like every
+  other registry writer (section 8.1).
+- Feature Designer's JSON interface has read-only `move-plan` (a batch → its plan and a
+  confirmation token; modes move, adopt and restore) and `moved` (the E6 matches)
+  operations (PR B2b-2a; mode restore and `rename-preview`, the snapshot taken before a
+  rename, PR B2b-2b). Its response version stays 1 and fields are only added.
 
 **Validation of a batch.** The whole batch is validated before anything is written. Any
 problem refuses the whole batch, and nothing is changed.
@@ -580,7 +645,7 @@ problem refuses the whole batch, and nothing is changed.
 - **Identity and content at the destination are validated** before a rename is
   adopted. The file must hold the ID and the owner the registry records (E3
   otherwise), and must be a well-formed `mermaid-md` source. When the caller knows the
-  bytes from before the rename (as Feature Designer will), their SHA-256 must also
+  bytes from before the rename (as Feature Designer does, PR B2b-2b), their SHA-256 must also
   match. For `registry move`, each source must still have the bytes it was planned
   with.
 - **Approved directory (U12).** A destination must be in a `diagrams/` folder under
@@ -629,24 +694,25 @@ registry takes the exact new case, so `check`'s exact-case rule passes.
 **Held paths (G9).** A source, destination or intermediate path, or a document, that
 is held by an unresolved record is protected:
 
-- **Prevented** wherever the tooling allows it. `registry move` and
-  `registry adopt-moves` refuse a held path and name the record. Feature Designer's
-  pre-rename mechanism will be used for the same purpose where VS Code allows it
-  (planned, B2b-2b).
-- **Where prevention is unavailable** (VS Code cannot cancel a rename, and Git and
-  other programs are not intercepted), the user is warned (planned, B2b-2b). The
-  missing path is then handled conservatively: recovery reports it as missing and never
-  writes it or its new path.
+- **Prevented** wherever the tooling allows it. `registry move`,
+  `registry adopt-moves` and `registry move-back` refuse a held path and name the
+  record.
+- **Where prevention is unavailable**: VS Code's pre-rename event cannot cancel a
+  rename, and Git and other programs are not intercepted. Feature Designer warns (PR
+  B2b-2b), and recovery treats the path conservatively: it reports it as missing and
+  never writes it or its new path.
 - There is no "relocate record" action.
 
-**The move record (planned).** Both `registry move` and `registry adopt-moves` keep a
-durable record in `designs/diagrams/.transactions/`, which they share with the B2b-1
-`refresh-blocks` updates:
+**The move record** (PR B2b-2a). `registry move`, `registry adopt-moves` and
+`registry move-back` keep a durable record in `designs/diagrams/.transactions/`, which
+they share with the B2b-1 `refresh-blocks` updates:
 
 - **Format.** Move records are version 2, with an explicit tool (`registry-move`) and
   explicit operation types: `rename` (from, to, expected SHA-256) and `registry` (the
-  exact original and replacement registry bytes, with their SHA-256). `refresh-blocks`
-  keeps writing its existing version 1 records, unchanged. Both versions are read and
+  exact original and replacement registry bytes, with their SHA-256). A move-back
+  record (mode restore, PR B2b-2b) has renames only and no `registry` operation: it
+  records the registry's SHA-256 and never writes the registry. `refresh-blocks` keeps
+  writing its existing version 1 records, unchanged. Both versions are read and
   recovered independently.
 - **Write sets.** Each tool has a narrowly scoped write set. `registry-move` may touch
   only feature-owned sources under `designs/features/**/diagrams/` and
@@ -680,7 +746,8 @@ first and act only with the confirmation token they print.
   changed.
 - **Complete** finishes the renames still at the old or temporary path with their
   expected bytes, then writes the registry replacement. It is refused unless the
-  registry is still the original or already the replacement.
+  registry is still the original or already the replacement. For a move-back record it
+  writes no registry and is refused if the registry changed since it was prepared.
 - **Undo** renames back the files at the new or temporary path with their expected
   bytes, when the old path is free, and restores the registry original only when the
   registry is exactly the replacement. For an adopted (observed) move, Undo restores
@@ -708,18 +775,32 @@ reported. Limits, as for B2b-1:
 **Architecture sources (G5).** Document-owned sources in `docs/architecture/diagrams/`
 are excluded from moves. They are never moved, adopted or prompted for, and a rename
 into, out of or within `docs/architecture/` never changes the registry. `check` keeps
-reporting E6 until technical-lead relinks the entry through the documentation workflow
-(M1). The write guard of section 5.2 is unchanged and has no exception for moves.
+reporting E6 until the main conversation runs `registry relink` after technical-lead's
+documentation change. The write guard of section 5.2 is unchanged and has no exception
+for moves. Feature Designer shows a notice for such a rename instead of a prompt.
 
-- **Inside VS Code** (planned, PR B2b-2b): an Explorer rename or move of registered
-  feature-owned sources gives one prompt per batch (C6, R2), with nothing preselected.
-  Updating the registry runs the `registry adopt-moves` path. Other windows never
-  prompt; they see the registry change and refresh their open documents (section 6.3).
-- **Outside VS Code** (Git, file explorer), `check` and `resolve` match the missing
-  registered path to the unregistered file with the same in-file ID and report it as
-  moved (E6). Today the message gives the exact `registry relink` command; the planned
-  batch form gives `registry adopt-moves` and lists all candidates when there is more
-  than one. A missing source with no candidate (E7) is never relinked automatically.
+- **Inside VS Code** (PR B2b-2b): an Explorer rename or move of registered
+  feature-owned sources (one file or a folder) gives **one modal prompt per batch**
+  (C6, R2), in the window where the rename happened, with four choices:
+  - **Not now**: listed first and focused; Escape, Cancel and closing the prompt are
+    also Not now. Nothing is written;
+  - **Update the registry**: the `registry adopt-moves --sha256` path, with the checksum
+    taken before the rename;
+  - **Update the registry and N closed documents**: the same, then the Update Closed
+    Documents confirmation;
+  - **Move the files back**: `registry move-back`; the registry is unchanged.
+
+  No writing choice is a default. A registered source moved out of the workspace gets
+  a notice and no prompt. Other windows never prompt; they see the registry change and
+  refresh their open documents (section 6.3).
+- **Outside VS Code** (Git, file explorer), and after Not now, `check` and `resolve`
+  match the missing registered path to the unregistered file with the same in-file ID
+  and report it as moved (E6). The message gives the exact `registry relink` command
+  and the batch form `registry adopt-moves`, and lists all candidates when there is
+  more than one. Feature Designer shows the status-strip row
+  "N moved sources: registry not updated" in every window, also after a restart, and
+  the command **Review Moved Diagram Sources…** opens the same prompt. A missing source
+  with no candidate (E7) is never relinked automatically.
 - **Title only**: `registry relink --title` updates the registry title (and the
   `mermaid-md` front matter of a feature-owned source); captions are refreshed as
   above. For document-owned diagrams the write guard of section 5.2 applies:
@@ -729,8 +810,9 @@ reporting E6 until technical-lead relinks the entry through the documentation wo
   - an **embedded diagram** (`mermaid-embedded`): only the registry changes.
 - The owner never changes on a move. `relink` accepts only the approved directory of
   the owner kind: `docs/architecture/diagrams/` for document-owned sources, a
-  `diagrams/` folder under `designs/features/` for feature-owned sources (U12). The
-  planned `registry move` and `registry adopt-moves` accept only the latter (G5).
+  `diagrams/` folder under `designs/features/` for feature-owned sources (U12).
+  `registry move`, `registry adopt-moves` and `registry move-back` accept only the
+  latter (G5).
 - A transitional `mermaid-embedded` entry whose heading was renamed is reported (E7)
   and re-pointed only by an explicit `registry relink` (U11).
 
@@ -738,8 +820,8 @@ reporting E6 until technical-lead relinks the entry through the documentation wo
 
 - `registry retire <ID>` first lists every reference: diagram blocks, hand-written
   image links and `created_from` links.
-- It requires explicit confirmation (`--confirm` on the command line; a modal listing
-  the references in Feature Designer).
+- It requires explicit confirmation (`--confirm` on the command line; planned: a modal
+  listing the references in Feature Designer).
 - It then sets `status: retired` and `retired: <date>`. Deleting the file is a separate,
   optional step.
 - Remaining references render a retired-diagram notice and are reported (E11). The ID is
@@ -770,8 +852,8 @@ exist (T-97 Q4), `check` reports embedded diagrams in features as advisory.
    - A held, foreign (other computer) or unreadable lock is always kept.
 2. **Read and validate the registry and remember its SHA-256.** Refuse if the registry
    has problems.
-3. **Allocate the ID** with the never-reuse allocator, now also counting registry IDs,
-   aliases and decoded draw.io IDs.
+3. **Allocate the ID** with the never-reuse allocator, now also counting registry IDs
+   and aliases (and, with draw.io, decoded draw.io IDs; planned).
 4. **Create the source exclusively.** Write a temporary file in the same folder, then
    link it to the final name with an operation that fails if the name exists. The file
    appears whole or not at all and is never overwritten.
@@ -788,12 +870,18 @@ steps 4 and 5 can leave an unregistered file, which `check` reports with
 `registry adopt <path>` as the fix. It never leaves a registry entry without its file.
 `relink` and `retire` use the same lock and compare-and-swap.
 
-The planned `registry move` and `registry adopt-moves` (section 7.5) use the same lock
-and the same registry compare-and-swap, and keep a durable record. Unlike `new diagram`,
-they are **not** all or nothing: they are recoverable, and partial states are reported.
-While a move record is unresolved, every other registry writer (`new diagram`,
-`relink`, `retire`, `adopt` and further moves) is refused and names the record. This
+`registry move`, `registry adopt-moves` and `registry move-back` (section 7.5; PR
+B2b-2a and B2b-2b) use the same lock and the same registry compare-and-swap (move-back
+never writes the registry), and keep a durable record. Unlike `new diagram`, they are
+**not** all or nothing: they are recoverable, and partial states are reported. While a
+move record is unresolved, every other registry writer (`new diagram`, `relink`,
+`retire`, `adopt`, `extract` and further moves) is refused and names the record. This
 way, recovery never meets a registry change that it did not make.
+
+`registry extract` and `registry extract --revert` (M1-0) change only the registry: one
+compare-and-swap replacement for the whole document, after the plan has been validated
+again inside the lock; nothing is written if any check fails. They then write the
+diagram index inside the lock.
 
 ### 8.2 Never overwriting unsaved edits
 
@@ -828,19 +916,32 @@ unchanged from T-97 Phase 1 (decision 4 in [DECISIONS.md](../../designs/DECISION
 | E1 | ID or alias referenced, found nowhere | `AD-0099 is not in the registry as an ID or an alias` (before M0: "or the architecture catalog"), plus "did you mean" |
 | E2 | Same ID, or same alias, twice in the registry | `FD-0001-D3 is registered twice (lines 12 and 31)` / `system-architecture/3-one-map-pan-step-by-step is an alias of two entries (lines …)` |
 | E3 | The registered file's in-file identity differs | `…x.drawio.svg holds FD-0001-D4 but the registry maps FD-0001-D3 to it` |
-| E4 | Unregistered visual file whose ID belongs to another path | `…copy.drawio.svg is a copy of FD-0001-D3 (…original): create diagrams with Make New Diagram` |
-| E5 | Unregistered visual file with an unknown or no ID | `…x.drawio.svg is not registered: run registry adopt …` |
-| E6 | Registered path missing, file found elsewhere. Planned (B2b-2a): the batch form, and the ID found at several unregistered paths (ambiguous: all candidates are listed, and nothing is adopted). For a document-owned source, the fix is technical-lead's documentation workflow (G5) | `AD-0013 moved to …: run registry relink AD-0013 …` / planned: `FD-0001-D3 moved to …: run registry adopt-moves --from … --to …` / `FD-0001-D3 is at 2 unregistered paths (…, …): nothing is guessed; relink it explicitly` |
+| E4 | Unregistered source (a Mermaid `.md` source today; a visual file with draw.io) whose ID belongs to another, registered path | `…copy.md is a copy of FD-0001-D3 (…original): create diagrams with python -m tools.design new diagram` |
+| E5 | Unregistered source (a Mermaid `.md` source today; a visual file with draw.io) with an unknown, invalid or no registered ID | `…x.md: FD-0001-D9 is not registered: run registry adopt … --category <category>` |
+| E6 | Registered path missing, file found elsewhere; also the batch form, and the ID found at several unregistered paths (ambiguous: all candidates are listed, and nothing is adopted). For a document-owned source, the fix is technical-lead's documentation workflow (G5) | `AD-0013 moved to …: run registry relink AD-0013 …` / `FD-0001-D3 moved to …: run registry relink …; to update the registry for every moved feature-owned source at once, run registry adopt-moves (or --from … --to … for this one)` / `FD-0001-D3 is at 2 unregistered paths (…, …): nothing is guessed; relink it explicitly` |
 | E7 | Registered path missing, not found (for `mermaid-embedded`: the block is not found at its owner document, heading and ordinal, for example after a heading rename; U11) | `FD-0001-D3's source … does not exist` / `AD-0013: no diagram at system-architecture.md#<anchor> (block 1); candidate: line …; run registry relink AD-0013 …` |
 | E8 | An ID and an alias collide (for example a former catalog ID issued or registered as an ID) | `… is both a registry ID and an alias of AD-0010` |
 | E9 | Owner does not exist, or the ID prefix does not match the owner kind | `FD-0002-D1 is owned by FD-0001 in the registry: the ID prefix must be the owner's` / `AD-0003 is owned by a feature: AD- IDs belong to document owners` |
-| E10 | Visual file has more than one page, no decodable graph, or a transparent background | a specific message for each |
+| E10 (planned, draw.io) | Visual file has more than one page, no decodable graph, or a transparent background | a specific message for each |
 | E11 | Reference to a retired diagram | `FD-0001-D3 was retired on …` |
 | E12 | Lock held, or registry changed during a command | `another diagram command is running` / `the registry changed while creating …; nothing was written` (a leftover lock is removed only with `registry unlock --confirm`, section 8.1) |
-| E13 | Hand-written image link to a `.drawio.svg` outside a diagram block | `…md line 40 links …x.drawio.svg directly: use a diagram block (FD-0001-D3) so the reference survives moves` |
+| E13 (planned, draw.io) | Hand-written image link to a `.drawio.svg` outside a diagram block | `…md line 40 links …x.drawio.svg directly: use a diagram block (FD-0001-D3) so the reference survives moves` |
 | E14 | A generated path in a block no longer matches the registry | `stale image path in the FD-0001-D3 block of …md: expected …; run index or Refresh` |
 | E15 | Generated content changed by hand (U13): case 2, the block differs from its fingerprint and the source is unchanged; or case 3, the block and the source have both changed; or a block without a fingerprint that differs from what its source generates now ("generated before fingerprints") | Case 2: `…md line 52: the AD-0013 block was edited by hand (n lines changed: …); the source is unchanged; not refreshed. Choose Discard manual change or Apply to source` / Case 3: `…md line 52: the AD-0013 block was edited by hand and its source has also changed since the block was generated; not refreshed. Review both diffs, then choose Discard manual change or Apply to source` |
-| E16 | An unresolved or unreadable transaction record: an interrupted `refresh-blocks` update of closed documents (exists today, PR B2b-1); planned (B2b-2a): an interrupted move record, with each rename's state (section 7.5) | `an update of closed documents was interrupted (committing) and holds 2 document(s): …; nothing is written to those documents until it is resolved: run python -m tools.design transaction status` / planned: `a registry move was interrupted (committing) and holds FD-0001-D3 (… → …): no registry change until it is resolved: run python -m tools.design transaction status` |
+| E16 | An unresolved or unreadable transaction record: an interrupted `refresh-blocks` update of closed documents (PR B2b-1), or an interrupted move record, with each rename's state (PR B2b-2a; move-back records, PR B2b-2b; section 7.5) | `an update of closed documents was interrupted (committing) and holds 2 document(s): …; nothing is written to those documents until it is resolved: run python -m tools.design transaction status` / `a registry move was interrupted (committing) and holds FD-0001-D3 (… -> …): no registry change and no refresh of generated text until it is resolved: run python -m tools.design transaction status` |
+
+**M1 reports** (M1-0). `check` also reports these states of the architecture extraction;
+none of them suggests `index` or `reconcile` as the fix for an architecture copy, since
+no tool writes `docs/architecture/` (C1):
+
+| Situation | Message (shortened) |
+|---|---|
+| Extraction pending: a source in `docs/architecture/diagrams/` whose ID is still registered as `mermaid-embedded` | `…diagrams/x.md: holds AD-0013, which is still registered as embedded in docs/architecture/system-architecture.md: extraction not finished; run registry extract AD-0013 --path … --snapshot <file>` |
+| Second copy (E2 family): a raw Mermaid block that is an extracted diagram's former embedded block (its catalog ID is an alias of a `mermaid-md` entry); counted once, never twice | `…system-architecture.md: line 181: this Mermaid block is a second copy of AD-0013 (its source is …): technical-lead replaces it with the generated copy (architecture copy AD-0013) (E2)` |
+| Does not show (U3): an extracted diagram with no copy in its owning document | `…system-architecture.md: does not show AD-0013 (its source is …): technical-lead adds the generated copy printed by architecture copy AD-0013 (U3)` |
+| Copy states of a generated copy in an architecture document: empty, out of date (source changed, copy untouched), fingerprint missing or out of date, edited by hand, both changed, no fingerprint and different (E15 for the last three), and a comment line naming another source path (E14-like) | `line 182: the generated copy of AD-0013 is out of date with its source … (not edited since it was generated): technical-lead replaces lines 182-216 with the output of architecture copy AD-0013` / E15: `… resolve it in technical-lead's documentation workflow: replace lines … with the output of architecture copy AD-0013 (discard the edit) or make the edit in the source … (apply to source)` |
+| A copy whose ID is unknown (E1), retired (E11), feature-owned (Q5) or still embedded, or a structural marker problem (nesting, a missing end marker, a fence not closed before the end marker) | `line …: unknown diagram ID … in a generated copy (E1)` / a specific message for each |
+| A copy in an architecture document that does not own the diagram (each architecture diagram is shown only in its owning document) | `line …: the generated copy of AD-0013: AD-0013 is owned by docs/architecture/system-architecture.md, so this document cannot show its generated copy (U3): technical-lead removes lines … and links to the diagram in … instead` |
 
 E15 also covers a block whose marker has no fingerprint yet and whose content differs
 from what its source generates now ("generated before fingerprints"): a hand edit
@@ -918,7 +1019,8 @@ separately.
 
 ### 12.1 Stage M0: adopt in place (no document changes)
 
-M0 is approved as the first implementation migration scope. It has not been executed.
+M0 was executed in PR A (`5941cfd`): `registry adopt-architecture` registered the 14
+diagrams as `AD-0001` to `AD-0014`.
 
 - One registry entry per architecture diagram: an `AD-nnnn` ID, the current catalog ID
   as an alias, and format `mermaid-embedded` pointing at the current block.
@@ -928,48 +1030,73 @@ M0 is approved as the first implementation migration scope. It has not been exec
   rendering and every existing reference (catalog IDs in T-96 markers, now aliases)
   are therefore preserved by construction. The only generated change is the
   architecture index, which lists the new IDs beside the aliases.
-- From M0 on, the diagram list comes from the registry (U9).
+- The diagram list comes from the registry (U9; built in M1-0):
+  `architecture.architecture_diagrams()` lists each diagram once, and the architecture
+  index, the Feature Designer library and the tests count with it. The architecture
+  index shows the registered alias as each row's Diagram ID and has a Source column
+  (`embedded`, or a link to the standalone source).
 
 ### 12.2 Stage M1: extract per document
 
-Done by technical-lead, one document at a time, each separately approved. For each
-diagram:
+One document at a time, one pull request per document, in the order conventions.md,
+database-schema.md, etl-workflow.md, system-architecture.md, after the tooling (M1-0).
+technical-lead edits `docs/architecture/`; the main conversation runs the registry and
+index commands. Before the first document, the main conversation records the
+pre-migration snapshot once, in a clean worktree, with
+`python -m tools.design architecture snapshot --out FILE` (refused once any diagram is
+extracted or when an architecture document differs from its committed version). Then,
+for each document, in a branch worktree:
 
-1. Create `docs/architecture/diagrams/<doc>_<category>_<name>.md` holding exactly the
-   current Mermaid lines (byte-identical).
-2. Switch the registry entry to `mermaid-md` with the new path.
-3. Replace the embedded block in the document with the marker pair plus the generated
-   Mermaid copy (with the HTML comment of U3).
+| Step | Who | Action | What `check` reports afterwards |
+|---|---|---|---|
+| 0 | main conversation | Start from `main`; `check`, `index --check` and `architecture verify --snapshot FILE` pass | nothing |
+| 1 | technical-lead | Create the document's sources in `docs/architecture/diagrams/` (names in section 12.3): front matter exactly `diagram_id`, `title` (the registry title) and `owner_document`, and exactly one Mermaid block, byte-identical to the embedded block including its fence lines | extraction pending, per source |
+| 2 | main conversation | `registry extract ID --path SOURCE [...] --snapshot FILE`, then the same with `--confirm TOKEN`: only `format` and `path` change, `anchor` and `ordinal` are removed | second copy (E2), per diagram; architecture index out of date |
+| 3 | technical-lead | Run `architecture copy --document DOC` (read-only) and replace each embedded block with the printed region (section 6.6) | architecture index out of date |
+| 4 | main conversation | `index` (designs/ only; refreshes any feature block that names the diagram, case 1) | nothing |
+| 5 | main conversation, integration-qa | `architecture verify --snapshot FILE`, the test suites, rendering before and after with the pinned Mermaid | nothing |
+
+Every intermediate state is reported; none passes `check`. The count stays 14 in every
+state. Recovery: a wrong source is corrected or removed (step 1); a refused
+`registry extract` writes nothing; a wrongly applied copy is reported (E15, `verify`)
+and re-applied, or the document is restored from Git in the branch worktree (back to
+the step 2 state); abandoning a document uses `registry extract --revert ID --heading
+ANCHOR` for each diagram, never a Git restore of the registry.
 
 The migration is designed to be lossless: the source holds the original lines
 unchanged; the generated copy is byte-for-byte the original embedded lines, blank lines
-included, never `%%` (U14); the rendering is identical; and the ID and alias are
-unchanged. M1 verification includes tests that all 14 architecture diagrams keep their
-exact original Mermaid content (byte comparison against the pre-migration lines) and
-their rendering (output of the pinned Mermaid compared before and after). The full
-verification steps are on the T-97 card.
+included, never a placeholder (U14); the rendering is identical; and the ID and alias
+are unchanged. Byte identity is defined on LF content, which equals the Git blob (the
+Windows working tree may be CRLF). `architecture verify` checks V1–V6: the 14 IDs and
+their registry fields, each source's and copy's exact Mermaid and fence lines against
+the snapshot, each document equal to its snapshot once the marker and comment lines are
+removed (V4), the architecture index count and aliases, the legend anchor and the
+absence of Mermaid on this page. V7 (`check` and `index --check`) is run separately.
+The rendering comparison and the remaining steps are on the T-97 card.
 
-**Deferred to M1 (not decided now).**
+**Decided for M1** (DECISIONS entry "T-97 M1 — implementation choices"):
 
-1. Any change to the restrictions on writing into `docs/architecture/` (T-94 Phase 2
-   decision 2, and the T-82 docs lint) waits until M1 is separately authorised.
-2. Applying changes to architecture (document-owned) sources always goes through
-   technical-lead's documentation workflow.
-3. Legend placement and lint rules are coordinated with T-82 as part of M1, without
-   weakening those checks to fit the marker.
+1. The restriction on writing into `docs/architecture/` is unchanged (T-94 Phase 2
+   decision 2 for tools; section 5.2). The markers in architecture documents are
+   written by technical-lead as documentation work (U3).
+2. Changes to architecture (document-owned) sources always go through technical-lead's
+   documentation workflow; their copies are reported and applied, not refreshed (C1).
+3. Legend placement and lint rules (T-82) are in
+   [conventions.md section 2](conventions.md#2-diagram-types); no check is weakened to
+   fit the marker.
 
-**Uniqueness by registry identity (U9).** Today's architecture-document scan
-(`documents()` in `tools/design/architecture.py`) reads every Markdown file under
-`docs/architecture/` at any depth, so extracted sources would otherwise be read as
-documents and their diagrams counted twice. Under U9:
+**Uniqueness by registry identity (U9).** The architecture-document scan
+(`documents()` in `tools/design/architecture.py`) skips `docs/architecture/diagrams/`,
+so extracted sources are not read as documents and their diagrams are not counted
+twice. Under U9:
 
 - the catalog lists each diagram once, by its registry ID;
 - standalone sources in `docs/architecture/diagrams/` are not scanned as architecture
   documents; they are listed under their owning document;
 - generated blocks (between markers) are never counted as diagrams;
 - validation reports missing (E1, E7), duplicate (E2) and inconsistent (E3, E8, E14,
-  E15) references;
-- a test proves the count stays 14 through M0 and M1.
+  E15) references, and the M1 reports of section 9;
+- tests prove the count stays 14 through M0 and every M1 state.
 
 **Heading renames (U11).** Transitional `mermaid-embedded` entries depend on their
 heading until their document is extracted. A heading renamed between M0 and M1 is
@@ -978,9 +1105,11 @@ guessed. Keeping the interval between M0 and M1 short limits this exposure.
 
 ### 12.3 Proposed IDs and names
 
-To be confirmed before M0.
+The IDs and aliases were confirmed by M0 (`5941cfd`). The file names are confirmed for
+M1 (Q1): they are used instead of names made with `slugify(title)`, and
+`architecture verify` checks each extracted diagram's path against this list.
 
-| ID | Former catalog ID (alias) | Proposed source file (`docs/architecture/diagrams/`) |
+| ID | Former catalog ID (alias) | Source file (`docs/architecture/diagrams/`) |
 |---|---|---|
 | AD-0001 | conventions/1-implementation-status-legend | conventions_legend_implementation-status.md |
 | AD-0002 | database-schema/1-current-model-built-schema-public-real-data | database-schema_data-model_current-model.md |
@@ -1011,20 +1140,23 @@ To be confirmed before M0.
 ## 13. Compatibility
 
 - **T-97 Phase 1**: feature diagram IDs, ownership checks and the allocator stay. The
-  allocator also reads registry list lines (`- diagram_id:`), aliases and decoded
-  draw.io root IDs, and learns `AD-` IDs. Existing fixtures allocate the same IDs.
+  allocator also reads registry list lines (`- diagram_id:`) and aliases, and learns
+  `AD-` IDs (decoded draw.io root IDs: planned, with draw.io). Existing fixtures
+  allocate the same IDs.
 - **T-96**: markers keep working with catalog IDs (now aliases) and accept new IDs.
-  Mermaid copies in feature documents stay byte-identical to today until a source
-  changes. U13 supersedes T-96 decision 2 (whole-block comparison, not a fingerprint):
+  Mermaid copies in feature documents change only when what their source generates
+  changes (for example T-98's placeholder, a case 1 refresh). U13 supersedes T-96 decision 2 (whole-block comparison, not a fingerprint):
   start markers carry a fingerprint inside their HTML comment. Markers without one keep
   resolving; their blocks are migrated only when lossless and are otherwise preserved
   and reported (E15). U14 supersedes T-96 decision 3 for
-  architecture documents only (verbatim copies, no `%%`); feature documents keep the
-  `%%` rule.
-- **T-94**: the architecture catalog and index become registry-backed after M0; until
-  M1 they still read the embedded blocks. The architecture-document scan excludes
-  `docs/architecture/diagrams/` and never counts generated blocks (U9). Existing
-  `check` output is unchanged on today's repository. Exit codes are unchanged.
+  architecture documents only (verbatim copies, no placeholder); feature documents keep
+  the blank-line rule, with T-98's `%% (blank line)` instead of the bare `%%`.
+- **T-94**: the architecture catalog and index are registry-backed (M1-0): diagrams are
+  counted with `architecture_diagrams()`, embedded blocks are read until their document
+  is extracted, and the index gained the Source column. The architecture-document scan
+  excludes `docs/architecture/diagrams/` and never counts generated blocks (U9). On the
+  repository before the first M1 document, `check` output is unchanged. Exit codes are
+  unchanged.
 - **T-97 Phase 2 (Feature Designer)**: the menu item "Insert Existing Diagram" becomes
   Place Diagram → Add Existing Diagram; the JSON interface keeps response version 1 and
   only adds fields and the `resolve` operation. Feature Designer's tests that count 14
@@ -1033,15 +1165,17 @@ To be confirmed before M0.
   Mermaid diagram into draw.io is only ever an explicit "new visual diagram from …"
   recorded in `created_from` (a later item, VE-3). `.mmd`, DBML and moving
   architecture diagrams to draw.io are not part of this design.
-- **Change impact (T-83)**: `designs/diagrams/**`, `.gitattributes` and the draw.io
-  toolchain script are to be registered in `registry/components.yml` and `impact.yml`.
+- **Change impact (T-83)**: `designs/diagrams/**` is covered by the `designs` component
+  and `docs/architecture/diagrams/` by `architecture-docs` in
+  `registry/components.yml`; no change was needed. `.gitattributes` and the draw.io
+  toolchain script are to be registered with the draw.io work.
 
 ## 14. Decisions U1–U14 (approved 2026-11-22)
 
 U1–U14 were approved by the user on 2026-11-22, with the clarifications written into
 sections 5.3, 6.4, 6.5, 6.6, 12.1 and 12.2. Decisions are recorded in
-[designs/DECISIONS.md](../../designs/DECISIONS.md). The design as a whole remains
-PROPOSED: approved, not implemented.
+[designs/DECISIONS.md](../../designs/DECISIONS.md). What is implemented is listed in the
+status note at the top of this page.
 
 ### 14.1 Approved (2026-11-22)
 
