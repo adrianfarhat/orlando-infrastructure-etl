@@ -530,16 +530,15 @@ def _extract(args, root: Path, out: TextIO) -> int:
 def _architecture(args, root: Path, out: TextIO) -> int:
     """`architecture snapshot | copy | verify` (T-97 M1). Nothing under docs/architecture/ is written."""
     if args.action == "snapshot":
-        data = architecture_copies.snapshot(root)
         target = Path(args.out).resolve()
         if _inside(root, target):
             ownership.guard_write(root, target)        # never under docs/architecture/
         if target.exists():
             raise DesignError(f"{args.out} exists; a snapshot is never overwritten")
+        data = architecture_copies.snapshot(root)
         text = json.dumps(data, sort_keys=True, ensure_ascii=False, indent=1) + "\n"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with open(target, "xb") as handle:
-            handle.write(text.encode("utf-8"))
+        # whole or not at all: a temporary file, then a link that fails if the name exists (never overwritten)
+        ownership.create_exclusively(target, text, str(args.out))
         sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if args.json:
             print(json.dumps({"path": str(target), "sha256": sha, "commit": data["commit"],

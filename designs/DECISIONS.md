@@ -853,32 +853,51 @@ the user's completion authorization of 2026-11-27.
    (`embedded` or a link to the standalone source); its rows' Diagram ID is the registered alias.
 10. **Generated copy layout** (specification 3.1): start marker with the canonical ID and the U13
     fingerprint; an invisible comment line naming the ID and the source path relative to the
-    document; the Mermaid lines verbatim in a fence; the end marker. No caption, no `%%`
-    substitution (U14); the legend paragraph above stays hand-written outside the region. The
-    renderer is separate from `diagrams.render()` and refuses a fence that would differ from the
-    source's own.
+    document; the Mermaid lines verbatim in a fence; the end marker. No caption and no blank-line
+    placeholder (U14): blank lines stay blank, neither the T-96 `%%` nor T-98's `%% (blank line)`
+    (`diagrams.BLANK_LINE`, which applies to feature-document copies only); `verify` (V3) reports
+    any `%%` line of a copy that its source does not have. The legend paragraph above stays
+    hand-written outside the region. The renderer is separate from `diagrams.render()` and
+    refuses a fence that would differ from the source's own. The printed replacement's old text
+    is widened with unchanged lines above until it occurs once in the document (a raw block can
+    equal the copy's Mermaid), and deleting a duplicate raw block also removes one of its
+    surrounding blank lines, so the document is exactly as it would be without the block (V4).
 11. **New `check` reports:** extraction pending (a source in `docs/architecture/diagrams/` whose
     ID is still registered as embedded), duplicate raw block (E2 family), not shown (U3), and the
     copy states (structure, E1, E11, Q5, embedded, E15 cases with technical-lead's fix, E14-like
-    wrong source path). None suggests `index` or `reconcile` as the fix for a copy.
+    wrong source path, and a copy in an architecture document that does not own the diagram:
+    each diagram is shown only in its owning document). None suggests `index` or `reconcile` as
+    the fix for a copy. A proposed diagram file citing an extracted diagram whose copy is not shown
+    yet gets an accurate `source_heading` message instead of "under #(no heading)".
 12. **`registry extract`** (main conversation): one document per run, all its diagrams at once;
     the plan validates the whole batch (each entry an active embedded document-owned diagram, the
-    path in the approved folder with exact case, a regular file and not a link, not registered
+    path in the approved folder with exact case, a regular file and not a link (no symbolic link
+    or junction on any component from the repository root down, and a resolved path that stays in
+    the repository; hard links refused), not registered
     for another entry, distinct paths; front matter exactly `diagram_id`, `title`,
     `owner_document` with the registry's values and no `feature_id`; exactly one fenced block,
     the Mermaid block, byte-identical to the raw block including its fence lines; the snapshot
     readable and equal for that ID) and prints a token over the registry, document, sources and
     snapshot bytes. `--confirm TOKEN` reruns everything under the registry lock, after the
     transaction guard (Q1) and the Git-busy check (D4), and replaces the registry by
-    compare-and-swap (only `format` and `path` change; `anchor` and `ordinal` are removed), then
+    compare-and-swap (only `format` and `path` change; `anchor` and `ordinal` are removed) after
+    validating the whole plan once more, inside the lock, immediately before the replacement (a
+    source, the document or the snapshot changed in between refuses it; nothing is written; the
+    remaining window between that validation and the compare-and-swap is accepted: an edit made to
+    a source or the document in it is caught afterwards by `check` and `architecture verify`, V3
+    and V4), then
     writes the diagram index inside the lock (D3). It writes only `designs/diagrams/registry.yml`
     and `designs/index/diagram-index.md`. `--revert` is the guarded undo (same lock, guards, token
     and CAS) so the registry is never restored with Git.
 13. **`architecture snapshot` and `architecture verify`**: the snapshot (JSON version 1, written
-    once to a new file outside `docs/architecture/`, never overwritten) records the commit, every
-    architecture document's LF text and SHA-256 and every diagram's registry fields and exact
-    Mermaid and fence lines; it is refused once any diagram is extracted. `verify` checks V1-V6
-    and reports V7 (`check` and `index --check` are run separately).
+    once, whole (a temporary file, then a link that fails if the name exists), to a new file
+    outside `docs/architecture/`, never overwritten) records the commit, every architecture
+    document's LF text and SHA-256 and every diagram's registry fields and exact Mermaid and fence
+    lines. It is refused once any diagram is extracted, without a commit, and when any
+    architecture document's LF text differs from its blob at HEAD (a clean worktree). `verify`
+    checks V1-V6 (V2 also compares `anchor`, `ordinal` and the heading of a still-embedded
+    diagram, so a revert to the wrong heading fails; a missing owner document is a V3/V4 failure,
+    never an error) and reports V7 (`check` and `index --check` are run separately).
 14. **Feature Designer.** `designer_api.library()` builds the architecture groups from
     `architecture_diagrams()`; for an extracted diagram `path` and `line` are those of its
     standalone source (Edit Diagram opens it with the architecture-docs notice). No extension

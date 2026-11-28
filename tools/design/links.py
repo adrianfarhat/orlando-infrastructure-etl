@@ -300,12 +300,18 @@ def diagram_problems(root: Path, repo: _Repo) -> list[Problem]:
                 out.append(Problem(rel, f"source_diagram {source_diagram!r} is not a diagram ID in the architecture "
                                         "index" + (f" (did you mean {close[0]}?)" if close else
                                                    " (see designs/index/architecture-index.md#diagrams)")))
+            elif document and posixpath.normpath(document) != found.document:     # first, in every M1 state
+                out.append(Problem(rel, f"source_document {document!r} does not match source_diagram "
+                                        f"{source_diagram!r}, which is in {found.document}"))
+            elif getattr(found, "format", "") == "mermaid-md" and found.heading is None:   # T-97 M1
+                if document and heading:
+                    out.append(Problem(rel, f"source_heading {heading!r} cannot be checked against source_diagram "
+                                            f"{source_diagram!r}: {found.diagram_id} is extracted to {found.path}, and "
+                                            f"its document {found.document} does not show its generated copy yet "
+                                            "(see `python -m tools.design check`)"))
             else:
                 expected_heading = found.heading.anchor if found.heading is not None else ""
-                if document and posixpath.normpath(document) != found.document:
-                    out.append(Problem(rel, f"source_document {document!r} does not match source_diagram "
-                                            f"{source_diagram!r}, which is in {found.document}"))
-                elif document and heading and heading != expected_heading:    # without a document: one problem below
+                if document and heading and heading != expected_heading:    # without a document: one problem below
                     out.append(Problem(rel, f"source_heading {heading!r} does not match source_diagram "
                                             f"{source_diagram!r}, which is under #{expected_heading or '(no heading)'}"))
         if document:

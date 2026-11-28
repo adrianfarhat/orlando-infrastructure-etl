@@ -234,6 +234,11 @@ def _region_problems(root: Path, rel: str, lines: list[str], b: Block, lookup) -
     exp = expected(root, e, rel)
     if exp.problem:
         return [(Problem(rel, f"{at}: {e.diagram_id} {exp.problem}"), "block")]
+    if e.owner_ref != rel:
+        return [(Problem(rel, f"{at}: {e.diagram_id} is owned by {e.owner_ref}, so this document cannot show its "
+                              f"generated copy (each architecture diagram is shown only in its owning document, U3): "
+                              f"technical-lead removes lines {b.start + 1}-{b.end + 1} and links to the diagram "
+                              f"in {e.owner_ref} instead"), "block")]
     current = lines[b.start + 1:b.end]
     state = classify(b, current, list(exp.lines))
     if state == "current":
@@ -360,6 +365,11 @@ def plan_copies(root: Path, ids: list[str] | None = None, document: str | None =
                 raise DesignError(f"{e.diagram_id}: the raw block on line {d.line} of {e.owner_ref} has no closing fence")
             start, end = d.line, d.line + len(d.source) + 1
             if own:
+                # delete the block and one of the blank lines around it, so no double blank line is left
+                if end < len(lines) and not lines[end].strip() and (start < 2 or not lines[start - 2].strip()):
+                    end += 1
+                elif start >= 2 and not lines[start - 2].strip():
+                    start -= 1
                 item["replacements"].append(_replacement(e, lines, start, end, [], "raw-block (delete: the document "
                                                          "already shows the generated copy)"))
             else:
@@ -383,8 +393,14 @@ def plan_copies(root: Path, ids: list[str] | None = None, document: str | None =
 
 
 def _replacement(e, lines: list[str], start: int, end: int, new: list[str], kind: str) -> dict:
-    old = "\n".join(lines[start - 1:end])
     whole = "\n".join(lines)
+    new = list(new)
+    # technical-lead's Edit needs old text that occurs once: widen it with the unchanged lines above
+    # (kept as they are in the new text) until it is unique, for example a raw block that equals the copy
+    while whole.count("\n".join(lines[start - 1:end])) != 1 and start > 1:
+        start -= 1
+        new.insert(0, lines[start - 1])
+    old = "\n".join(lines[start - 1:end])
     return {"diagram_id": e.diagram_id, "kind": kind, "start_line": start, "end_line": end, "old_text": old,
             "old_sha256": _sha(old), "old_unique": whole.count(old) == 1, "new_lines": new, "new_text": "\n".join(new)}
 
@@ -438,7 +454,17 @@ def snapshot(root: Path) -> dict:
         raise DesignError(f"architecture diagrams not registered: {', '.join(unregistered)} (run registry "
                           "adopt-architecture first)")
     head = _git(root, "rev-parse", "HEAD")
-    commit = head.stdout.decode("ascii", "replace").strip() if head.returncode == 0 else None
+    if head.returncode != 0:
+        raise DesignError("the snapshot records committed documents, but this repository has no commit (HEAD)")
+    commit = head.stdout.decode("ascii", "replace").strip()
+    dirty = []
+    for rel, text in sorted(texts.items()):                # the spec requires a clean worktree (LF content)
+        blob = _git(root, "show", f"HEAD:{rel}")
+        if blob.returncode != 0 or blob.stdout.decode("utf-8", "replace").replace("\r\n", "\n") != text:
+            dirty.append(rel)
+    if dirty:
+        raise DesignError(f"{', '.join(dirty)} differ{'s' if len(dirty) == 1 else ''} from HEAD ({commit[:7]}): take the "
+                          "snapshot in a clean worktree at the commit it records")
     return {"version": SNAPSHOT_VERSION, "tool": "python -m tools.design architecture snapshot", "commit": commit,
             "byte_identity": "LF-normalised content (equal to the Git blob)",
             "documents": {p: {"sha256": _sha(t), "text": t} for p, t in sorted(texts.items())},
@@ -521,6 +547,11 @@ def verify(root: Path, snapshot_path: Path) -> dict:
         now = {"aliases": list(e.aliases), "title": e.title, "category": e.category,
                "owner": {"kind": e.owner_kind, "ref": e.owner_ref}, "status": e.status, "created": e.created,
                "created_from": json.loads(json.dumps(cf, default=str)) if cf is not None else None}
+        if e.format == "mermaid-embedded":                  # where it is (a revert must restore exactly this)
+            located, _ = registry.locate_embedded(root, e)
+            now.update(anchor=e.anchor, ordinal=e.ordinal,
+                       heading_anchor=(located.heading.anchor if located is not None and located.heading is not None
+                                       else "" if located is not None else None))
         for key, value in now.items():
             if value != w[key]:
                 fail("V2", f"{did}: {key} is {value!r}, the snapshot has {w[key]!r}")
@@ -622,6 +653,9 @@ def _verify_extracted(root, e, w, docs, found_regions, sources, fail, _yaml, spl
         fail("V3", f"{did}: {len(own)} generated copies in {e.owner_ref} (exactly one expected)")
         return
     _, b = own[0]
+    if e.owner_ref not in docs or docs[e.owner_ref].parsed is None:
+        fail("V3", f"{did}: its owning document {e.owner_ref} is missing or cannot be read")
+        return
     if b.diagram_id != did:
         fail("V3", f"{did}: the copy's marker names {b.diagram_id}, not the canonical ID")
     exp = expected(Path(root), e)
@@ -635,10 +669,12 @@ def _verify_extracted(root, e, w, docs, found_regions, sources, fail, _yaml, spl
     body = current[2:-1]
     if body != w["mermaid_lines"]:
         fail("V3", f"{did}: the copy's Mermaid lines differ from the snapshot{_first_difference(body, w)}")
-    extra = [i for i, x in enumerate(body) if x.strip() == "%%" and (i >= len(w["mermaid_lines"])
-                                                                     or w["mermaid_lines"][i].strip() != "%%")]
+    snap_lines = w["mermaid_lines"]
+    extra = [i + 1 for i, x in enumerate(body) if x.lstrip().startswith("%%")
+             and (i >= len(snap_lines) or snap_lines[i] != x)]      # a bare %% or the T-98 "%% (blank line)"
     if extra:
-        fail("V3", f"{did}: the copy has '%%' lines the snapshot does not have (copy lines {extra})")
+        fail("V3", f"{did}: the copy has '%%' lines the source does not have (copy Mermaid lines {extra}); a "
+                   "generated copy in docs/architecture/ keeps blank lines blank (U14)")
 
 
 def _first_difference(lines, w) -> str:

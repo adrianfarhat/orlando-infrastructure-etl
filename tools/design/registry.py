@@ -1036,7 +1036,16 @@ def _source_problems(root: Path, e: Entry, rel: str, raw, files: dict) -> tuple[
     full = Path(root) / rel
     if not _exact_case_exists(root, rel):
         return [f"{where}: the file does not exist with exactly this letter case"], ()
-    if os.path.islink(full) or not full.is_file() or (hasattr(os.path, "isjunction") and os.path.isjunction(full)):
+    here = Path(root)
+    for part in rel.split("/"):
+        here = here / part
+        if os.path.islink(here) or (hasattr(os.path, "isjunction") and os.path.isjunction(here)):
+            return [f"{where}: {here.relative_to(root).as_posix()} is a symbolic link or junction (links are refused)"], ()
+    try:
+        full.resolve().relative_to(Path(root).resolve())
+    except ValueError:
+        return [f"{where}: the path leaves the repository (links are refused)"], ()
+    if not full.is_file():
         return [f"{where}: not a regular file (links are refused)"], ()
     if full.stat().st_nlink > 1:
         return [f"{where}: the file has more than one name (a hard link); links are refused"], ()
@@ -1193,6 +1202,10 @@ def extract(root: Path, items: list[tuple[str, str]], snapshot: Path | str, conf
                     del item[key]
         transactions._fault(root, "extract-before-registry")
         transactions._git_ready(root)                   # once more, just before the registry changes
+        again = plan_extract(root, items, snapshot)     # the sources, document and snapshot are unchanged
+        if again["problems"] or again["token"] != confirm:
+            raise DesignError("a source, the document, the snapshot or the registry changed while this command ran; "
+                              "nothing was written. Plan it again (without --confirm)")
         save(root, doc, reg.sha)
         transactions._fault(root, "extract-after-registry")
         index = write_diagram_index(root)               # D3: inside the lock

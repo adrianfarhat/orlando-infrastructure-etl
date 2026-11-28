@@ -97,6 +97,11 @@ def apply_printed_copy(ws, document: str):
     return plan
 
 
+def commit_all(ws):
+    ws.git("add", "-A")
+    ws.git("commit", "-q", "-m", "M1 test base")
+
+
 def take_snapshot(ws, folder: Path) -> Path:
     out = folder / "snapshot.json"
     code, stdout, err = cmd(ws.root, "architecture", "snapshot", "--out", str(out))
@@ -134,6 +139,7 @@ class Fixture(unittest.TestCase):
         self.ws.__enter__()
         self.tmp = Path(tempfile.mkdtemp(prefix="m1-snap-"))
         self.assertEqual(cmd(self.ws.root, "index")[0], 0)
+        commit_all(self.ws)
         self.snapshot = take_snapshot(self.ws, self.tmp)
         self.snap = json.loads(self.snapshot.read_text(encoding="utf-8"))
 
@@ -219,6 +225,7 @@ class NoWrites(unittest.TestCase):
             self.assertIsNone(re.search(pattern, source), pattern)
         with Workspace() as ws:
             cmd(ws.root, "index")
+            commit_all(ws)
             before = tree_hashes(ws.root, ".")
 
             def refuse(*a, **k):
@@ -230,7 +237,8 @@ class NoWrites(unittest.TestCase):
                 architecture_copies.snapshot(ws.root)
                 with self.assertRaises(DesignError):
                     architecture_copies.plan_copies(ws.root, ["AD-0001"])       # not extracted: refused
-            self.assertEqual(tree_hashes(ws.root, "."), before)
+            self.assertEqual({k: v for k, v in tree_hashes(ws.root, ".").items() if not k.startswith(".git/")},
+                             {k: v for k, v in before.items() if not k.startswith(".git/")})
 
     def test_the_write_guard_is_unchanged(self):
         with Workspace() as ws:
@@ -432,20 +440,178 @@ class ExtractRefusals(Fixture):
         write_source(self.ws, d1)
         _, plan, _ = extract(self.ws, [d1], self.snapshot, expect_ok=False)
         reg = self.ws.root / registry.REGISTRY
-        real_ready, calls = transactions._git_ready, []
+        real_plan, calls = registry.plan_extract, []
 
-        def sneaky(root):
+        def sneaky(*a, **k):
+            result = real_plan(*a, **k)
             calls.append(1)
-            if len(calls) == 2:                                              # just before the replacement
+            if len(calls) == 2:                                              # after the final validation
                 reg.write_bytes(reg.read_bytes() + b"# someone else\n")
-            return real_ready(root)
-        with mock.patch.object(transactions, "_git_ready", sneaky):
+            return result
+        with mock.patch.object(registry, "plan_extract", sneaky):
             with self.assertRaises(DesignError) as ctx:
                 registry.extract(self.ws.root, [("AD-0001", source_path("AD-0001"))], self.snapshot, plan["token"])
         self.assertIn("E12", str(ctx.exception))
         self.assertTrue(reg.read_bytes().endswith(b"# someone else\n"))       # theirs kept, ours not written
         self.assertEqual(registry.load(self.ws.root).by_id()["AD-0001"].format, "mermaid-embedded")
         self.assertFalse((self.ws.root / registry.LOCK).exists())
+
+
+class QaFixes(Fixture):
+    """Regression tests for the M1-0 QA findings (m1-m8, TOCTOU, verify on a missing document)."""
+
+    def test_toctou_a_source_changed_after_the_lock_validation_is_refused(self):
+        d1 = self.d("AD-0001")
+        write_source(self.ws, d1)
+        _, plan, _ = extract(self.ws, [d1], self.snapshot, expect_ok=False)
+        src = self.ws.root / source_path("AD-0001")
+        real_ready, calls = transactions._git_ready, []
+
+        def sneaky(root):
+            calls.append(1)
+            if len(calls) == 2:                                              # after the first validation in the lock
+                src.write_bytes(src.read_bytes().replace(b"flowchart LR", b"flowchart RL"))
+            return real_ready(root)
+        reg_before = (self.ws.root / registry.REGISTRY).read_bytes()
+        with mock.patch.object(transactions, "_git_ready", sneaky):
+            with self.assertRaises(DesignError) as ctx:
+                registry.extract(self.ws.root, [("AD-0001", source_path("AD-0001"))], self.snapshot, plan["token"])
+        self.assertIn("changed while this command ran", str(ctx.exception))
+        self.assertEqual((self.ws.root / registry.REGISTRY).read_bytes(), reg_before)
+
+    def test_m4_the_snapshot_needs_a_clean_worktree(self):
+        doc = self.ws.root / "docs/architecture/system-overview.md"
+        original = doc.read_bytes()
+        doc.write_bytes(original.replace(b"\r\n", b"\n"))                      # line endings alone are not a change
+        self.assertIsNotNone(architecture_copies.snapshot(self.ws.root)["commit"])
+        doc.write_bytes(original + b"x")
+        out = self.tmp / "dirty.json"
+        code, _, err = cmd(self.ws.root, "architecture", "snapshot", "--out", str(out))
+        self.assertEqual(code, 2)
+        self.assertIn("docs/architecture/system-overview.md differs from HEAD", err)
+        self.assertFalse(out.exists())
+        doc.write_bytes(original)
+        with Workspace() as fresh:                                           # no commit at all
+            cmd(fresh.root, "index")
+            with self.assertRaises(DesignError) as ctx:
+                architecture_copies.snapshot(fresh.root)
+            self.assertIn("no commit", str(ctx.exception))
+
+    def test_m6_the_snapshot_is_written_whole_and_never_over_a_file(self):
+        out = self.tmp / "again.json"
+        self.assertEqual(cmd(self.ws.root, "architecture", "snapshot", "--out", str(out))[0], 0)
+        self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["diagrams"], self.snap["diagrams"])
+        self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.startswith(".")], [])   # no temporary file left
+        data = out.read_bytes()
+        self.assertEqual(cmd(self.ws.root, "architecture", "snapshot", "--out", str(out))[0], 2)
+        self.assertEqual(out.read_bytes(), data)
+        with mock.patch.object(ownership.os, "link", side_effect=FileExistsError):      # lost a race to another writer
+            code, _, err = cmd(self.ws.root, "architecture", "snapshot", "--out", str(self.tmp / "raced.json"))
+        self.assertEqual(code, 2)
+        self.assertIn("nothing was overwritten", err)
+        self.assertFalse((self.tmp / "raced.json").exists())
+
+    def test_m5_a_junction_on_the_way_to_the_source_is_refused(self):
+        try:
+            import _winapi
+        except ImportError:
+            self.skipTest("junctions exist only on Windows")
+        d1 = self.d("AD-0001")
+        outside = self.tmp / "outside-diagrams"
+        outside.mkdir()
+        (outside / architecture_copies.M1_SOURCES["AD-0001"]).write_text(source_text(d1), encoding="utf-8")
+        _winapi.CreateJunction(str(outside), str(self.ws.root / "docs/architecture/diagrams"))
+        code, out, _ = cmd(self.ws.root, *extract_args([d1], self.snapshot), "--json")
+        self.assertEqual(code, 2)
+        problems = json.loads(out)["problems"]
+        self.assertTrue(any("docs/architecture/diagrams is a symbolic link or junction" in p for p in problems), problems)
+        os.rmdir(self.ws.root / "docs/architecture/diagrams")                  # removes the junction only
+        self.assertTrue((outside / architecture_copies.M1_SOURCES["AD-0001"]).exists())
+
+    def test_m2_deleting_a_duplicate_raw_block_gives_the_document_without_it(self):
+        d = self.d("AD-0004")
+        rel = "docs/architecture/database-schema.md"
+        write_source(self.ws, d)
+        extract(self.ws, [d], self.snapshot)
+        apply_printed_copy(self.ws, rel)
+        self.assertEqual(cmd(self.ws.root, "index")[0], 0)
+        doc = self.ws.root / rel
+        text = doc.read_bytes().decode("utf-8").replace("\r\n", "\n")
+        raw = "\n".join([d["opening_fence"], *d["mermaid_lines"], d["closing_fence"]])
+        end = text.index("<!-- diagram:end -->") + len("<!-- diagram:end -->\n")
+        doc.write_bytes((text[:end] + "\n" + raw + "\n" + text[end:]).encode("utf-8"))   # a second copy pasted back
+        self.assertTrue(any("is a second copy of AD-0004" in p for p in self.check()[1]))
+        plan = apply_printed_copy(self.ws, rel)
+        self.assertTrue(plan["documents"][0]["replacements"][0]["kind"].startswith("raw-block (delete"))
+        self.assertEqual(doc.read_bytes().decode("utf-8").replace("\r\n", "\n"), text)
+        code, out, _ = cmd(self.ws.root, "architecture", "verify", "--snapshot", str(self.snapshot), "--json")
+        self.assertEqual((code, json.loads(out)["problems"]), (0, []))       # V4: exactly the pre-M1 text again
+
+    def test_m3_v2_catches_an_embedded_entry_pointing_at_the_wrong_heading(self):
+        registry.relink(self.ws.root, "AD-0004", heading="1-current-model-built-schema-public-real-data")
+        code, out, _ = cmd(self.ws.root, "architecture", "verify", "--snapshot", str(self.snapshot), "--json")
+        result = json.loads(out)
+        self.assertEqual(code, 1)
+        v2 = [p["message"] for p in result["problems"] if p["check"] == "V2"]
+        self.assertTrue(any("anchor is '1-current-model-built-schema-public-real-data'" in m for m in v2), v2)
+        self.assertTrue(any("heading_anchor" in m for m in v2), v2)
+
+    def test_m8_a_current_copy_in_a_document_that_does_not_own_it_is_reported(self):
+        d = self.d("AD-0001")
+        write_source(self.ws, d)
+        extract(self.ws, [d], self.snapshot)
+        apply_printed_copy(self.ws, "docs/architecture/conventions.md")
+        self.assertEqual(cmd(self.ws.root, "index")[0], 0)
+        self.assertEqual(self.check(), (0, []))
+        conv = (self.ws.root / "docs/architecture/conventions.md").read_bytes().decode("utf-8").replace("\r\n", "\n")
+        region = conv[conv.index("<!-- diagram:start AD-0001"):conv.index("<!-- diagram:end -->") + len("<!-- diagram:end -->")]
+        other = self.ws.root / "docs/architecture/system-overview.md"
+        other.write_bytes(other.read_bytes() + ("\n" + region + "\n").encode("utf-8"))   # the exact current copy
+        problems = self.check()[1]
+        self.assertTrue(any(p.startswith("docs/architecture/system-overview.md:") and
+                            "owned by docs/architecture/conventions.md" in p for p in problems), problems)
+        self.assertEqual(len(self.rows()), 14)                                # still counted once
+
+    def test_m7_a_cited_heading_of_an_extracted_diagram_not_shown_yet(self):
+        f = new_feature(self.ws.root, "Cites")
+        created = ownership.new_diagram(self.ws.root, f.feature_id, "Derived")
+        path = self.ws.root / created.path
+        text = path.read_bytes().decode("utf-8")
+        text = re.sub(r'(?m)^source_diagram: ""', "source_diagram: database-schema/a-the-team-workflow", text, count=1)
+        text = re.sub(r'(?m)^source_document: ""', "source_document: docs/architecture/database-schema.md", text, count=1)
+        text = re.sub(r'(?m)^source_heading: ""', "source_heading: a-the-team-workflow", text, count=1)
+        path.write_bytes(text.encode("utf-8"))
+        d = self.d("AD-0004")
+        write_source(self.ws, d)
+        extract(self.ws, [d], self.snapshot)
+        doc = self.ws.root / "docs/architecture/database-schema.md"
+        raw = "\n".join([d["opening_fence"], *d["mermaid_lines"], d["closing_fence"]]) + "\n"
+        doc.write_bytes(doc.read_bytes().decode("utf-8").replace("\r\n", "\n").replace(raw, "").encode("utf-8"))
+        problems = self.check()[1]
+        cited = [p for p in problems if p.startswith(created.path)]
+        self.assertTrue(any("does not show its generated copy yet" in p for p in cited), cited)
+        self.assertFalse(any("(no heading)" in p for p in problems))
+        # n2: a wrong source_document is still reported in this state (checked before the heading)
+        path.write_bytes(text.replace("source_document: docs/architecture/database-schema.md",
+                                      "source_document: docs/architecture/etl-workflow.md").encode("utf-8"))
+        cited = [p for p in self.check()[1] if p.startswith(created.path)]
+        self.assertTrue(any("source_document 'docs/architecture/etl-workflow.md' does not match source_diagram "
+                            "'database-schema/a-the-team-workflow', which is in docs/architecture/database-schema.md"
+                            in p for p in cited), cited)
+        self.assertFalse(any("does not show its generated copy yet" in p for p in cited), cited)
+
+    def test_verify_reports_a_missing_owner_document(self):
+        d = self.d("AD-0001")
+        write_source(self.ws, d)
+        extract(self.ws, [d], self.snapshot)
+        apply_printed_copy(self.ws, "docs/architecture/conventions.md")
+        (self.ws.root / "docs/architecture/conventions.md").unlink()
+        code, out, err = cmd(self.ws.root, "architecture", "verify", "--snapshot", str(self.snapshot), "--json")
+        self.assertEqual(code, 1, err)
+        result = json.loads(out)
+        self.assertIn("docs/architecture/conventions.md is missing or cannot be read",
+                      " ".join(p["message"] for p in result["problems"]))
+        self.assertEqual(result["checks"]["V4"], "fail")
 
 
 class Extraction(Fixture):
@@ -704,7 +870,7 @@ class FeatureBlocks(Fixture):
         caption = lines[b.start + 1]
         self.assertIn("[Credential boundary](../../docs/architecture/diagrams/"
                       "system-architecture_system-architecture_credential-boundary.md)", caption)   # Q2
-        self.assertEqual(lines[b.start + 3:b.end - 1], [x if x.strip() else "%%" for x in d["mermaid_lines"]])
+        self.assertEqual(lines[b.start + 3:b.end - 1], [x if x.strip() else diagrams.BLANK_LINE for x in d["mermaid_lines"]])
         self.assertNotEqual(before[0].fp, b.fp)
 
     def test_proposed_diagram_files_citing_a_former_catalog_id_keep_resolving(self):
@@ -780,6 +946,8 @@ class Verify(Fixture):
             ("V3", "source and copy changed alike (check passes)",
              lambda: (self.edit(src, same, same + " "), apply_printed_copy(self.ws, conv))),
             ("V3", "copy with %% for a blank line", lambda: self._percent(conv)),
+            ("V3", "copy with the T-98 placeholder for a blank line",
+             lambda: self._percent(conv, diagrams.BLANK_LINE)),
             ("V3", "an embedded block changed", lambda: self.edit("docs/architecture/database-schema.md",
                                                                "erDiagram", "erDiagram ")),
             ("V4", "prose changed in the extracted document", lambda: self.edit(conv, "Example:", "Examples:")),
@@ -800,16 +968,19 @@ class Verify(Fixture):
                 code, result = self.verify()
                 self.assertEqual(code, 1, what)
                 self.assertIn(check, {p["check"] for p in result["problems"]}, (what, result["problems"]))
+                if "for a blank line" in what:
+                    self.assertTrue(any("'%%' lines the source does not have" in p["message"]
+                                        for p in result["problems"]), result["problems"])
                 self.assertEqual(result["checks"][check], "fail")
                 self.restore()
                 self.assertEqual(self.verify()[0], 0, what)
 
-    def _percent(self, conv):
+    def _percent(self, conv, placeholder="%%"):
         path = self.ws.root / conv
         lines = path.read_bytes().decode("utf-8").split("\n")
         start = next(i for i, x in enumerate(lines) if x.startswith("<!-- diagram:start AD-0001"))
         blank = next(i for i in range(start, len(lines)) if not lines[i].strip())
-        lines[blank] = "%%" + ("\r" if lines[blank].endswith("\r") else "")
+        lines[blank] = placeholder + ("\r" if lines[blank].endswith("\r") else "")
         path.write_bytes("\n".join(lines).encode("utf-8"))
 
     def _retitle(self):
