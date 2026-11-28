@@ -6,7 +6,8 @@
   python -m tools.design registry relink ID [--path PATH] [--title TITLE] [--heading ANCHOR [--ordinal N]]
   python -m tools.design registry retire ID [--confirm]
   python -m tools.design registry move SOURCE [SOURCE ...] --to DEST [--to DEST ...] [--confirm TOKEN] [--json]
-  python -m tools.design registry adopt-moves [--from OLD --to NEW ...] [--confirm TOKEN] [--json]
+  python -m tools.design registry adopt-moves [--from OLD --to NEW [--sha256 HEX] ...] [--confirm TOKEN] [--json]
+  python -m tools.design registry move-back --from NOW --to REGISTERED [--sha256 HEX] [...] [--confirm TOKEN] [--json]
   python -m tools.design resolve ID
   python -m tools.design reconcile --file PATH --line N (--discard | --apply-to-source) [--confirm TOKEN]
   python -m tools.design index [--check] [--root DIR]
@@ -99,8 +100,24 @@ def build_parser() -> argparse.ArgumentParser:
                              help="the registered path, ID or folder (repeat with --to for a batch; omit both for every "
                                   "moved source that `check` reports, E6)")
     adopt_moves.add_argument("--to", action="append", help="where that source is now (one per --from)")
+    adopt_moves.add_argument("--sha256", action="append", metavar="HEX",
+                             help="the SHA-256 the source had before it was renamed (one per --from, in the same order; "
+                                  "refused if the file at --to differs). Feature Designer passes the checksum it took "
+                                  "just before VS Code renamed the file")
     adopt_moves.add_argument("--confirm", metavar="TOKEN", help="carry out exactly the plan that printed this token")
     adopt_moves.add_argument("--json", action="store_true", help="print the plan or the result as JSON")
+    move_back = ops.add_parser("move-back", help="rename sources that were renamed while the registry still names their "
+                                                 "old paths back to those paths, as one recorded, recoverable move; "
+                                                 "the registry is not changed (shows the plan first; acts only with "
+                                                 "--confirm TOKEN)")
+    move_back.add_argument("--from", dest="old", action="append", required=True,
+                           help="where the source is now (an unregistered path; repeat with --to for a batch)")
+    move_back.add_argument("--to", action="append", required=True,
+                           help="the diagram's registered path, or its ID (one per --from): where it goes back to")
+    move_back.add_argument("--sha256", action="append", metavar="HEX",
+                           help="the SHA-256 the source had before it was renamed (one per --from; refused if it differs)")
+    move_back.add_argument("--confirm", metavar="TOKEN", help="carry out exactly the plan that printed this token")
+    move_back.add_argument("--json", action="store_true", help="print the plan or the result as JSON")
     retire = ops.add_parser("retire", help="retire a diagram (lists its references; the ID is never reused)")
     retire.add_argument("diagram_id", help="the diagram ID or alias")
     retire.add_argument("--confirm", action="store_true", help="retire it (without this, only the references are listed)")
@@ -143,7 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="carry out the action on exactly the state that was shown (forget-window takes no token)")
     tx.add_argument("--json", action="store_true", help="print the result as JSON")
     for p in (feature, diagram, designer, index, sub.choices["check"], adopt, adopt_arch, relink, retire, unlock,
-              resolve, reconcile, rb, tx, move, adopt_moves):
+              resolve, reconcile, rb, tx, move, adopt_moves, move_back):
         p.add_argument("--root", type=Path, help="repository root (default: found from the current folder)")
     return parser
 
@@ -335,9 +352,10 @@ def _new_feature(args, root: Path, out: TextIO, ask: Callable[[str], str], inter
 
 
 def _move(args, root: Path, out: TextIO) -> int:
-    """`registry move` and `registry adopt-moves` (PR B2b-2a S2): the plan first, then exactly that plan."""
+    """`registry move`, `registry adopt-moves` (PR B2b-2a S2) and `registry move-back` (PR B2b-2b): the
+    plan first, then exactly that plan."""
     from . import moves
-    mode = "move" if args.action == "move" else "adopt"
+    mode = {"move": "move", "adopt-moves": "adopt", "move-back": "restore"}[args.action]
     if mode == "move":
         if len(args.source) != len(args.to):
             raise DesignError("give one --to for every source, in the same order")
@@ -346,7 +364,17 @@ def _move(args, root: Path, out: TextIO) -> int:
         olds, news = args.old or [], args.to or []
         if len(olds) != len(news):
             raise DesignError("give one --to for every --from, in the same order")
-        reqs = list(zip(olds, news)) or None
+        shas = args.sha256
+        if shas is not None:                        # B2b-2b: the checksum from before the rename, one per pair
+            if len(shas) != len(olds):
+                raise DesignError("give one --sha256 for every --from, in the same order")
+            bad = [h for h in shas if not transactions.HEX64.match(h)]
+            if bad:
+                raise DesignError(f"--sha256 must be 64 lowercase hexadecimal characters, not {bad[0]!r}")
+            reqs = [(o, n, h) for o, n, h in zip(olds, news, shas)]
+        else:
+            reqs = list(zip(olds, news))
+        reqs = reqs or None
     if args.confirm is None:
         p = moves.plan(root, mode, reqs)
         if args.json:
@@ -355,9 +383,12 @@ def _move(args, root: Path, out: TextIO) -> int:
         if p.problems:
             for s in p.skipped:
                 print(f"not adopted: {s}", file=out)
-            raise DesignError(("the move" if mode == "move" else "the adoption") + " was refused; " + moves.refused(p))
-        print("registry move (the tooling renames the files, then the registry):" if mode == "move" else
-              "registry adopt-moves (the files were already renamed: only the registry follows):", file=out)
+            raise DesignError({"move": "the move", "adopt": "the adoption", "restore": "the move back"}[mode]
+                              + " was refused; " + moves.refused(p))
+        print({"move": "registry move (the tooling renames the files, then the registry):",
+               "adopt": "registry adopt-moves (the files were already renamed: only the registry follows):",
+               "restore": "registry move-back (the tooling renames the files back to their registered paths; the "
+                          "registry is not changed):"}[mode], file=out)
         for r in p.renames:
             print(f"  {r['diagram_id']}: {r['from']} -> {r['to']}"
                   + (f" (letter case only: through {r['via']})" if r["via"] else ""), file=out)
@@ -366,9 +397,10 @@ def _move(args, root: Path, out: TextIO) -> int:
         for w in p.warnings:
             print(f"  warning: {w}", file=out)
         refs = sum(len(v) for v in p.references.values())
-        print("Only the path of these registry entries changes: the IDs, owners, titles, categories, aliases and the "
+        print("The registry is not changed, and the source contents stay the same." if mode == "restore" else
+              "Only the path of these registry entries changes: the IDs, owners, titles, categories, aliases and the "
               "source contents stay the same.", file=out)
-        if refs:
+        if refs and mode != "restore":
             print(f"{refs} reference(s) show these diagrams; their generated captions and links are refreshed afterwards, "
                   "separately (Feature Designer, or `refresh-blocks`), never as part of the move.", file=out)
         print(f"Nothing was changed. To carry out exactly this, repeat with --confirm {p.token}", file=out)
@@ -378,8 +410,10 @@ def _move(args, root: Path, out: TextIO) -> int:
         print(json.dumps(result, sort_keys=True, ensure_ascii=False), file=out)
         return EXIT_OK
     for r in result["renames"]:
-        print(f"{'moved' if mode == 'move' else 'adopted'} {r['diagram_id']}: {r['from']} -> {r['to']}", file=out)
-    print("the move is complete: the registry names the new paths"
+        print(f"{ {'move': 'moved', 'adopt': 'adopted', 'restore': 'moved back'}[mode]} {r['diagram_id']}: {r['from']} -> "
+              f"{r['to']}", file=out)
+    print(("the move back is complete: every source is at its registered path; the registry was not changed"
+           if mode == "restore" else "the move is complete: the registry names the new paths")
           + (f" and {registry.DIAGRAM_INDEX} was regenerated." if result["index"]["regenerated"] else "."), file=out)
     for w in result["warnings"]:
         print(f"warning: {w}", file=out)
@@ -398,7 +432,7 @@ def _move(args, root: Path, out: TextIO) -> int:
 
 def _registry(args, root: Path, out: TextIO) -> int:
     note = "Uncommitted working-tree changes: nothing was staged, committed or pushed."
-    if args.action in ("move", "adopt-moves"):
+    if args.action in ("move", "adopt-moves", "move-back"):
         return _move(args, root, out)
     if args.action == "adopt":
         e = registry.adopt(root, args.path, args.category)
@@ -577,8 +611,9 @@ def _print_record(r: dict, out: TextIO) -> None:
         print(f"  changed since it was prepared: {', '.join(r['source_changes'])}", file=out)
     c, u = r["complete"], r["undo"]
     if r.get("tool") == transactions.MOVE_TOOL:     # a registry move (version 2): renames and the registry
-        print(f"  ({'observed renames: only the registry follows' if r['mode'] == 'adopt' else 'tool-initiated move'})",
-              file=out)
+        print("  (" + {"adopt": "observed renames: only the registry follows",
+                       "restore": "tool-initiated move back: the sources go back to their registered paths; the "
+                                  "registry is not changed"}.get(r["mode"], "tool-initiated move") + ")", file=out)
         print("  complete: " + (c["reason"] if not c["possible"] else
                                 f"finishes {', '.join(c['writes']) or 'nothing (only the record is removed)'}" +
                                 (f"; leaves {', '.join(c['left_alone'])} alone" if c["left_alone"] else "") +

@@ -49,6 +49,45 @@ function transactionArgs({ action, id, token } = {}) {
   return ["transaction", action, id, `--confirm=${token}`, "--json"];
 }
 
+// A repository path a move may name (T-97 PR B2b-2b). Only its shape is checked here (no backslash, NUL,
+// colon, "." or ".." part, under designs/features/); which files may move (the folder, the format, the
+// file name) is decided by the design tooling, which refuses everything else (G12: no format assumption).
+const MOVE_PATH = /^designs\/features\/(?:[^\\/\0:]+\/)*[^\\/\0:]+$/;
+const ID_OR_PATH = /^(?:[A-Z]{2}-\d{4}(?:-D\d+)?|designs\/features\/(?:[^\\/\0:]+\/)*[^\\/\0:]+)$/;
+const cleanPath = (p, re) => typeof p === "string" && re.test(p) && !p.split("/").some((x) => x === ".." || x === ".");
+
+/** The arguments of `registry adopt-moves` (mode adopt) or `registry move-back` (mode restore) for a confirmed plan:
+ *  one --from/--to pair per source, each with the SHA-256 known for it (adopt: from before the rename). */
+function moveArgs({ mode, moves, token } = {}) {
+  if (!["adopt", "restore"].includes(mode)) throw new Error("the mode must be adopt or restore");
+  if (!Array.isArray(moves) || !moves.length || moves.length > 200) throw new Error("no sources to move");
+  const args = ["registry", mode === "adopt" ? "adopt-moves" : "move-back"];
+  const withSha = moves.every((m) => m && m.sha256 !== undefined && m.sha256 !== null);
+  for (const m of moves) {
+    if (!m) throw new Error("not a move");
+    const from = mode === "adopt" ? cleanPath(m.from, ID_OR_PATH) : cleanPath(m.from, MOVE_PATH);
+    const to = mode === "adopt" ? cleanPath(m.to, MOVE_PATH) : cleanPath(m.to, ID_OR_PATH);
+    if (!from || !to) throw new Error("not a diagram source path");
+    args.push(`--from=${m.from}`, `--to=${m.to}`);
+    if (withSha) {
+      if (typeof m.sha256 !== "string" || !HEX64.test(m.sha256)) throw new Error("not a SHA-256");
+      args.push(`--sha256=${m.sha256}`);
+    } else if (m.sha256 !== undefined && m.sha256 !== null) throw new Error("give a SHA-256 for every source or for none");
+  }
+  if (typeof token !== "string" || !HEX16.test(token)) throw new Error("not a confirmation token");
+  return [...args, `--confirm=${token}`, "--json"];
+}
+
+const UNSURE_MOVE = "it may or may not have changed the registry or moved files: run python -m tools.design transaction status";
+
+/** Adopt observed renames (the registry follows) or move sources back; resolves to the command's JSON result. */
+async function moveSources(opts, fields) {
+  const r = await run({ ...opts, args: moveArgs(fields), timeoutMs: 120000, unsure: UNSURE_MOVE });
+  if (!r || r.ok !== true || !Array.isArray(r.renames) || !r.index || typeof r.index.regenerated !== "boolean")
+    throw new Error("the design tooling returned an unexpected result");
+  return r;
+}
+
 /** Run `python -B -E -m tools.design <args> --root <root>` once and parse its JSON output. Exit code 1
  *  with a JSON answer (a recovery that was only partly possible) resolves when `jsonOnProblems` is set. */
 function run({ python, root, args, timeoutMs = TIMEOUT_MS, execFileImpl = execFile, jsonOnProblems = false,
@@ -107,4 +146,4 @@ async function resolveTransaction(opts, fields) {
 }
 
 module.exports = { newDiagram, newDiagramArgs, refreshBlocks, refreshBlocksArgs, resolveTransaction, transactionArgs, run,
-                   CATEGORIES, TIMEOUT_MS };
+                   moveArgs, moveSources, CATEGORIES, TIMEOUT_MS };

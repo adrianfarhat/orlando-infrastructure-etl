@@ -1,4 +1,4 @@
-// Feature Designer (T-97 Phase 2, PR B1, B2a, B2b-1) end-to-end test in the pinned VS Code 1.146 test build, with
+// Feature Designer (T-97 Phase 2, PR B1, B2a, B2b-1, B2b-2b) end-to-end test in the pinned VS Code 1.146 test build, with
 // real pointer and keyboard input (Playwright over CDP). Writes evidence to test/gui/.run/.
 "use strict";
 const fs = require("fs");
@@ -80,12 +80,24 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
     console.log(`\n${results.length - failed.length} of ${results.length} checks passed`);
     process.exit(failed.length ? 1 : 0);
   }
+  if (process.env.FD_GUI_ONLY === "b2b2b") {              // a shorter run of the PR B2b-2b steps alone (diagnosis)
+    await app.host("setGlobal", { section: "featureDesigner", key: "pythonPath", value: PY });
+    await prB2b2bSteps();
+    await saveLog();
+    await close(app);
+    fs.writeFileSync(path.join(EV, "e2e-results.json"), JSON.stringify(results, null, 2));
+    const failed = results.filter((r) => !r.ok);
+    console.log(`\n${results.length - failed.length} of ${results.length} checks passed`);
+    process.exit(failed.length ? 1 : 0);
+  }
 
   // P2-A: no interpreter configured → the .venv interpreter is suggested; saved only after confirmation
   await step("P2-A interpreter suggestion and confirmation", async () => {
     await app.host("openWith", { path: FEATURE, viewType: "featureDesigner.editor" });
     f = await designerFrame(app.page);                    // rendering needs no Python; the library does
-    const b0 = await blockAfter("3. Logic");
+    // the frame exists before the document is rendered: wait for the section (a slow first render under load
+    // failed here, and as this step also saves the test interpreter, every later step failed with it)
+    const b0 = await waitFor(() => blockAfter("3. Logic"), 30000);
     await placeMenu(b0.idx, "Add Existing Diagram");
     const dlg = app.page.locator(".monaco-dialog-box");
     await dlg.waitFor({ timeout: 30000 });
@@ -494,6 +506,7 @@ function py(args) { try { return execFileSync(PY, ["-B", ...args], { cwd: WS, en
   await prB1Steps();
   await prB2aSteps();
   await prB2b1Steps();
+  await prB2b2bSteps();
 
   await close(app); app = null;
 
@@ -1500,4 +1513,353 @@ async function dialogDismissIfAny() {                       // "save changes?" p
     const cancel = dlg.locator(".monaco-button").filter({ hasText: /^Cancel$/ });   // never "Don't Save": that would discard the buffer
     if (await cancel.count()) await cancel.first().click();
   }
+}
+
+// ---------------------------------------------------------------------------------------- PR B2b-2b
+// Renames of diagram sources through VS Code (the Explorer, and the workspace rename API that runs the same
+// will/did-rename participants): one modal prompt per batch with Not now first (focused), the four choices, the
+// E6 strip row, Move back, the architecture notice, held paths, ambiguity, and move records in the recovery panel.
+const B2 = {};
+const REGISTRY_YML = "designs/diagrams/registry.yml";
+const SETUP_B2B2B = `
+import json, os, sys
+sys.path.insert(0, os.getcwd())
+from pathlib import Path
+from tools.design import designer_api, ownership
+from tools.design.workspace import new_feature
+root = Path(".").resolve()
+def place(doc, did):
+    text = (root / doc).read_bytes().decode("utf-8")
+    lines = text.split("\\n")
+    i = next(n for n, l in enumerate(lines) if l.startswith("- **Desired outcome:**"))
+    while lines[i].strip():
+        i += 1
+    r, code = designer_api.handle(root, {"version": 1, "op": "insert", "path": doc, "text": text, "at": i, "diagram_id": did})
+    assert code == 0, r
+    for e in reversed(r["edits"]):
+        lines[e["start"]:e["end"]] = e["lines"]
+    (root / doc).write_bytes(r["newline"].join(lines).encode("utf-8"))
+out = {}
+for key, title in (("r1", "Rename one"), ("r2", "Rename two"), ("r3", "Rename three")):
+    d = ownership.new_diagram(root, "FD-0001", title, "process")
+    out[key] = {"id": d.diagram_id, "path": d.path}
+parent = new_feature(root, "Rename parent")
+child = new_feature(root, "Rename child", parent=parent.feature_id, convert_parent=True)
+out["folder"] = [ownership.new_diagram(root, child.feature_id, f"Folder {n}", "process").path for n in "abcdef"]
+out["folder_ids"] = []
+for key, name in (("open", "Rename open"), ("dirty", "Rename dirty"), ("closed", "Rename closed")):
+    out[key] = new_feature(root, name).path
+    place(out[key], out["r1"]["id"])
+from tools.design import registry
+reg = registry.load(root)
+out["folder_ids"] = [e.diagram_id for e in reg.entries if e.path in out["folder"]]
+place(out["open"], out["folder_ids"][0])
+out["parent"] = posix = Path(out["folder"][0]).parent.parent.as_posix()
+print(json.dumps(out))
+`;
+const reg = () => readWs(REGISTRY_YML);
+const pathOf = (id) => { const r = JSON.parse(py(["-m", "tools.design", "resolve", id])); return r.path; };
+const exists = (rel) => { const p = path.join(WS, ...rel.split("/")); try { return fs.readdirSync(path.dirname(p)).includes(path.basename(p)); } catch { return false; } };
+const moveFs = (a, b) => { fs.mkdirSync(path.dirname(path.join(WS, b)), { recursive: true }); fs.renameSync(path.join(WS, a), path.join(WS, b)); };
+function fdLog() {
+  const found = [];
+  const walk = (d) => { for (const n of fs.existsSync(d) ? fs.readdirSync(d) : []) { const q = path.join(d, n); if (fs.statSync(q).isDirectory()) walk(q); else if (n.endsWith("Feature Designer.log")) found.push(q); } };
+  walk(path.join(RUN, "user", "logs"));
+  return found.map((q) => fs.readFileSync(q, "utf8")).join("\n");
+}
+/** The modal prompt (VS Code's custom dialog): message, detail, buttons in order and the focused one. */
+async function prompt(timeout = 25000) {
+  const box = app.page.locator(".monaco-dialog-box");
+  await box.waitFor({ timeout });
+  // earlier notifications are cleared now, so a later toast() wait sees only the outcome of this prompt
+  await app.host("command", { id: "notifications.clearAll" });
+  await sleep(400);
+  return app.page.evaluate(() => {
+    const b = document.querySelector(".monaco-dialog-box");
+    const q = (s) => (b.querySelector(s) || {}).innerText || "";
+    const buttons = [...b.querySelectorAll(".dialog-buttons .monaco-button")].map((x) => x.innerText.trim());
+    const a = document.activeElement;
+    return { message: q(".dialog-message-text"), detail: q(".dialog-message-detail"), buttons,
+             focused: a && b.contains(a) ? (a.innerText || a.textContent || "").trim() : "(outside the dialog)" };
+  });
+}
+const noPrompt = async (ms = 4000) => !(await waitFor(async () => (await app.page.locator(".monaco-dialog-box").count()) > 0, ms, 200));
+async function frameFor(rel, timeout = 20000) {
+  return waitFor(async () => {
+    for (const fr of app.page.frames()) if (await fr.evaluate((r) => !!window.FD_DEBUG && window.FD_DEBUG.state.rel === r, rel).catch(() => false)) return fr;
+    return null;
+  }, timeout);
+}
+async function openB2(rel, column = 1) {
+  await app.host("openWith", { path: rel, viewType: "featureDesigner.editor", column });
+  const fr = await frameFor(rel);
+  if (!fr) throw new Error(`Feature Designer did not open ${rel}`);
+  await waitFor(() => fr.evaluate(() => !!document.querySelector("h1")), 15000);
+  return fr;
+}
+const rowIn = (fr, cls) => fr.evaluate((c) => { const r = document.querySelector(`#strip .strip-row.${c}`); return r ? r.innerText : ""; }, cls).catch(() => "");
+const plainRegistry = (t) => t.replace(/\r\n/g, "\n");
+/** Run the design tooling with a crash injection point (the process ends there, as in a power cut). */
+function pyFault(args, point) {
+  const env = { ...process.env, DESIGN_TEST_FAULT: point, DESIGN_TEST_FAULT_ROOT: WS };
+  try { return execFileSync(PY, ["-B", "-m", "tools.design", ...args, "--root", WS], { cwd: WS, encoding: "utf8", env }); }
+  catch (e) { return `exit ${e.status} ${e.stdout || ""}${e.stderr || ""}`; }
+}
+
+async function prB2b2bSteps() {
+  const archBefore = archHash();
+  let fo = null, fd = null;                                     // the open (clean) and the dirty document's views
+  await step("B2b-2b setup", async () => {
+    await app.host("closeAll"); await dialogDismissIfAny();
+    for (const t of await app.host("tabs")) if (t.dirty) { await app.host("closeAll"); await dialogDismissIfAny(); }
+    const script = path.join(RUN, "setup-b2b2b.py");
+    fs.writeFileSync(script, SETUP_B2B2B);
+    Object.assign(B2, JSON.parse(py([script]).trim().split(/\r?\n/).pop()));
+    py(["-m", "tools.design", "index"]);
+    fo = await openB2(B2.open, 1);
+    fd = await openB2(B2.dirty, 2);
+    await app.host("replace", { path: B2.dirty, find: "## 1. Objective", replace: "## 1. Objective\n\nTyped here, never saved by Feature Designer." });
+    B2.dirtyDisk = readWs(B2.dirty);
+    await sleep(1500);                                           // presence published; the E6 row computed
+    rec("B2b-2b setup: three sources, a folder with six, an open (clean), an open (unsaved) and a closed document referencing them",
+        !!B2.r1 && B2.folder.length === 6 && (await doc(B2.dirty)).isDirty && !(await doc(B2.open)).isDirty && (records() || [1]).length === 0,
+        { r1: B2.r1, parent: B2.parent });
+  });
+
+  await step("R-A1 one source renamed in the Explorer: one prompt, Update the registry", async () => {
+    const old = B2.r1.path, now = old.replace(/\.md$/, "-renamed.md");
+    const regBefore = reg(), openDisk = readWs(B2.open), closedDisk = readWs(B2.closed), dirtyBuf = (await doc(B2.dirty)).text;
+    await app.host("reveal", { path: old }); await sleep(1200);
+    await app.page.keyboard.press("F2"); await sleep(600);
+    await app.page.keyboard.press("Control+A");
+    await app.page.keyboard.type(path.basename(now)); await app.page.keyboard.press("Enter");
+    const p = await prompt();
+    await snap("b2b2b-prompt-single");
+    await dialogButton("Update the registry");
+    const done = await toast(/Registry updated:/, 20000);
+    const regAfter = reg();
+    const refreshed = await waitFor(async () => { const d = await doc(B2.open); return d && d.isDirty && d.text.includes(path.basename(now)) ? d : null; }, 20000);
+    const manual = await waitFor(() => rowIn(fd, "manual").then((t) => (/unsaved changes/.test(t) ? t : "")), 15000);
+    await snap("b2b2b-after-registry");
+    rec("R-A1 an Explorer rename gives one modal prompt: Not now first and focused, then Update the registry, Update the registry and 1 closed document, Move the files back; it lists the ID old → new and the documents",
+        p.message === "1 diagram source was renamed: the registry still names the old path" && p.focused === "Not now" &&
+        JSON.stringify(p.buttons.slice(0, 4)) === JSON.stringify(["Not now", "Update the registry", "Update the registry and 1 closed document", "Move the files back"]) &&
+        p.detail.includes(`${B2.r1.id} "Rename one": ${old} → ${now}`) && p.detail.includes(B2.closed) && p.detail.includes(B2.open),
+        { message: p.message, buttons: p.buttons, focused: p.focused, detail: p.detail.slice(0, 400) });
+    rec("R-A1 Update the registry changes only the path (the registry is byte-identical otherwise: ID, owner, title, category); the diagram index is reported regenerated",
+        plainRegistry(regAfter) === plainRegistry(regBefore).replace(`path: ${old}\n`, `path: ${now}\n`) && regAfter !== regBefore &&
+        /diagram-index\.md was regenerated/.test(done || ""), { toast: (done || "").slice(0, 200) });
+    rec("R-A1 the clean open document is refreshed by B2a (one edit, not saved); the unsaved one is not, with a notice; nothing is written to either or to the closed document",
+        !!refreshed && readWs(B2.open) === openDisk && (await doc(B2.dirty)).text === dirtyBuf && readWs(B2.dirty) === B2.dirtyDisk &&
+        !!manual && readWs(B2.closed) === closedDisk, { manual: (manual || "").slice(0, 120) });
+    B2.r1.path = now;
+    await app.host("save", { path: B2.open }); await sleep(500);
+  });
+
+  await step("R-A1b Update the registry and closed documents: the Update Closed Documents confirmation", async () => {
+    const old = B2.r1.path, now = old.replace(/-renamed\.md$/, "-again.md");
+    await app.host("rename", { pairs: [[old, now]] });
+    const p = await prompt();
+    await dialogButton("Update the registry and 1 closed document");
+    const pf = await panelFrame("update");
+    await waitFor(() => pf.evaluate(() => { const b = document.querySelector(".confirm-update"); return !!b && !b.disabled; }), 20000);
+    const listed = await listedIn(pf), skipped = await notIncluded(pf);
+    const beforeConfirm = readWs(B2.closed);
+    await snap("b2b2b-update-closed");
+    await pf.locator(".confirm-update").click();
+    const r = await resultOf(pf);
+    rec("R-A1b the closed document is written only after its own confirmation (listed first); the unsaved open document is left out and never written",
+        p.buttons.includes("Update the registry and 1 closed document") && pathOf(B2.r1.id) === now && listed.includes(B2.closed) &&
+        !beforeConfirm.includes(path.basename(now)) && /result ok/.test(r || "") && readWs(B2.closed).includes(path.basename(now)) &&
+        skipped.some((s) => s.startsWith(B2.dirty)) && readWs(B2.dirty) === B2.dirtyDisk, { listed, skipped, r: (r || "").slice(0, 100) });
+    await pf.locator(".cancel").click(); await sleep(400);
+    B2.r1.path = now;
+    await app.host("save", { path: B2.open }).catch(() => {}); await sleep(400);
+  });
+
+  await step("R-A2 a feature folder with six sources renamed: one prompt, one record, the storm summary (C5)", async () => {
+    const from = B2.parent, to = B2.parent.replace(/rename-parent$/, "renamed-parent");
+    const regBefore = reg(), logBefore = fdLog().length;
+    if ((await doc(B2.open)).isDirty) { await app.host("save", { path: B2.open }); await sleep(600); }
+    fo = await openB2(B2.open, 1);
+    await app.host("rename", { pairs: [[from, to]] });
+    const p = await prompt();
+    const prompts = await app.page.locator(".monaco-dialog-box").count();
+    await snap("b2b2b-prompt-folder");
+    await dialogButton("Update the registry");
+    await toast(/Registry updated:/, 30000);
+    const moved = B2.folder_ids.map(pathOf);
+    const want = B2.folder.map((x) => to + x.slice(from.length));
+    let expected = plainRegistry(regBefore);
+    B2.folder.forEach((x, i) => { expected = expected.replace(`path: ${x}\n`, `path: ${want[i]}\n`); });
+    const storm = await waitFor(() => rowIn(fo, "manual").then((t) => (/Many diagram sources changed at once/.test(t) ? t : "")), 15000);
+    const log = fdLog().slice(logBefore);
+    const txs = [...log.matchAll(/\[renames\] (tx-\S+): adopt/g)].map((m) => m[1]);
+    rec("R-A2 one prompt for the whole folder lists six sources; Update the registry adopts all six in one record; only their paths change",
+        prompts === 1 && /^6 diagram sources were renamed/.test(p.message) && JSON.stringify([...moved].sort()) === JSON.stringify([...want].sort()) &&
+        plainRegistry(reg()) === expected && txs.length === 1, { message: p.message, txs, prompts, moved, want, registry: plainRegistry(reg()) === expected });
+    rec("R-A2 the batch counts as one event, and a batch of more than five sources gives the storm summary instead of automatic refreshes (C5)",
+        !!storm && !(await doc(B2.open)).isDirty, { storm: (storm || "").slice(0, 120) });
+    B2.folder = want; B2.parent = to;
+  });
+
+  await step("R-A9 Move the files back: back at the old path; the registry unchanged; no record", async () => {
+    const old = B2.r1.path, now = "designs/features/elsewhere/diagrams/rename-one.md";
+    const regBefore = reg(), bytes = readWs(old);
+    await app.host("rename", { pairs: [[old, now]] });
+    const p = await prompt();
+    await dialogButton("Move the files back");
+    const done = await toast(/Moved back 1 diagram source/, 20000);
+    rec("R-A9 Move the files back renames the file back (recorded move), only while it is unchanged and the old path is free; the registry is byte-identical; no record is left",
+        p.buttons.includes("Move the files back") && !!done && exists(old) && !exists(now) && readWs(old) === bytes && reg() === regBefore &&
+        (records() || [1]).length === 0 && /The registry was not changed/.test(done || ""), { toast: (done || "").slice(0, 160) });
+  });
+
+  await step("R-A9b Not now: nothing written; the E6 row in the strip; later adoption from the row", async () => {
+    const old = B2.r1.path, now = old.replace(/-again\.md$/, "-later.md");
+    const regBefore = reg();
+    await app.host("rename", { pairs: [[old, now]] });
+    await prompt();
+    await dialogButton("Not now");
+    await sleep(800);
+    const row = await waitFor(() => rowIn(fo, "moved").then((t) => (/1 moved source: registry not updated/.test(t) ? t : "")), 20000);
+    await snap("b2b2b-e6-row");
+    const untouched = reg() === regBefore && (records() || [1]).length === 0;
+    await fo.locator("#strip .review-moves").click();
+    const p = await prompt();
+    await dialogButton("Update the registry");
+    await toast(/Registry updated:/, 20000);
+    const gone = await waitFor(() => rowIn(fo, "moved").then((t) => !t), 20000);
+    rec("R-A9b Not now writes nothing (no record); every Feature Designer view shows \"1 moved source: registry not updated\"; Review… offers the same prompt and the adoption then clears the row",
+        untouched && !!row && /is not at the registered path/.test(p.message) && pathOf(B2.r1.id) === now && !!gone &&
+        !/not known here/.test(p.detail), { row, message: p.message });
+    B2.r1.path = now;
+  });
+
+  await step("R-A4 a case-only rename (Windows): the registry takes the exact new case and check is clean", async () => {
+    const old = B2.r1.path, base = path.posix.basename(old), now = `${path.posix.dirname(old)}/${base[0].toUpperCase()}${base.slice(1)}`;
+    // In the Explorer (F2): VS Code's WorkspaceEdit.renameFile canonicalises a target that differs only in letter
+    // case to the existing file on Windows, so through that API a case-only rename does nothing.
+    await app.host("reveal", { path: old }); await sleep(1200);
+    await app.page.keyboard.press("F2"); await sleep(600);
+    await app.page.keyboard.press("Control+A");
+    await app.page.keyboard.type(path.posix.basename(now)); await app.page.keyboard.press("Enter");
+    const p = await prompt();
+    await snap("b2b2b-case-only");
+    await dialogButton("Update the registry");
+    await toast(/Registry updated:/, 20000);
+    const check = py(["-m", "tools.design", "check"]);
+    rec("R-A4 a case-only rename (reported by VS Code with the old letter case) is shown and adopted with the exact new case; check reports no moved or missing source",
+        p.detail.includes(`${old} → ${now}`) && pathOf(B2.r1.id) === now && exists(now) && !/\(E6\)|\(E7\)/.test(check),
+        { check: check.trim().split("\n").slice(-2), detail: p.detail.slice(0, 300) });
+    B2.r1.path = now;
+  });
+
+  await step("R-A5 collisions: VS Code refuses an occupied destination; a registered path of another diagram is refused", async () => {
+    const regBefore = reg(), a = readWs(B2.r1.path), b = readWs(B2.r2.path);
+    const ok = await app.host("rename", { pairs: [[B2.r1.path, B2.r2.path]] }).catch((e) => `threw: ${e.message.slice(0, 80)}`);   // an existing file: VS Code refuses
+    const none = await noPrompt(3000);
+    const occupied = ok !== true && none && readWs(B2.r1.path) === a && readWs(B2.r2.path) === b && reg() === regBefore;
+    const away = "designs/features/away/diagrams/rename-two.md";
+    moveFs(B2.r2.path, away);                                                            // r2 moved elsewhere (E6)
+    await app.host("rename", { pairs: [[B2.r1.path, B2.r2.path]] });                    // onto r2's registered path
+    const p = await prompt();
+    await snap("b2b2b-collision");
+    await dialogButton("Not now");
+    const refused = !p.buttons.includes("Update the registry") && new RegExp(`is the registered path of ${B2.r2.id}`).test(p.detail) && reg() === regBefore;
+    moveFs(B2.r2.path, B2.r1.path); moveFs(away, B2.r2.path);                            // put both back (outside VS Code)
+    rec("R-A5 a rename onto an existing file is refused by VS Code (nothing changes, no prompt); a rename onto another diagram's registered path cannot be adopted (A5)",
+        occupied && refused, { ok, none, detail: p.detail.slice(0, 300) });
+  });
+
+  await step("R-A6 docs/architecture/: the notice; the registry and docs/architecture/ unchanged", async () => {
+    const regBefore = reg();
+    const into = `docs/architecture/${path.posix.basename(B2.r1.path)}`;
+    await app.host("rename", { pairs: [[B2.r1.path, into]] });
+    const notice = await toast(/Architecture diagram sources change only through technical-lead's documentation workflow \(M1\); the registry was not changed\./, 20000);
+    const p = await prompt();
+    await dialogButton("Not now");
+    moveFs(into, B2.r1.path);                                                           // put back outside VS Code
+    const doc0 = fs.readdirSync(path.join(WS, "docs/architecture")).find((n) => n.endsWith(".md"));
+    await app.host("command", { id: "notifications.clearAll" });
+    await app.host("rename", { pairs: [[`docs/architecture/${doc0}`, `docs/architecture/x-${doc0}`]] });   // an architecture document
+    const notice2 = await toast(/Architecture diagram sources change only through technical-lead's documentation workflow/, 20000);
+    const none = await noPrompt(3000);
+    moveFs(`docs/architecture/x-${doc0}`, `docs/architecture/${doc0}`);
+    await sleep(800);
+    rec("R-A6 a rename into docs/architecture/ or of an architecture document shows the G5 notice; nothing under docs/architecture/ is adopted or written; the registry is unchanged",
+        !!notice && !p.buttons.includes("Update the registry") && !p.buttons.includes("Move the files back") && !!notice2 && none &&
+        reg() === regBefore && archHash() === archBefore, { detail: p.detail.slice(0, 200) });
+  });
+
+  await step("R-G9 a path held by an unresolved move: warned; the move record in the recovery panel; Complete", async () => {
+    const old = B2.r3.path, held = "designs/features/held/diagrams/rename-three.md";
+    moveFs(old, held);                                                                  // moved outside VS Code
+    const plan = JSON.parse(py(["-m", "tools.design", "registry", "adopt-moves", "--from", old, "--to", held, "--json"]));
+    const crashed = pyFault(["registry", "adopt-moves", "--from", old, "--to", held, "--confirm", plan.token], "move-after-prepare");
+    py(["-m", "tools.design", "registry", "unlock", "--confirm"]);
+    await sleep(1500);
+    const heldRow = await waitFor(() => rowIn(fo, "held").then((t) => (/registry move was interrupted/.test(t) ? t : "")), 20000);
+    await app.host("command", { id: "notifications.clearAll" }); await sleep(500);
+    await app.host("rename", { pairs: [[held, held.replace(".md", "-b.md")]] });     // VS Code cannot be stopped: warned
+    const warned = await toast(/held by an unresolved record and VS Code cannot prevent the rename/, 20000);
+    const none = await noPrompt(2500);
+    await snap("b2b2b-held");
+    moveFs(held.replace(".md", "-b.md"), held);
+    await app.host("command", { id: "featureDesigner.resolveUpdate" });
+    const pf = await panelFrame("recovery");
+    await waitFor(() => pf.evaluate(() => /Registry move tx-/.test(document.body.innerText) && !document.querySelector(".choice-complete").disabled), 20000);
+    const ui = await pf.evaluate(() => ({ text: document.body.innerText, checked: [...document.querySelectorAll('input[type="radio"]')].filter((x) => x.checked).length,
+                                         confirm: document.querySelector(".confirm").disabled }));
+    await snap("b2b2b-recovery-move");
+    await pf.locator(".choice-complete").check();
+    const label = await pf.evaluate(() => document.querySelector(".confirm").textContent);
+    await pf.locator(".confirm").click();
+    const done = await resultOf(pf);
+    rec("R-G9 renaming a path held by an unresolved move is warned (VS Code cannot prevent it; recovery treats the path conservatively); every open document shows the interrupted move",
+        /exit 97/.test(crashed) && !!heldRow && !!warned && none, { crashed: crashed.slice(0, 40), warned: (warned || "").slice(0, 200), heldRow: (heldRow || "").slice(0, 100) });
+    rec("R-G9 the recovery panel shows the move record with move wording (observed renames, at the new path, registry original), nothing selected; Complete finishes it and says the index was regenerated",
+        /Observed renames/.test(ui.text) && /At the new path/.test(ui.text) && /Registry: the original \(not updated\)/.test(ui.text) &&
+        ui.checked === 0 && ui.confirm && label === "Complete the move" && /result ok/.test(done || "") && /diagram-index\.md was regenerated/.test(done || "") &&
+        pathOf(B2.r3.id) === held && (records() || [1]).length === 0, { done: (done || "").slice(0, 200) });
+    await pf.locator(".cancel").last().click(); await sleep(400);
+    B2.r3.path = held;
+  });
+
+  await step("R-A8 an ambiguous identity (copies at two paths): reported with the candidates, never adopted", async () => {
+    const src = B2.r1.path, a = "designs/features/copy-a/diagrams/one.md", b = "designs/features/copy-b/diagrams/one.md";
+    for (const x of [a, b]) { fs.mkdirSync(path.dirname(path.join(WS, x)), { recursive: true }); fs.copyFileSync(path.join(WS, src), path.join(WS, x)); }
+    fs.unlinkSync(path.join(WS, src));
+    const regBefore = reg();
+    const row = await waitFor(() => rowIn(fo, "moved").then((t) => (/found at several paths \(never guessed\)/.test(t) ? t : "")), 20000);
+    await fo.locator("#strip .review-moves").click();
+    const p = await prompt();
+    await snap("b2b2b-ambiguous");
+    await dialogButton("Not now");
+    fs.unlinkSync(path.join(WS, b)); moveFs(a, src);
+    const gone = await waitFor(() => rowIn(fo, "moved").then((t) => !t), 20000);
+    rec("R-A8 a source found at two unregistered paths is shown in the strip and the prompt with both candidates; nothing can be adopted; nothing was written",
+        !!row && p.detail.includes(a) && p.detail.includes(b) && /nothing is guessed/.test(p.detail) && JSON.stringify(p.buttons.slice(0, 1)) === '["Not now"]' &&
+        !p.buttons.includes("Update the registry") && reg() === regBefore && !!gone, { row, buttons: p.buttons });
+  });
+
+  await step("R-QA3 a source moved out of the workspace: a notice, no prompt, the registry unchanged", async () => {
+    const src = B2.r2.path, regBefore = reg(), outside = "../outside-ws/rename-two.md";   // outside the repository folder
+    await app.host("command", { id: "notifications.clearAll" });
+    const ok = await app.host("rename", { pairs: [[src, outside]] });
+    const notice = await toast(/left the design workspace .*The registry is not updated/, 20000);
+    const none = await noPrompt(2500);
+    await snap("b2b2b-left-workspace");
+    fs.renameSync(path.join(WS, ...outside.split("/")), path.join(WS, ...src.split("/")));   // put back outside VS Code
+    rec("R-QA3 a registered source dragged out of the workspace is reported (it left the design workspace; the registry is not updated), never silently dropped; no prompt",
+        ok === true && !!notice && none && reg() === regBefore && notice.includes(B2.r2.id), { notice: (notice || "").slice(0, 240) });
+  });
+
+  await step("R-S safety", async () => {
+    rec("R-S the unsaved document was never written by Feature Designer; docs/architecture/ unchanged byte for byte; no record left",
+        readWs(B2.dirty) === B2.dirtyDisk && (await doc(B2.dirty)).isDirty && archHash() === archBefore && (records() || [1]).length === 0);
+    await app.host("revert", { path: B2.dirty }).catch(() => {});
+    if ((await doc(B2.open)) && (await doc(B2.open)).isDirty) { await app.host("save", { path: B2.open }); await sleep(600); }
+    await app.host("closeAll", {}, 60000).catch(() => {}); await dialogDismissIfAny();
+  });
 }

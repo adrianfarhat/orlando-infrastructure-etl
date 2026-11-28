@@ -60,6 +60,14 @@ function activate(context) {
       return { active: true, value: ext.exports[fn](root()) };
     },
     async trusted() { return vscode.workspace.isTrusted; },
+    // PR B2b-2b: a rename through VS Code's workspace API, which runs the same will/did-rename participants as an
+    // Explorer rename (several pairs: one batch). Resolves to whether VS Code carried it out.
+    async rename({ pairs, overwrite }) {
+      const e = new vscode.WorkspaceEdit();
+      for (const [a, b] of pairs) e.renameFile(uriOf(a), uriOf(b), { overwrite: !!overwrite });
+      return vscode.workspace.applyEdit(e);
+    },
+    async reveal({ path: rel }) { await vscode.commands.executeCommand("revealInExplorer", uriOf(rel)); return true; },
     async designerCall({ fn, args }) {                                // PR B2b-1: a test hook with arguments (may be async)
       const ext = vscode.extensions.getExtension("orlando-infrastructure.feature-designer");
       if (!ext || !ext.isActive) return { active: false };

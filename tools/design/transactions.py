@@ -62,6 +62,11 @@ share this record folder with a second, independently read record version:
              (the exact original and replacement bytes of designs/diagrams/registry.yml). Its
              write set is narrow: sources in a `diagrams/` folder under designs/features/ and the
              registry file; never docs/architecture/.
+             Mode `restore` (T-97 PR B2b-2b, "Move the files back"): tool-initiated renames of
+             sources that another program renamed while the registry still names their old paths,
+             back to those registered paths. It has renames only and no `registry` operation: the
+             registry is never written; its SHA-256 when the record was prepared (`registry_sha`)
+             is recorded, and Complete is refused if it changed since.
 Any other version, or a record that does not validate, is never used: it can only be abandoned,
 and until then it blocks every writer, as in B2b-1.
 
@@ -116,7 +121,7 @@ GIT_MARKERS = ("index.lock", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "B
                "sequencer")
 CODE = "E16"
 MOVE_VERSION, MOVE_TOOL = 2, "registry-move"
-MOVE_MODES = ("move", "adopt")
+MOVE_MODES = ("move", "adopt", "restore")      # restore: Move the files back (B2b-2b); renames only, registry unchanged
 DIAGRAM_ID_RE = re.compile(r"[A-Z]{2}-\d{4}(?:-D\d+)?\Z")
 REGISTRY_BLOBS = ("registry.orig", "registry.new")
 
@@ -484,8 +489,14 @@ class Record:
         return [o for o in self.data["ops"] if o["kind"] == "rename"] if self.is_move else []
 
     @property
+    def restores(self) -> bool:
+        """A Move back (mode restore): renames only; the registry is never written."""
+        return self.is_move and self.data.get("mode") == "restore"
+
+    @property
     def registry_op(self) -> dict | None:
-        return self.data["ops"][-1] if self.is_move else None
+        """The final `registry` operation (None for a Move back, which has none)."""
+        return self.data["ops"][-1] if self.is_move and not self.restores else None
 
 
 def _read_record(root: Path, folder: Path) -> Record:
@@ -608,11 +619,20 @@ def _read_v2(root: Path, folder: Path, data: dict, names: set) -> Record:
     if not isinstance(hist, list) or not all(isinstance(h, dict) for h in hist) or not isinstance(data.get("action", ""), str):
         return bad("journal.json has a malformed history")
     ops = data.get("ops")
-    if not isinstance(ops, list) or not 2 <= len(ops) <= MAX_FILES + 1 or not all(isinstance(o, dict) for o in ops):
+    restore = data["mode"] == "restore"
+    if not isinstance(ops, list) or not (1 if restore else 2) <= len(ops) <= MAX_FILES + (0 if restore else 1) or \
+            not all(isinstance(o, dict) for o in ops):
         return bad("the operation list is malformed")
-    *renames, reg = ops
-    if reg.get("kind") != "registry" or any(o.get("kind") != "rename" for o in renames):
-        return bad("the operations must be renames followed by one registry operation")
+    if restore:                                          # Move back (B2b-2b): renames only, the registry is never written
+        renames, reg = list(ops), None
+        if any(o.get("kind") != "rename" for o in renames):
+            return bad("a move back holds renames only (it never writes the registry)")
+        if not (isinstance(data.get("registry_sha"), str) and HEX64.match(data["registry_sha"])):
+            return bad("the registry revision of the move back is malformed")
+    else:
+        *renames, reg = ops
+        if reg.get("kind") != "registry" or any(o.get("kind") != "rename" for o in renames):
+            return bad("the operations must be renames followed by one registry operation")
     observed = data["mode"] == "adopt"
     claimed: dict[str, int] = {}                         # every path, as the file system compares it -> op
     for i, o in enumerate(renames):
@@ -648,6 +668,11 @@ def _read_v2(root: Path, folder: Path, data: dict, names: set) -> Record:
             if k in claimed and not (claimed[k] == i and case_only and key in ("from", "to")):
                 return bad(f"rename {n}: {o[key]} is also used by rename {claimed[k] + 1}")
             claimed[k] = i
+    if restore:
+        extra = names - {JOURNAL, ".journal.tmp"}
+        if extra:
+            return bad(f"unexpected files in the record: {', '.join(sorted(extra))}")
+        return Record(folder, data, "")
     if set(reg) != {"kind", "path", "before_sha", "after_sha", "orig", "new"}:
         return bad("the registry operation has unexpected or missing fields")
     if reg["path"] != registry.REGISTRY or (reg["orig"], reg["new"]) != REGISTRY_BLOBS:
@@ -829,6 +854,12 @@ def registry_state(root: Path, op: dict) -> str:
     return "original" if h == op["before_sha"] else "replacement" if h == op["after_sha"] else "changed"
 
 
+def restore_registry_state(root: Path, rec: Record) -> str:
+    """For a Move back (never writes the registry): unchanged (still what it was when the record was
+    prepared, so it still names the paths the sources go back to) or changed."""
+    return "unchanged" if _registry_sha(root) == rec.data["registry_sha"] else "changed"
+
+
 def _registry_sha(root: Path) -> str | None:
     from . import registry
     p = Path(root) / registry.REGISTRY
@@ -917,8 +948,10 @@ def _describe_move(root: Path, rec: Record, live: bool, out: dict) -> dict:
     rows = [{"path": f"{o['from']} -> {o['to']}", "blocks": [o["diagram_id"]], "state": rename_state(root, o),
              "occupied": rename_occupied(root, o),
              "rename": {"from": o["from"], "to": o["to"], "via": o["via"], "observed": o["observed"]}} for o in rec.renames]
-    rstate = registry_state(root, reg)
-    rows.append({"path": reg["path"], "blocks": [], "state": rstate})
+    from . import registry
+    restore = rec.restores
+    rstate = restore_registry_state(root, rec) if restore else registry_state(root, reg)
+    rows.append({"path": registry.REGISTRY, "blocks": [], "state": rstate})
     def blocked(o: dict, row: dict, goal: str) -> bool:
         """This rename cannot reach `goal` now: its file is in an unexpected state, an observed
         rename is not where it was found, or its next path is occupied (never overwritten)."""
@@ -954,6 +987,15 @@ def _describe_move(root: Path, rec: Record, live: bool, out: dict) -> dict:
                if busy else "a Feature Designer window's list of open documents cannot be read; try again in a moment")
         complete = {"possible": False, "reason": why, "writes": to_new, "left_alone": stuck}
         undo = {"possible": False, "reason": why, "restores": to_old, "left_alone": stuck_undo}
+    elif restore:                                      # Move back: renames only; the registry is never written
+        complete = {"possible": rstate != "changed", "writes": to_new,
+                    "left_alone": stuck + ([registry.REGISTRY] if rstate == "changed" else []),
+                    "reason": ("refused: the registry changed since this move back was prepared, so it may no longer "
+                               "name the paths the sources would go back to. Use Undo (the sources go back to where "
+                               "they were found), or Abandon after checking the registry") if rstate == "changed" else
+                              ("partly possible: the renames listed as left alone cannot reach their registered path "
+                               "now (both, neither, changed, or the path is occupied)") if stuck else ""}
+        undo = {"possible": True, "restores": to_old, "left_alone": stuck_undo, "reason": ""}
     else:
         reg_write = [] if rstate == "replacement" or stuck else [reg["path"]]
         complete = {"possible": rstate != "changed", "writes": to_new + reg_write,
@@ -971,8 +1013,10 @@ def _describe_move(root: Path, rec: Record, live: bool, out: dict) -> dict:
     out.update(tool=MOVE_TOOL, mode=d["mode"], state=d["state"], action=d.get("action") or "",
                created=d.get("created", ""), pid=d["pid"], host=d["host"], files=rows, source_changes=[],
                registry=rstate, complete=complete, undo=undo,
-               abandon={"possible": not live, "effect": "removes the record and its copies of the registry; every "
-                                                        "source and the registry stay exactly as they are now"})
+               abandon={"possible": not live, "effect": ("removes the record; every source and the registry stay "
+                                                         "exactly as they are now") if restore else
+                                                        ("removes the record and its copies of the registry; every "
+                                                         "source and the registry stay exactly as they are now")})
     out["token"] = _sha(json.dumps([d["checksum"], [(r["path"], r["state"], r.get("occupied", []), bool(r["open"]))
                                                     for r in rows], live, bool(unknown)], sort_keys=True).encode())[:16]
     return out
@@ -1612,7 +1656,8 @@ def _write_registry(root: Path, rec: Record, want: str, blob: str) -> str:
 def prepare_move(root: Path, mode: str, renames: list[dict], registry_before: bytes, registry_after: bytes) -> Record:
     """Write and verify a version 2 record (inside the registry lock; the caller validated the
     batch). `renames`: diagram_id, from, to, via (or None), sha. Nothing outside the record is
-    touched."""
+    touched. A Move back (mode restore) records `registry_before`'s SHA-256 only: it never writes
+    the registry, so it keeps no copies of it (`registry_after` is ignored)."""
     from . import registry
     if mode not in MOVE_MODES:
         raise DesignError(f"unknown move mode {mode!r}")
@@ -1632,17 +1677,22 @@ def prepare_move(root: Path, mode: str, renames: list[dict], registry_before: by
     tx_id = f"tx-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"
     staging = tx / (tx_id + ".preparing")
     staging.mkdir()
-    _write_new(staging / "registry.orig", registry_before)
-    _fault(root, "move-after-orig")
-    _write_new(staging / "registry.new", registry_after)
-    _fault(root, "move-after-new")
+    restore = mode == "restore"
+    if not restore:
+        _write_new(staging / "registry.orig", registry_before)
+        _fault(root, "move-after-orig")
+        _write_new(staging / "registry.new", registry_after)
+        _fault(root, "move-after-new")
     ops = [{"kind": "rename", "diagram_id": r["diagram_id"], "from": r["from"], "to": r["to"], "via": r.get("via"),
             "sha": r["sha"], "observed": mode == "adopt"} for r in renames]
-    ops.append({"kind": "registry", "path": registry.REGISTRY, "before_sha": _sha(registry_before),
-                "after_sha": _sha(registry_after), "orig": "registry.orig", "new": "registry.new"})
+    if not restore:
+        ops.append({"kind": "registry", "path": registry.REGISTRY, "before_sha": _sha(registry_before),
+                    "after_sha": _sha(registry_after), "orig": "registry.orig", "new": "registry.new"})
     data = {"format": FORMAT, "version": MOVE_VERSION, "id": tx_id, "tool": MOVE_TOOL, "mode": mode,
             "pid": os.getpid(), "host": platform.node(), "created": _now(), "state": "prepared", "action": "",
             "ops": ops, "history": [{"time": _now(), "state": "prepared", "action": ""}]}
+    if restore:
+        data["registry_sha"] = _sha(registry_before)
     _fault(root, "move-before-journal")
     _save_journal(staging, data)
     _fault(root, "move-after-journal")
@@ -1681,7 +1731,10 @@ def commit_move(root: Path, rec: Record) -> dict:
             failure = f"{op['from']} could not be moved to {op['to']} ({exc})"
             break
     wrote_registry = False
-    if not failure:
+    if not failure and rec.restores:                   # Move back: the registry is never written, only checked
+        if restore_registry_state(root, rec) != "unchanged":
+            failure = "the registry changed while the sources were moved back"
+    elif not failure:
         try:
             _fault(root, "move-before-registry")
             done = _write_registry(root, rec, rec.registry_op["before_sha"], "new")
@@ -1709,7 +1762,7 @@ def commit_move(root: Path, rec: Record) -> dict:
                             ([cleanup_warning(rec, cleanup, "complete")] if cleanup else [])}
     _set(root, rec, state="rolling-back", action="rollback")
     try:
-        if registry_state(root, rec.registry_op) == "replacement":
+        if not rec.restores and registry_state(root, rec.registry_op) == "replacement":
             _write_registry(root, rec, rec.registry_op["after_sha"], "orig")
     except (OSError, DesignError):
         pass
@@ -1723,7 +1776,8 @@ def commit_move(root: Path, rec: Record) -> dict:
         _fault(root, f"move-rollback-after:{i + 1}")
     # Resolved when every source this move renamed is back at its old path and the registry holds
     # nothing this move wrote; a registry another program changed before this move wrote it is theirs.
-    reg_now = registry_state(root, rec.registry_op)
+    reg_now = ("original" if restore_registry_state(root, rec) == "unchanged" else "changed") if rec.restores else \
+        registry_state(root, rec.registry_op)
     back = all(op["observed"] or rename_state(root, op) == "old" for op in rec.renames)
     if back and (reg_now == "original" or (reg_now == "changed" and not wrote_registry)):
         cleanup = _finish_safely(root, rec)
@@ -1738,9 +1792,9 @@ def commit_move(root: Path, rec: Record) -> dict:
 
 def _move_clean(root: Path, rec: Record, goal: str) -> bool:
     """Every rename this move carries out at `goal` (observed ones: at new for completion, any for
-    undo) and the registry at the matching state."""
+    undo) and the registry at the matching state (a Move back never writes it: any state)."""
     want_reg = "replacement" if goal == "new" else "original"
-    if registry_state(root, rec.registry_op) != want_reg:
+    if not rec.restores and registry_state(root, rec.registry_op) != want_reg:
         return False
     for op in rec.renames:
         st = rename_state(root, op)
@@ -1779,10 +1833,16 @@ def _resolve_move(root: Path, rec: Record, action: str, now: dict, note: str) ->
         index = _regenerate_index(root)
         cleanup = _finish_safely(root, rec)
         warnings = ([index_warning(index)] if index else []) + ([cleanup_warning(rec, cleanup, action)] if cleanup else [])
-        message = ("completed: every source is at its new path and the registry names it" if goal == "new" else
-                   ("undone: the registry is as it was before the move" +
-                    ("; the sources stay where they were found (an observed rename): `check` reports them (E6)"
-                     if rec.data["mode"] == "adopt" else "; every source is back at its old path")))
+        if rec.restores:
+            message = ("completed: every source is back at its registered path; the registry was not changed"
+                       if goal == "new" else
+                       "undone: every source is back where it was found; the registry was not changed and still "
+                       "names the old paths, so `check` reports them as moved (E6)")
+        else:
+            message = ("completed: every source is at its new path and the registry names it" if goal == "new" else
+                       ("undone: the registry is as it was before the move" +
+                        ("; the sources stay where they were found (an observed rename): `check` reports them (E6)"
+                         if rec.data["mode"] == "adopt" else "; every source is back at its old path")))
         return {"ok": True, "id": rec.id, "action": action, "note": note, "files": rows,
                 "index": {"regenerated": not index, "problem": index}, "warnings": warnings,
                 "message": message + "".join(f"; warning: {w}" for w in warnings)}
@@ -1813,7 +1873,7 @@ def _carry_out(root: Path, rec: Record, action: str, now: dict) -> str:
             if not op["observed"] and rename_state(root, op) in ("old", "temp", "both"):
                 _drive(root, rec, i, op, "new", "move-complete")
             _fault(root, f"move-complete-after:{i + 1}")
-        if registry_state(root, rec.registry_op) == "original" and \
+        if not rec.restores and registry_state(root, rec.registry_op) == "original" and \
                 all(rename_state(root, op) == "new" for op in rec.renames):
             _write_registry(root, rec, rec.registry_op["before_sha"], "new")
             _fault(root, "move-complete-after-registry")
@@ -1821,7 +1881,7 @@ def _carry_out(root: Path, rec: Record, action: str, now: dict) -> str:
     else:
         _set(root, rec, state="undoing", action="undo")
         _fault(root, "move-undo-after-mark")
-        if registry_state(root, rec.registry_op) == "replacement":
+        if not rec.restores and registry_state(root, rec.registry_op) == "replacement":
             _write_registry(root, rec, rec.registry_op["after_sha"], "orig")
             _fault(root, "move-undo-after-registry")
         for i, op in reversed(list(enumerate(rec.renames))):

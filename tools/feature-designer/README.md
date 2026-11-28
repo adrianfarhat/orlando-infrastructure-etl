@@ -138,6 +138,16 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
     must be closed first. Dismissing the notification or closing the panel keeps the record.
     Until it is resolved, the documents it holds are not refreshed or edited by Feature
     Designer or the design tooling (the strip says so), and `check` reports it (E16).
+  - **An interrupted registry move** (an adoption, a `registry move` or a Move back) is shown in
+    the same panel as "Registry move …", with what kind of move it was and each rename's state
+    (at the old path, at the new path, at the temporary path of a case-only rename, at more than
+    one path, at neither, or changed) and the registry's (the original, the replacement, changed
+    by something else; a Move back never writes it). **Complete the move**, **Undo the move** and
+    **Abandon the record** work as above; anything in an unexpected state is left alone and
+    reported. Until it is resolved, no registry change and no diagram refresh happens in any
+    document. After Complete or Undo the result says whether `diagram-index.md` was regenerated;
+    it is never claimed when it was not. Record folders whose operation is over but whose removal
+    did not finish are listed under **Cleanup pending**: they hold nothing.
 - **Documents open in other windows.** Each Feature Designer window lists the feature documents
   it has open (and whether they have unsaved changes) in
   `designs/diagrams/.transactions/windows/`, every 5 seconds; an update never writes a document
@@ -149,6 +159,66 @@ Then open a feature: right-click it in the Explorer → **Open With…** → **F
   asleep or hung) keeps protecting its documents (shown as "has not responded for N min") until
   it closes, until a window on the same computer verifies its process has ended, or until
   `python -m tools.design transaction forget-window NAME --confirm` removes its record.
+- **Renaming or moving diagram sources** (T-97 PR B2b-2b; see
+  [designs/README.md](../../designs/README.md#moving-diagram-sources)). Diagram blocks refer to
+  diagrams by ID, so a rename never breaks a reference, but the registry still names the old
+  path until it is updated:
+  - **In VS Code** (Explorer rename or move, one file or a folder): just before VS Code renames,
+    Feature Designer records which registered sources are affected (a folder is expanded to the
+    registered sources under it, including a parent feature folder) and each one's SHA-256. Any
+    rename under `designs/` or `docs/architecture/` may therefore wait up to 4 seconds before VS
+    Code carries it out. If the snapshot is not ready by then, the rename goes ahead and the flow
+    continues without the checksums: the sources are identified from disk afterwards, and the
+    prompt says that the content before the rename could not be recorded (the adoption then checks
+    each file's ID, owner and that it is a well-formed source). VS Code cannot cancel a rename, so problems found then (a destination
+    outside the approved `diagrams/` folders, under `docs/architecture/`, onto another diagram's
+    registered path, through a link, a source with unsaved changes in another Feature Designer
+    window, a path held by an interrupted record, a Git operation in progress) are shown
+    afterwards, never prevented. After the rename, the window where it happened checks every file
+    on disk (at its new path with exactly the bytes it had before; anything else is shown as
+    changed and is not adopted) and shows **one prompt for the whole batch**, listing each ID with
+    its old and new path, the open and closed documents that show it, and any problems. Nothing
+    that writes is the default: **Not now** comes first and has the keyboard focus, and Escape or
+    Cancel is the same as Not now:
+    - **Not now** writes nothing (no record);
+    - **Update the registry** changes only the `path` of those entries (`registry adopt-moves
+      --sha256`, a recorded transaction); the ID, owner, title and category stay the same. Open
+      documents then refresh their captions and links as for any source change (automatically
+      only when they have no unsaved changes and are shown only in Feature Designer; a batch of
+      more than five sources gives the one summary with Refresh now);
+    - **Update the registry and N closed documents** does the same, then opens Update Closed
+      Documents with the list, so nothing is written to them before you confirm there;
+    - **Move the files back** (`registry move-back`) renames the files back to their registered
+      paths as one recorded, recoverable move, only while each file is unchanged and each old path
+      is free; the registry is not changed. It is offered only for files inside the approved
+      folders: a file moved outside them (or under `docs/architecture/`) is moved back with
+      VS Code's own Undo (Ctrl+Z in the Explorer) or by hand.
+  - **Out of the workspace.** A registered source moved out of the repository folder (for example
+    dragged to another folder or drive) cannot be registered where it is: no prompt is shown, only a
+    notice that it left the design workspace and that the registry was not updated. Move it back
+    into a `diagrams/` folder under `designs/features/` (Undo in the Explorer); until then `check`
+    reports it as missing (E7).
+  - **Other windows** never prompt. While the registry is not updated they show the row below, and
+    after it is updated they refresh their open documents; a document with unsaved changes is
+    never written in any window.
+  - **Renames outside VS Code** (Git, the file explorer, another editor) and declined prompts
+    show **"N moved sources: registry not updated"** in the status strip of every Feature
+    Designer view, also after a restart (it is worked out from the files on disk, like `check`'s
+    E6). **Review…** (or **Feature Designer: Review Moved Diagram Sources…**, which asks which
+    repository when several open folders have moved sources) opens the same prompt. Without the checksum from before the rename, the adoption checks each file's ID,
+    owner and that it is a well-formed source. A diagram found at two or more paths is listed with
+    the candidates and never adopted; a missing source with no file holding its ID (E7) is
+    reported, never guessed.
+  - **Architecture sources** (`docs/architecture/`) are never adopted, moved or prompted for: a
+    rename there shows "Architecture diagram sources change only through technical-lead's
+    documentation workflow (M1); the registry was not changed."
+  - **Limitations.** VS Code cannot veto a rename, so an unsafe rename can happen; it is then
+    refused for adoption and reported. Renames by other programs are detected, not intercepted.
+    The tooling never stages or commits: Git shows a moved file as a deletion and an addition until
+    you stage it. Through the extension API (as opposed to the Explorer), VS Code turns a rename
+    that changes only letter case into no rename at all on Windows. A move is a recoverable
+    transaction, not an atomic multi-file operation; an interrupted one is resolved under
+    **Resolve Interrupted Update** (below).
 - **Status strip:** stays visible under the toolbar while you scroll: how many diagrams are out
   of date, in conflict or have a problem, with **Previous** / **Next** to go to each.
 - **Restricted Mode:** in an untrusted workspace Feature Designer shows a notice only; it
@@ -207,6 +277,9 @@ pointer and keyboard input, and loads a small test-only helper extension
 - `src/edits.js` — applies the tooling's proposed edits only to the exact text they were
   computed from (SHA-256 and line count); otherwise the edit is refused as stale.
 - `src/python.js` — interpreter selection (machine-level setting, confirmed suggestion).
+- `src/renames.js` — renames of diagram sources (PR B2b-2b): the pre-rename snapshot, the one
+  prompt per batch, the moved-sources strip row; writes only through `src/commands.js`
+  (`registry adopt-moves`, `registry move-back`).
 - `media/` — the webview: rendering (markdown-it, DOMPurify, Mermaid in strict mode), the
   "+" menu and the library. Content-Security-Policy: scripts only with a per-load random
   nonce, no remote content, no command links.
